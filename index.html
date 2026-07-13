@@ -45,9 +45,10 @@
   <div class="frosted flex items-center justify-around px-2 py-2 max-w-md mx-auto">
     <button onclick="go('entry')" class="flex flex-col items-center px-3 py-1.5">🐢<span class="text-[11px]">Log</span></button>
     <button onclick="go('myentries')" class="flex flex-col items-center px-3 py-1.5">📋<span class="text-[11px]">Entri</span></button>
-    <button onclick="go('dashboard')" class="flex flex-col items-center px-3 py-1.5">📊<span class="text-[11px]">Papan</span></button>
+    <button onclick="go('dashboard')" class="flex flex-col items-center px-3 py-1.5">📊<span class="text-[11px]">Dashboard</span></button>
     <button id="navAdmin" onclick="go('admin')" class="flex-col items-center px-3 py-1.5 hidden">⚙️<span class="text-[11px]">Admin</span></button>
     <button onclick="toggleTheme()" class="flex flex-col items-center px-3 py-1.5"><span id="themeIcon">🌙</span><span class="text-[11px]">Mod</span></button>
+    <button onclick="logout()" class="flex flex-col items-center px-3 py-1.5">🚪<span class="text-[11px]">Keluar</span></button>
   </div>
 </nav>
 
@@ -80,6 +81,16 @@ function toggleTheme() {
   localStorage.setItem('penyu-theme', isDark ? 'light' : 'dark')
 }
 window.toggleTheme = toggleTheme
+
+async function logout() {
+  await supabase.auth.signOut()
+  state.profile = null
+  state.island = null
+  sessionStorage.removeItem('penyu-island')
+  location.hash = 'island'
+  render('island')
+}
+window.logout = logout
 const savedTheme = localStorage.getItem('penyu-theme') || 'dark'
 document.documentElement.classList.remove('dark','light')
 document.documentElement.classList.add(savedTheme)
@@ -396,7 +407,7 @@ async function screenMyEntries() {
 async function screenDashboard() {
   const year = new Date().getFullYear()
   const wrap = document.createElement('div')
-  wrap.innerHTML = `<h1 class="font-display text-2xl mb-5">Papan Pemuka ${year}</h1><div id="stats">Memuatkan...</div>`
+  wrap.innerHTML = `<h1 class="font-display text-2xl mb-5">Dashboard ${year}</h1><div id="stats">Memuatkan...</div>`
   const { data } = await supabase.rpc('get_dashboard_totals', { p_year: year })
   const stats = wrap.querySelector('#stats')
   const jumlahTelur = data?.jumlah_telur || 0
