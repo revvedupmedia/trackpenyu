@@ -97,6 +97,25 @@ document.documentElement.classList.add(savedTheme)
 document.getElementById('themeIcon').textContent = savedTheme === 'dark' ? '🌙' : '☀️'
 
 // ---------- Background video (from Supabase storage, admin-uploadable) ----------
+async function getAccessToken() {
+  const { data } = await supabase.auth.getSession()
+  return data.session?.access_token
+}
+
+function uploadVideoWithProgress(file, token, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${SUPABASE_URL}/storage/v1/object/app-assets/background.mp4`)
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    xhr.setRequestHeader('apikey', SUPABASE_ANON_KEY)
+    xhr.setRequestHeader('x-upsert', 'true')
+    xhr.setRequestHeader('Content-Type', file.type || 'video/mp4')
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100)) }
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(`Upload gagal (${xhr.status})`))
+    xhr.onerror = () => reject(new Error('Ralat rangkaian semasa muat naik'))
+    xhr.send(file)
+  })
+}
 const { data: vid } = supabase.storage.from('app-assets').getPublicUrl('background.mp4')
 if (vid?.publicUrl) document.getElementById('bgvideo').src = vid.publicUrl
 
@@ -242,6 +261,7 @@ function screenLogin() {
     await loadProfile(data.user.id)
     const ok = await enforceIslandGate()
     if (!ok) return // enforceIslandGate already signed out and redirected with an alert
+    await supabase.from('login_log').insert({ staff_id: data.user.id, island: state.island })
     go('entry')
   }
   return c
@@ -447,14 +467,24 @@ async function screenDashboard() {
 }
 
 // ---------- Admin ----------
+const MONTH_LABELS = ['Jan','Feb','Mac','Apr','Mei','Jun','Jul','Ogo','Sep','Okt','Nov','Dis']
+
 async function screenAdmin() {
   if (state.profile?.role !== 'admin') return card('Akses admin sahaja.')
   const year = new Date().getFullYear()
   const { data: t } = await supabase.from('targets').select('*').eq('year', year).maybeSingle()
+  const { data: mt } = await supabase.from('monthly_targets').select('*').eq('year', year)
+  const { data: logins } = await supabase
+    .from('login_log')
+    .select('*, staff_profiles(full_name, island)')
+    .order('logged_in_at', { ascending: false })
+    .limit(20)
+
   const wrap = document.createElement('div')
   wrap.innerHTML = `<h1 class="font-display text-2xl mb-5">Tetapan Admin</h1><div id="adminBody" class="space-y-5"></div>`
   const body = wrap.querySelector('#adminBody')
 
+  // --- Yearly target ---
   const targetCard = card(`
     <h2 class="font-display text-lg mb-3">Sasaran Tahunan</h2>
     <p class="text-sm opacity-70 mb-3">Tukar sendiri setiap tahun — tiada perlu coding.</p>
@@ -471,19 +501,78 @@ async function screenAdmin() {
     const m = targetCard.querySelector('#a_msg'); m.textContent = 'Sasaran disimpan ✓'; m.classList.remove('hidden')
   }
 
+  // --- Monthly targets ---
+  const monthlyMap = {}
+  ;(mt || []).forEach(r => { monthlyMap[r.month] = r.target_value })
+  const monthInputs = MONTH_LABELS.map((label, i) => {
+    const m = i + 1
+    return `<div><label class="text-xs opacity-70">${label}</label><input type="number" id="am_${m}" value="${monthlyMap[m] ?? ''}" placeholder="-" /></div>`
+  }).join('')
+  const monthlyCard = card(`
+    <h2 class="font-display text-lg mb-3">Sasaran Bulanan ${year}</h2>
+    <p class="text-sm opacity-70 mb-3">Pilihan — pecahkan sasaran tahunan ikut bulan kalau perlu.</p>
+    <div class="grid grid-cols-3 gap-2">${monthInputs}</div>
+    <button id="a_saveMonthly" class="btn btn-primary mt-3">Simpan Sasaran Bulanan</button>
+    <div id="a_monthlyMsg" class="hidden text-sm mt-2 text-emerald-300"></div>
+  `)
+  body.appendChild(monthlyCard)
+  monthlyCard.querySelector('#a_saveMonthly').onclick = async () => {
+    const rows = MONTH_LABELS.map((_, i) => {
+      const m = i + 1
+      const val = monthlyCard.querySelector(`#am_${m}`).value
+      return val === '' ? null : { year, month: m, target_value: Number(val) }
+    }).filter(Boolean)
+    if (rows.length) await supabase.from('monthly_targets').upsert(rows)
+    const m = monthlyCard.querySelector('#a_monthlyMsg'); m.textContent = 'Sasaran bulanan disimpan ✓'; m.classList.remove('hidden')
+  }
+
+  // --- Video upload with progress ---
   const videoCard = card(`
     <h2 class="font-display text-lg mb-3">Video Latar Belakang</h2>
     <p class="text-sm opacity-70 mb-3">Muat naik video baru (MP4, disyorkan &lt;15MB).</p>
     <input type="file" accept="video/mp4" id="a_video" class="text-sm" />
+    <div id="a_videoProgress" class="hidden mt-3">
+      <div class="h-2 rounded-full bg-black/20 overflow-hidden"><div id="a_videoBar" class="h-full bg-emerald-400 transition-all" style="width:0%"></div></div>
+      <div id="a_videoPct" class="text-xs opacity-70 mt-1">0%</div>
+    </div>
     <div id="a_videoMsg" class="hidden text-sm mt-2 text-emerald-300"></div>
   `)
   body.appendChild(videoCard)
   videoCard.querySelector('#a_video').onchange = async (e) => {
     const file = e.target.files[0]
     if (!file) return
-    await supabase.storage.from('app-assets').upload('background.mp4', file, { upsert: true })
-    const m = videoCard.querySelector('#a_videoMsg'); m.textContent = 'Dikemaskini ✓ (refresh untuk lihat)'; m.classList.remove('hidden')
+    const progWrap = videoCard.querySelector('#a_videoProgress')
+    const bar = videoCard.querySelector('#a_videoBar')
+    const pct = videoCard.querySelector('#a_videoPct')
+    const msg = videoCard.querySelector('#a_videoMsg')
+    msg.classList.add('hidden')
+    progWrap.classList.remove('hidden')
+    bar.style.width = '0%'; pct.textContent = '0%'
+    try {
+      const token = await getAccessToken()
+      await uploadVideoWithProgress(file, token, (p) => { bar.style.width = p + '%'; pct.textContent = p + '%' })
+      msg.textContent = 'Video dikemaskini ✓ (refresh untuk lihat)'
+      msg.classList.remove('hidden')
+    } catch (err) {
+      alert('Gagal muat naik video: ' + err.message)
+    }
   }
+
+  // --- Staff login history ---
+  const historyRows = (logins || []).map(l => {
+    const name = l.staff_profiles?.full_name || 'Tidak diketahui'
+    const island = l.staff_profiles?.island || l.island || '-'
+    const time = new Date(l.logged_in_at).toLocaleString('ms-MY')
+    return `<div class="flex justify-between border-b border-white/10 pb-2 text-sm">
+      <span>${name} <span class="opacity-60">(${island})</span></span>
+      <span class="opacity-70 tabular-num">${time}</span>
+    </div>`
+  }).join('') || '<div class="text-sm opacity-70">Belum ada rekod log masuk.</div>'
+
+  body.appendChild(card(`
+    <h2 class="font-display text-lg mb-3">Sejarah Log Masuk Staf</h2>
+    <div class="space-y-2">${historyRows}</div>
+  `))
 
   body.appendChild(card(`
     <h2 class="font-display text-lg mb-3">Urus Staf &amp; Pulau</h2>
