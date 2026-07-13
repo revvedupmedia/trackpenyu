@@ -123,9 +123,12 @@ window.addEventListener('online', flushQueue)
 flushQueue()
 
 // ---------- Router ----------
-async function go(route) {
-  location.hash = route
-  await render(route)
+function go(route) {
+  if (location.hash.slice(1) === route) {
+    render(route) // hash unchanged, hashchange won't fire — render manually
+  } else {
+    location.hash = route // hashchange listener below handles the render
+  }
 }
 window.go = go
 
@@ -312,7 +315,7 @@ function screenEntry() {
       e.preventDefault()
       const payload = mode === 'new' ? {
         island: state.island, tarikh_dijumpai: c.querySelector('#f_tarikh').value,
-        staff_id: state.profile.id, species: c.querySelector('#f_species').value,
+        species: c.querySelector('#f_species').value,
         bertag, ram, jumlah_telur_diram: Number(c.querySelector('#f_jumlah').value),
         catatan: c.querySelector('#f_catatan').value || null, status: 'diram', created_by: state.profile.id
       } : {
@@ -357,11 +360,25 @@ function screenEntry() {
     }, 1000)
 
     submitBtn.onclick = async () => {
+      submitBtn.disabled = true
+      submitBtn.textContent = 'Menghantar...'
+      let err = null
       if (!navigator.onLine) {
         queueWrite({ op: mode==='new'?'insert':'update', payload })
       } else {
-        if (mode === 'new') await supabase.from('nest_records').insert(payload)
-        else await supabase.from('nest_records').update(payload)
+        if (mode === 'new') {
+          const res = await supabase.from('nest_records').insert(payload)
+          err = res.error
+        } else {
+          const res = await supabase.from('nest_records').update(payload)
+          err = res.error
+        }
+      }
+      if (err) {
+        submitBtn.disabled = false
+        submitBtn.textContent = 'Hantar Sekarang'
+        alert('Gagal menghantar: ' + err.message)
+        return
       }
       body.innerHTML = ''
       const done = card(`<div class="text-center py-10"><div class="text-5xl mb-3">✅</div><p class="font-display text-lg">${navigator.onLine ? 'Data dihantar!' : 'Disimpan — akan sync bila online'}</p></div>`)
