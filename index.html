@@ -166,8 +166,6 @@ document.getElementById('themeIcon').textContent = savedTheme === 'dark' ? '🌙
 const bgVideoEl = document.getElementById('bgvideo')
 bgVideoEl.src = 'assets/background.mp4'
 bgVideoEl.onerror = () => { bgVideoEl.style.display = 'none' } // no crash if file not added yet
-const { data: vid } = supabase.storage.from('app-assets').getPublicUrl('background.mp4')
-if (vid?.publicUrl) document.getElementById('bgvideo').src = vid.publicUrl
 
 // ---------- Offline queue (localStorage-based, simple) ----------
 function queueWrite(write) {
