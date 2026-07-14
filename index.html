@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@600&display=swap" rel="stylesheet" />
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root { --text-color:#F7F2E7; --text-outline:#061319; }
   html.light { --text-color:#0A1F2B; --text-outline:#F7F2E7; }
@@ -20,16 +22,13 @@
   }
   .font-display { font-family:'Fraunces',serif; letter-spacing:-.02em; }
   .tabular-num { font-family:'JetBrains Mono',monospace; font-variant-numeric:tabular-nums; }
+  .eyebrow { font-size:.7rem; text-transform:uppercase; letter-spacing:.1em; opacity:.6; font-weight:600; }
 
-  /* Frosted card — now with a soft gradient edge and hover lift for a more
-     alive, modern feel instead of a flat static box */
   .frosted {
-    position:relative;
-    border-radius:1.5rem;
+    position:relative; border-radius:1.5rem;
     border:1px solid rgba(255,255,255,.08);
     box-shadow:0 8px 30px rgba(0,0,0,.35), 0 1px 0 rgba(255,255,255,.04) inset;
-    backdrop-filter:blur(10px);
-    background:rgba(10,31,43,.94);
+    backdrop-filter:blur(10px); background:rgba(10,31,43,.94);
     transition: transform .25s cubic-bezier(.16,1,.3,1), box-shadow .25s ease, background-color .25s ease, border-color .25s ease;
   }
   html.light .frosted { background:rgba(247,242,231,.96); border:1px solid rgba(10,31,43,.08); }
@@ -40,6 +39,8 @@
     -webkit-mask:linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
     -webkit-mask-composite:xor; mask-composite:exclude; pointer-events:none;
   }
+  .frosted-flat { position:relative; border-radius:1.25rem; border:1px solid rgba(255,255,255,.08); background:rgba(10,31,43,.85); backdrop-filter:blur(8px); }
+  html.light .frosted-flat { background:rgba(247,242,231,.9); border:1px solid rgba(10,31,43,.08); }
 
   input,select,textarea {
     background:rgba(0,0,0,.2); border:1px solid rgba(255,255,255,.1);
@@ -47,65 +48,39 @@
     transition: border-color .2s ease, box-shadow .2s ease;
   }
   html.light input, html.light select, html.light textarea { background:rgba(0,0,0,.05); }
-  input:focus, select:focus, textarea:focus {
-    outline:none; border-color:#2E9099; box-shadow:0 0 0 3px rgba(46,144,153,.25);
-  }
-
-  /* Override browser autofill (Chrome/Brave force a pale background on
-     autofilled fields, which fights our light text color and makes it
-     unreadable) — force our own dark fill instead */
-  input:-webkit-autofill, input:-webkit-autofill:hover,
-  input:-webkit-autofill:focus, input:-webkit-autofill:active {
+  input:focus, select:focus, textarea:focus { outline:none; border-color:#2E9099; box-shadow:0 0 0 3px rgba(46,144,153,.25); }
+  input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus, input:-webkit-autofill:active {
     -webkit-text-fill-color: var(--text-color) !important;
     -webkit-box-shadow: 0 0 0px 1000px rgba(0,0,0,.3) inset !important;
-    caret-color: var(--text-color);
-    transition: background-color 9999s ease-in-out 0s;
+    caret-color: var(--text-color); transition: background-color 9999s ease-in-out 0s;
   }
   html.light input:-webkit-autofill, html.light input:-webkit-autofill:hover,
   html.light input:-webkit-autofill:focus, html.light input:-webkit-autofill:active {
     -webkit-box-shadow: 0 0 0px 1000px rgba(0,0,0,.06) inset !important;
   }
 
-  .btn {
-    border-radius:.75rem 1.1rem .75rem 1.1rem; padding:.8rem 1.3rem; font-weight:600;
-    transition: transform .15s cubic-bezier(.34,1.56,.64,1), box-shadow .2s ease, filter .2s ease;
-    position:relative;
-  }
+  .btn { border-radius:.75rem 1.1rem .75rem 1.1rem; padding:.8rem 1.3rem; font-weight:600; transition: transform .15s cubic-bezier(.34,1.56,.64,1), box-shadow .2s ease, filter .2s ease; position:relative; }
   .btn:active { transform:scale(.94); }
   .btn:hover { filter:brightness(1.08); }
-  .btn-primary {
-    background:linear-gradient(135deg, #1F6F78, #164e54);
-    border:1px solid #2E9099;
-    box-shadow:0 4px 20px -4px rgba(46,144,153,.5);
-  }
+  .btn-primary { background:linear-gradient(135deg, #1F6F78, #164e54); border:1px solid #2E9099; box-shadow:0 4px 20px -4px rgba(46,144,153,.5); }
   .btn-primary:hover { box-shadow:0 6px 26px -4px rgba(46,144,153,.7); }
   .btn-ghost { background:transparent; border:1px solid rgba(255,255,255,.15); }
   .btn-ghost:hover { background:rgba(255,255,255,.05); border-color:rgba(255,255,255,.3); }
+  .btn-sm { padding:.5rem .9rem; font-size:.8rem; }
   .btn:disabled { opacity:.4; pointer-events:none; }
-  .btn-back {
-    display:inline-flex; align-items:center; gap:.4rem; font-size:.875rem;
-    opacity:.75; padding:.4rem .2rem; margin-bottom:.75rem;
-  }
+  .btn-back { display:inline-flex; align-items:center; gap:.4rem; font-size:.875rem; opacity:.75; padding:.4rem .2rem; margin-bottom:.75rem; }
   .btn-back:hover { opacity:1; transform:translateX(-2px); }
 
-  /* Screen + card entrance animation — springier, more "alive" than a flat fade */
   .screen { animation:screenIn .4s cubic-bezier(.16,1,.3,1) both; }
   @keyframes screenIn { from{opacity:0; transform:translateY(14px) scale(.98);} to{opacity:1; transform:translateY(0) scale(1);} }
   #app { animation:appIn .35s cubic-bezier(.16,1,.3,1); }
   @keyframes appIn { from{opacity:0;} to{opacity:1;} }
 
-  #bgvideo { position:fixed; inset:0; width:100%; height:100%; object-fit:cover; z-index:-2; filter:brightness(1.15); }
-  #bgtint {
-    position:fixed; inset:0; z-index:-1;
-    background:linear-gradient(180deg, rgba(6,19,25,.35) 0%, rgba(6,19,25,.4) 55%, rgba(6,19,25,.85) 100%);
-  }
-  html.light #bgtint {
-    background:linear-gradient(180deg, rgba(247,242,231,.3) 0%, rgba(247,242,231,.35) 55%, rgba(247,242,231,.8) 100%);
-  }
+  #bgvideo { position:fixed; inset:0; width:100%; height:100%; object-fit:cover; z-index:-2; filter:brightness(1.2); }
+  #bgtint { position:fixed; inset:0; z-index:-1; background:rgba(6,19,25,.2); }
+  html.light #bgtint { background:rgba(247,242,231,.2); }
 
-  /* Ambient glow orbs behind content when there's no video yet — keeps the
-     screen from feeling flat/empty, still reads as deliberate and modern */
-  .ambient-orb { position:fixed; border-radius:50%; filter:blur(80px); z-index:-1; opacity:.35; pointer-events:none; }
+  .ambient-orb { position:fixed; border-radius:50%; filter:blur(90px); z-index:-1; opacity:.28; pointer-events:none; }
   #orb1 { width:420px; height:420px; top:-100px; left:-100px; background:#1F6F78; }
   #orb2 { width:380px; height:380px; bottom:-120px; right:-80px; background:#7C9473; }
 
@@ -113,8 +88,22 @@
   nav button, nav a { transition: transform .15s cubic-bezier(.34,1.56,.64,1), background-color .2s ease; border-radius:.75rem; }
   nav button:active { transform:scale(.88); }
 
-  /* Progress bars, badges get a touch of glow */
-  .glow-bar { box-shadow:0 0 12px rgba(110,231,183,.5); }
+  .seg { display:flex; gap:.4rem; padding:.3rem; border-radius:1rem; background:rgba(0,0,0,.18); }
+  html.light .seg { background:rgba(0,0,0,.05); }
+  .seg button { flex:1; padding:.6rem .5rem; border-radius:.7rem; font-size:.85rem; font-weight:600; transition: all .2s ease; }
+  .seg button.active { background:linear-gradient(135deg,#1F6F78,#164e54); box-shadow:0 2px 10px -2px rgba(46,144,153,.5); }
+
+  .xp-bar { height:14px; border-radius:999px; background:rgba(0,0,0,.25); overflow:hidden; position:relative; }
+  .xp-fill { height:100%; background:linear-gradient(90deg,#1F6F78,#6EE7B7); border-radius:999px; transition:width 1s cubic-bezier(.16,1,.3,1); box-shadow:0 0 16px rgba(110,231,183,.6); }
+  .milestone { position:absolute; top:-4px; width:2px; height:22px; background:rgba(255,255,255,.35); }
+
+  .list-row { display:flex; align-items:center; gap:.75rem; padding:.85rem; border-radius:1rem; }
+  .list-row:hover { background:rgba(255,255,255,.03); }
+  .avatar-badge { width:38px; height:38px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:.85rem; flex-shrink:0; background:linear-gradient(135deg,#1F6F78,#164e54); }
+
+  .type-pill { font-size:.65rem; font-weight:700; padding:.15rem .5rem; border-radius:999px; text-transform:uppercase; letter-spacing:.03em; }
+  .type-harian { background:rgba(124,148,115,.25); color:#9AB18F; }
+  .type-individu { background:rgba(46,144,153,.25); color:#6EE7B7; }
 </style>
 </head>
 <body class="dark">
@@ -126,23 +115,21 @@
 <div id="app" class="max-w-lg mx-auto px-5 py-8 pb-28"></div>
 
 <nav id="navbar" class="fixed bottom-0 inset-x-0 px-4 pb-4 hidden">
-  <div class="frosted flex items-center justify-around px-2 py-2 max-w-md mx-auto">
-    <button onclick="go('entry')" class="flex flex-col items-center px-3 py-1.5">🐢<span class="text-[11px]">Log</span></button>
-    <button onclick="go('myentries')" class="flex flex-col items-center px-3 py-1.5">📋<span class="text-[11px]">Entri</span></button>
-    <button onclick="go('dashboard')" class="flex flex-col items-center px-3 py-1.5">📊<span class="text-[11px]">Dashboard</span></button>
-    <button id="navAdmin" onclick="go('admin')" class="flex-col items-center px-3 py-1.5 hidden">⚙️<span class="text-[11px]">Admin</span></button>
-    <button onclick="toggleTheme()" class="flex flex-col items-center px-3 py-1.5"><span id="themeIcon">🌙</span><span class="text-[11px]">Mod</span></button>
-    <button onclick="logout()" class="flex flex-col items-center px-3 py-1.5">🚪<span class="text-[11px]">Keluar</span></button>
+  <div class="frosted flex items-center justify-around px-2 py-2 max-w-md mx-auto overflow-x-auto">
+    <button onclick="go('entry')" class="flex flex-col items-center px-2.5 py-1.5">🐢<span class="text-[10px]">Log</span></button>
+    <button onclick="go('entries')" class="flex flex-col items-center px-2.5 py-1.5">📋<span class="text-[10px]">Entri</span></button>
+    <button onclick="go('dashboard')" class="flex flex-col items-center px-2.5 py-1.5">📊<span class="text-[10px]">Dashboard</span></button>
+    <button id="navAdmin" onclick="go('admin')" class="flex-col items-center px-2.5 py-1.5 hidden">⚙️<span class="text-[10px]">Admin</span></button>
+    <button onclick="toggleTheme()" class="flex flex-col items-center px-2.5 py-1.5"><span id="themeIcon">🌙</span><span class="text-[10px]">Mod</span></button>
+    <button onclick="logout()" class="flex flex-col items-center px-2.5 py-1.5">🚪<span class="text-[10px]">Keluar</span></button>
   </div>
 </nav>
 
 <script type="module">
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-// ---- CONFIG: fill these in with your Supabase project values ----
 const SUPABASE_URL = 'https://oatbghgoxedccxdjwalt.supabase.co'
 const SUPABASE_ANON_KEY = 'sb_publishable_gQIBBbRniU3ixnV8eCDuYw_LeWpu0jK'
-// -------------------------------------------------------------------
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 const app = document.getElementById('app')
@@ -152,8 +139,10 @@ const ISLANDS = [
   { code:'PSB', name:'Pulau Satang Besar' }
 ]
 const SPECIES = ['Penyu Agar (Green Turtle)','Penyu Karah (Hawksbill)','Lain-lain']
+const MONTH_LABELS = ['Jan','Feb','Mac','Apr','Mei','Jun','Jul','Ogo','Sep','Okt','Nov','Dis']
+const MONTH_SHEET_NAMES = ['JAN','FEB','MAC','APRIL','MEI','JUN','JULAI','OGOS','SEPT','OKTO','NOV','DIS']
 
-let state = { island: sessionStorage.getItem('penyu-island') || null, profile: null }
+let state = { island: sessionStorage.getItem('penyu-island') || null, profile: null, editTarget: null, entriesTab: 'saya' }
 
 // ---------- Theme ----------
 function toggleTheme() {
@@ -180,14 +169,12 @@ document.documentElement.classList.remove('dark','light')
 document.documentElement.classList.add(savedTheme)
 document.getElementById('themeIcon').textContent = savedTheme === 'dark' ? '🌙' : '☀️'
 
-// ---------- Background video (static file in repo, not Supabase Storage —
-// simpler and avoids upload-permission complexity for a file that rarely
-// changes; to update it, replace assets/background.mp4 and git push) ----------
+// ---------- Background video (repo file) ----------
 const bgVideoEl = document.getElementById('bgvideo')
 bgVideoEl.src = 'assets/background.mp4'
-bgVideoEl.onerror = () => { bgVideoEl.style.display = 'none' } // no crash if file not added yet
+bgVideoEl.onerror = () => { bgVideoEl.style.display = 'none' }
 
-// ---------- Offline queue (localStorage-based, simple) ----------
+// ---------- Offline queue ----------
 function queueWrite(write) {
   const q = JSON.parse(localStorage.getItem('penyu-queue') || '[]')
   q.push(write)
@@ -199,8 +186,8 @@ async function flushQueue() {
   while (q.length) {
     const w = q[0]
     try {
-      if (w.op === 'insert') await supabase.from('nest_records').insert(w.payload)
-      else await supabase.from('nest_records').update(w.payload).eq('id', w.id)
+      if (w.op === 'insert') await supabase.from(w.table).insert(w.payload)
+      else await supabase.from(w.table).update(w.payload).eq('id', w.id)
       q.shift()
     } catch (e) { break }
   }
@@ -209,21 +196,22 @@ async function flushQueue() {
 window.addEventListener('online', flushQueue)
 flushQueue()
 
+// ---------- Draft persistence (anti-frustration: survive accidental back/refresh) ----------
+function saveDraft(key, data) { localStorage.setItem('draft-' + key, JSON.stringify(data)) }
+function loadDraft(key) { try { return JSON.parse(localStorage.getItem('draft-' + key)) } catch { return null } }
+function clearDraft(key) { localStorage.removeItem('draft-' + key) }
+
 // ---------- Router ----------
 function go(route) {
-  if (location.hash.slice(1) === route) {
-    render(route) // hash unchanged, hashchange won't fire — render manually
-  } else {
-    location.hash = route // hashchange listener below handles the render
-  }
+  if (location.hash.slice(1) === route) render(route)
+  else location.hash = route
 }
 window.go = go
-
 window.addEventListener('hashchange', () => render(location.hash.slice(1) || 'island'))
 
 async function render(route) {
-  document.getElementById('navbar').classList.toggle('hidden', !['entry','myentries','dashboard','admin'].includes(route))
-  if (['entry','myentries','dashboard','admin'].includes(route) && !state.profile) {
+  document.getElementById('navbar').classList.toggle('hidden', !['entry','entries','dashboard','admin'].includes(route))
+  if (['entry','entries','dashboard','admin'].includes(route) && !state.profile) {
     const { data } = await supabase.auth.getUser()
     if (!data.user) { route = 'island'; location.hash = 'island' }
     else {
@@ -236,9 +224,8 @@ async function render(route) {
     document.getElementById('navAdmin').classList.toggle('hidden', state.profile.role !== 'admin')
     document.getElementById('navAdmin').classList.toggle('flex', state.profile.role === 'admin')
   }
-
   const screens = { island: screenIsland, login: screenLogin, entry: screenEntry,
-    myentries: screenMyEntries, dashboard: screenDashboard, admin: screenAdmin }
+    entries: screenEntries, editentry: screenEditEntry, dashboard: screenDashboard, admin: screenAdmin }
   app.innerHTML = ''
   const el = await (screens[route] || screenIsland)()
   app.appendChild(el)
@@ -250,10 +237,6 @@ async function loadProfile(userId) {
   return data
 }
 
-// Single source of truth for the island gate — called after EVERY profile
-// load (login, refresh, direct navigation), not just the login button.
-// This is what stops a staff account from ever seeing another island's
-// data, regardless of which code path loaded their session.
 async function enforceIslandGate() {
   if (!state.profile) return false
   if (state.profile.role === 'admin') return true
@@ -272,6 +255,12 @@ async function enforceIslandGate() {
 function card(innerHTML, extraClass = '') {
   const d = document.createElement('div')
   d.className = `frosted p-5 screen ${extraClass}`
+  d.innerHTML = innerHTML
+  return d
+}
+function flatCard(innerHTML, extraClass = '') {
+  const d = document.createElement('div')
+  d.className = `frosted-flat p-4 screen ${extraClass}`
   d.innerHTML = innerHTML
   return d
 }
@@ -317,130 +306,132 @@ function screenLogin() {
     </form>
   `, 'max-w-sm mx-auto mt-10')
   c.querySelector('#backToIsland').onclick = () => { sessionStorage.removeItem('penyu-island'); state.island = null; go('island') }
-
   c.querySelector('#loginForm').onsubmit = async (e) => {
     e.preventDefault()
     const email = c.querySelector('#email').value
     const password = c.querySelector('#password').value
     const errBox = c.querySelector('#loginError')
     errBox.classList.add('hidden')
-
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) { errBox.textContent = error.message; errBox.classList.remove('hidden'); return }
-
     await loadProfile(data.user.id)
     const ok = await enforceIslandGate()
-    if (!ok) return // enforceIslandGate already signed out and redirected with an alert
+    if (!ok) return
     await supabase.from('login_log').insert({ staff_id: data.user.id, island: state.island })
     go('entry')
   }
   return c
 }
 
-// ---------- Entry form ----------
+// =========================================================================
+// ENTRY — two modes: Harian (daily aggregate) and Individu (per-turtle)
+// =========================================================================
 function screenEntry() {
   const wrap = document.createElement('div')
-  let mode = 'new'
-  let step = 'form'
+  let mode = localStorage.getItem('penyu-lastmode') || 'harian'
   wrap.innerHTML = `
-    <div class="flex gap-2 mb-6">
-      <button id="modeNew" class="btn btn-primary flex-1">Sarang Baru</button>
-      <button id="modeHatch" class="btn btn-ghost flex-1">Kemaskini Menetas</button>
+    <div class="seg mb-6">
+      <button id="modeHarian" class="${mode==='harian'?'active':''}">Entri Harian</button>
+      <button id="modeIndividu" class="${mode==='individu'?'active':''}">Entri Individu</button>
     </div>
     <div id="entryBody"></div>
   `
   const body = wrap.querySelector('#entryBody')
+  function setMode(m) {
+    mode = m; localStorage.setItem('penyu-lastmode', m)
+    wrap.querySelector('#modeHarian').className = mode==='harian' ? 'active' : ''
+    wrap.querySelector('#modeIndividu').className = mode==='individu' ? 'active' : ''
+    body.innerHTML = ''
+    body.appendChild(mode === 'harian' ? buildHarianForm() : buildIndividuForm())
+  }
+  wrap.querySelector('#modeHarian').onclick = () => setMode('harian')
+  wrap.querySelector('#modeIndividu').onclick = () => setMode('individu')
+  body.appendChild(mode === 'harian' ? buildHarianForm() : buildIndividuForm())
+  return wrap
+}
+
+// ---- Entri Harian (matches Excel template's per-day-per-RAM row shape) ----
+function buildHarianForm() {
+  const draft = loadDraft('harian') || {}
+  const today = new Date().toISOString().slice(0,10)
+  const holder = document.createElement('div')
 
   function renderForm() {
-    wrap.querySelector('#modeNew').className = `btn flex-1 ${mode==='new'?'btn-primary':'btn-ghost'}`
-    wrap.querySelector('#modeHatch').className = `btn flex-1 ${mode==='hatch'?'btn-primary':'btn-ghost'}`
-    const today = new Date().toISOString().slice(0,10)
-    body.innerHTML = ''
+    holder.innerHTML = ''
     const c = card(`
-      <form id="entryForm" class="space-y-4">
-        <div><label class="text-sm opacity-80">Tarikh</label><input type="date" required value="${today}" id="f_tarikh" /></div>
-        ${mode === 'new' ? `
-          <div><label class="text-sm opacity-80">Spesies</label>
-            <select id="f_species">${SPECIES.map(s=>`<option>${s}</option>`).join('')}</select></div>
-          <div><label class="text-sm opacity-80">Status Tag</label>
-            <div class="flex gap-2 mt-1">
-              <button type="button" id="f_bertag_yes" class="btn btn-ghost flex-1">Bertag</button>
-              <button type="button" id="f_bertag_no" class="btn btn-ghost flex-1">Tak Bertag</button>
-            </div></div>
-          <div><label class="text-sm opacity-80">RAM</label>
-            <div class="flex gap-2 mt-1">
-              <button type="button" id="f_ram_lpp" class="btn btn-primary flex-1">LPP</button>
-              <button type="button" id="f_ram_sfc" class="btn btn-ghost flex-1">SFC</button>
-            </div></div>
-          <div><label class="text-sm opacity-80">Jumlah Telur Diram</label>
-            <input type="number" inputmode="numeric" required id="f_jumlah" class="text-lg" /></div>
-          <div><label class="text-sm opacity-80">Catatan (pilihan)</label><textarea id="f_catatan" rows="2"></textarea></div>
-        ` : `
-          <div><label class="text-sm opacity-80">Jumlah Telur Diram (rujukan)</label><input type="number" inputmode="numeric" id="f_jumlah" /></div>
-          <div><label class="text-sm opacity-80">Telur Menetas</label><input type="number" inputmode="numeric" required id="f_menetas" class="text-lg" /></div>
-          <div><label class="text-sm opacity-80">Telur Buruk</label><input type="number" inputmode="numeric" required id="f_buruk" class="text-lg" /></div>
-          <div id="f_warning" class="hidden text-sm bg-amber-500/10 border border-amber-500/30 rounded px-3 py-2">⚠️ Menetas + buruk melebihi jumlah diram. Semak semula — tapi boleh hantar jika betul.</div>
-        `}
+      <form id="harianForm" class="space-y-4">
+        <div><label class="text-sm opacity-80">Tarikh</label><input type="date" required value="${draft.tarikh || today}" id="h_tarikh" /></div>
+        <div>
+          <label class="text-sm opacity-80">RAM</label>
+          <div class="seg mt-1">
+            <button type="button" id="h_ram_lpp" class="${(draft.ram||'LPP')==='LPP'?'active':''}">LPP</button>
+            <button type="button" id="h_ram_sfc" class="${draft.ram==='SFC'?'active':''}">SFC</button>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs opacity-70">Bilangan Penyu Bertag</label><input type="number" inputmode="numeric" id="h_bp_bertag" value="${draft.bp_bertag ?? ''}" /></div>
+          <div><label class="text-xs opacity-70">Bilangan Penyu Tak Bertag</label><input type="number" inputmode="numeric" id="h_bp_takbertag" value="${draft.bp_takbertag ?? ''}" /></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs opacity-70">Jumlah Telur Diram (Bertag)</label><input type="number" inputmode="numeric" id="h_telur_bertag" value="${draft.telur_bertag ?? ''}" class="text-lg" /></div>
+          <div><label class="text-xs opacity-70">Jumlah Telur Diram (Tak Bertag)</label><input type="number" inputmode="numeric" id="h_telur_takbertag" value="${draft.telur_takbertag ?? ''}" class="text-lg" /></div>
+        </div>
+        <div><label class="text-sm opacity-80">Catatan (pilihan)</label><textarea id="h_catatan" rows="2">${draft.catatan || ''}</textarea></div>
         <button type="submit" class="btn btn-primary w-full">Semak &amp; Hantar →</button>
       </form>
     `)
-    body.appendChild(c)
+    holder.appendChild(c)
 
-    let bertag = null, ram = 'LPP'
-    if (mode === 'new') {
-      c.querySelector('#f_bertag_yes').onclick = () => { bertag = true; c.querySelector('#f_bertag_yes').className='btn btn-primary flex-1'; c.querySelector('#f_bertag_no').className='btn btn-ghost flex-1' }
-      c.querySelector('#f_bertag_no').onclick = () => { bertag = false; c.querySelector('#f_bertag_no').className='btn btn-primary flex-1'; c.querySelector('#f_bertag_yes').className='btn btn-ghost flex-1' }
-      c.querySelector('#f_ram_lpp').onclick = () => { ram='LPP'; c.querySelector('#f_ram_lpp').className='btn btn-primary flex-1'; c.querySelector('#f_ram_sfc').className='btn btn-ghost flex-1' }
-      c.querySelector('#f_ram_sfc').onclick = () => { ram='SFC'; c.querySelector('#f_ram_sfc').className='btn btn-primary flex-1'; c.querySelector('#f_ram_lpp').className='btn btn-ghost flex-1' }
-    } else {
-      const checkWarn = () => {
-        const j = Number(c.querySelector('#f_jumlah').value||0), m = Number(c.querySelector('#f_menetas').value||0), b = Number(c.querySelector('#f_buruk').value||0)
-        c.querySelector('#f_warning').classList.toggle('hidden', !(j && m+b > j))
-      }
-      c.querySelector('#f_menetas').oninput = checkWarn
-      c.querySelector('#f_buruk').oninput = checkWarn
+    let ram = draft.ram || 'LPP'
+    const setRam = (r) => { ram = r; c.querySelector('#h_ram_lpp').className = r==='LPP'?'active':''; c.querySelector('#h_ram_sfc').className = r==='SFC'?'active':''; persistDraft() }
+    c.querySelector('#h_ram_lpp').onclick = () => setRam('LPP')
+    c.querySelector('#h_ram_sfc').onclick = () => setRam('SFC')
+
+    function persistDraft() {
+      draft.tarikh = c.querySelector('#h_tarikh').value
+      draft.ram = ram
+      draft.bp_bertag = c.querySelector('#h_bp_bertag').value
+      draft.bp_takbertag = c.querySelector('#h_bp_takbertag').value
+      draft.telur_bertag = c.querySelector('#h_telur_bertag').value
+      draft.telur_takbertag = c.querySelector('#h_telur_takbertag').value
+      draft.catatan = c.querySelector('#h_catatan').value
+      saveDraft('harian', draft)
     }
+    c.querySelectorAll('input, textarea').forEach(el => el.addEventListener('input', persistDraft))
 
-    c.querySelector('#entryForm').onsubmit = (e) => {
+    c.querySelector('#harianForm').onsubmit = (e) => {
       e.preventDefault()
-      const payload = mode === 'new' ? {
-        island: state.island, tarikh_dijumpai: c.querySelector('#f_tarikh').value,
-        species: c.querySelector('#f_species').value,
-        bertag, ram, jumlah_telur_diram: Number(c.querySelector('#f_jumlah').value),
-        catatan: c.querySelector('#f_catatan').value || null, status: 'diram', created_by: state.profile.id
-      } : {
-        telur_menetas: Number(c.querySelector('#f_menetas').value),
-        telur_buruk: Number(c.querySelector('#f_buruk').value),
-        tarikh_menetas: c.querySelector('#f_tarikh').value, status: 'menetas', updated_by: state.profile.id
+      const payload = {
+        island: state.island, tarikh: c.querySelector('#h_tarikh').value, ram,
+        bilangan_penyu_bertag: Number(c.querySelector('#h_bp_bertag').value || 0),
+        bilangan_penyu_takbertag: Number(c.querySelector('#h_bp_takbertag').value || 0),
+        jumlah_telur_diram_bertag: Number(c.querySelector('#h_telur_bertag').value || 0),
+        jumlah_telur_diram_takbertag: Number(c.querySelector('#h_telur_takbertag').value || 0),
+        catatan: c.querySelector('#h_catatan').value || null,
+        created_by: state.profile.id
       }
-      renderSummary(payload)
+      renderHarianSummary(payload)
     }
   }
 
-  function renderSummary(payload) {
-    body.innerHTML = ''
+  function renderHarianSummary(payload) {
+    holder.innerHTML = ''
     let countdown = 5
-    const rows = mode === 'new' ? `
-      <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Pulau</span><span class="font-semibold">${state.island}</span></div>
-      <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Tarikh</span><span class="font-semibold">${payload.tarikh_dijumpai}</span></div>
-      <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Spesies</span><span class="font-semibold">${payload.species}</span></div>
-      <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Status Tag</span><span class="font-semibold">${payload.bertag?'Bertag':'Tak Bertag'}</span></div>
-      <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">RAM</span><span class="font-semibold">${payload.ram}</span></div>
-      <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Jumlah Telur</span><span class="font-semibold tabular-num">${payload.jumlah_telur_diram}</span></div>
-    ` : `
-      <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Tarikh</span><span class="font-semibold">${payload.tarikh_menetas}</span></div>
-      <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Telur Menetas</span><span class="font-semibold tabular-num">${payload.telur_menetas}</span></div>
-      <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Telur Buruk</span><span class="font-semibold tabular-num">${payload.telur_buruk}</span></div>
-    `
     const c = card(`
-      <h2 class="font-display text-xl mb-4">Sahkan Data</h2>
-      <div class="space-y-2 text-sm">${rows}</div>
+      <h2 class="font-display text-xl mb-4">Sahkan Data Harian</h2>
+      <div class="space-y-2 text-sm">
+        <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Pulau</span><span class="font-semibold">${state.island}</span></div>
+        <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Tarikh</span><span class="font-semibold">${payload.tarikh}</span></div>
+        <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">RAM</span><span class="font-semibold">${payload.ram}</span></div>
+        <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Bilangan Penyu (Bertag/Tak)</span><span class="font-semibold tabular-num">${payload.bilangan_penyu_bertag} / ${payload.bilangan_penyu_takbertag}</span></div>
+        <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Jumlah Telur (Bertag/Tak)</span><span class="font-semibold tabular-num">${payload.jumlah_telur_diram_bertag} / ${payload.jumlah_telur_diram_takbertag}</span></div>
+      </div>
       <div class="flex gap-2 mt-6">
         <button id="backBtn" class="btn btn-ghost flex-1">← Betulkan</button>
         <button id="submitBtn" class="btn btn-primary flex-1" disabled>Tunggu 5s...</button>
       </div>
     `)
-    body.appendChild(c)
+    holder.appendChild(c)
     c.querySelector('#backBtn').onclick = renderForm
     const submitBtn = c.querySelector('#submitBtn')
     const iv = setInterval(() => {
@@ -448,71 +439,320 @@ function screenEntry() {
       if (countdown <= 0) { clearInterval(iv); submitBtn.disabled = false; submitBtn.textContent = 'Hantar Sekarang' }
       else submitBtn.textContent = `Tunggu ${countdown}s...`
     }, 1000)
-
     submitBtn.onclick = async () => {
-      submitBtn.disabled = true
-      submitBtn.textContent = 'Menghantar...'
+      submitBtn.disabled = true; submitBtn.textContent = 'Menghantar...'
       let err = null
-      if (!navigator.onLine) {
-        queueWrite({ op: mode==='new'?'insert':'update', payload })
-      } else {
-        if (mode === 'new') {
-          const res = await supabase.from('nest_records').insert(payload)
-          err = res.error
-        } else {
-          const res = await supabase.from('nest_records').update(payload)
-          err = res.error
-        }
-      }
-      if (err) {
-        submitBtn.disabled = false
-        submitBtn.textContent = 'Hantar Sekarang'
-        alert('Gagal menghantar: ' + err.message)
-        return
-      }
-      body.innerHTML = ''
-      const done = card(`<div class="text-center py-10"><div class="text-5xl mb-3">✅</div><p class="font-display text-lg">${navigator.onLine ? 'Data dihantar!' : 'Disimpan — akan sync bila online'}</p></div>`)
-      body.appendChild(done)
-      setTimeout(renderForm, 1800)
+      if (!navigator.onLine) { queueWrite({ table:'daily_entries', op:'insert', payload }) }
+      else { const res = await supabase.from('daily_entries').insert(payload); err = res.error }
+      if (err) { submitBtn.disabled = false; submitBtn.textContent = 'Hantar Sekarang'; alert('Gagal menghantar: ' + err.message); return }
+      clearDraft('harian')
+      holder.innerHTML = ''
+      holder.appendChild(card(`<div class="text-center py-10"><div class="text-5xl mb-3">✅</div><p class="font-display text-lg">${navigator.onLine ? 'Data harian dihantar!' : 'Disimpan — akan sync bila online'}</p></div>`))
+      setTimeout(() => { draft.telur_bertag=''; draft.telur_takbertag=''; draft.bp_bertag=''; draft.bp_takbertag=''; draft.catatan=''; renderForm() }, 1800)
     }
   }
 
-  wrap.querySelector('#modeNew').onclick = () => { mode='new'; renderForm() }
-  wrap.querySelector('#modeHatch').onclick = () => { mode='hatch'; renderForm() }
   renderForm()
+  return holder
+}
+
+// ---- Entri Individu (per-turtle, dynamic count, full draft persistence) ----
+function buildIndividuForm() {
+  const draft = loadDraft('individu') || { tarikh: new Date().toISOString().slice(0,10), count: 1, turtles: [] }
+  const holder = document.createElement('div')
+
+  function ensureTurtles(n) {
+    const arr = draft.turtles || []
+    while (arr.length < n) arr.push({ bertag: null, ram: 'LPP', jumlah: '' })
+    arr.length = n
+    draft.turtles = arr
+  }
+  ensureTurtles(Number(draft.count) || 1)
+
+  function renderSetup() {
+    holder.innerHTML = ''
+    const c = card(`
+      <div class="space-y-4">
+        <div><label class="text-sm opacity-80">Tarikh</label><input type="date" required value="${draft.tarikh}" id="i_tarikh" /></div>
+        <div>
+          <label class="text-sm opacity-80">Bilangan Penyu Hari Ini</label>
+          <select id="i_count">${Array.from({length:30},(_,i)=>i+1).map(n=>`<option value="${n}" ${n==draft.count?'selected':''}>${n} ekor</option>`).join('')}</select>
+        </div>
+        <button id="i_continue" class="btn btn-primary w-full">Teruskan →</button>
+      </div>
+    `)
+    holder.appendChild(c)
+    c.querySelector('#i_tarikh').oninput = (e) => { draft.tarikh = e.target.value; saveDraft('individu', draft) }
+    c.querySelector('#i_count').onchange = (e) => { draft.count = Number(e.target.value); ensureTurtles(draft.count); saveDraft('individu', draft) }
+    c.querySelector('#i_continue').onclick = renderTurtleList
+  }
+
+  function renderTurtleList() {
+    holder.innerHTML = ''
+    const header = document.createElement('div')
+    header.className = 'flex items-center justify-between mb-4'
+    header.innerHTML = `<button class="btn-back">← Tukar bilangan</button><span class="eyebrow">${draft.tarikh} · ${draft.count} ekor</span>`
+    header.querySelector('button').onclick = renderSetup
+    holder.appendChild(header)
+
+    const listWrap = document.createElement('div')
+    listWrap.className = 'space-y-3'
+    draft.turtles.forEach((t, i) => {
+      const tc = flatCard(`
+        <div class="flex items-center justify-between mb-2">
+          <span class="font-display text-base">Penyu #${i+1}</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2 mb-2">
+          <div class="seg" data-role="bertag">
+            <button type="button" data-val="true" class="${t.bertag===true?'active':''}">Bertag</button>
+            <button type="button" data-val="false" class="${t.bertag===false?'active':''}">Tak Bertag</button>
+          </div>
+          <div class="seg" data-role="ram">
+            <button type="button" data-val="LPP" class="${t.ram==='LPP'?'active':''}">LPP</button>
+            <button type="button" data-val="SFC" class="${t.ram==='SFC'?'active':''}">SFC</button>
+          </div>
+        </div>
+        <input type="number" inputmode="numeric" placeholder="Jumlah telur" value="${t.jumlah}" data-role="jumlah" class="text-lg" />
+      `, 'mb-0')
+      tc.querySelectorAll('[data-role="bertag"] button').forEach(b => b.onclick = () => {
+        t.bertag = b.dataset.val === 'true'
+        tc.querySelectorAll('[data-role="bertag"] button').forEach(x => x.className = x===b?'active':'')
+        saveDraft('individu', draft)
+      })
+      tc.querySelectorAll('[data-role="ram"] button').forEach(b => b.onclick = () => {
+        t.ram = b.dataset.val
+        tc.querySelectorAll('[data-role="ram"] button').forEach(x => x.className = x===b?'active':'')
+        saveDraft('individu', draft)
+      })
+      tc.querySelector('[data-role="jumlah"]').oninput = (e) => { t.jumlah = e.target.value; saveDraft('individu', draft) }
+      listWrap.appendChild(tc)
+    })
+    holder.appendChild(listWrap)
+
+    const submitWrap = document.createElement('div')
+    submitWrap.className = 'mt-4'
+    submitWrap.appendChild(card(`
+      <button id="i_review" class="btn btn-primary w-full">Semak Semua &amp; Hantar →</button>
+    `))
+    holder.appendChild(submitWrap)
+    submitWrap.querySelector('#i_review').onclick = () => {
+      const incomplete = draft.turtles.some(t => t.bertag === null || !t.jumlah)
+      if (incomplete) { alert('Sila lengkapkan semua ' + draft.count + ' penyu dahulu (status tag & jumlah telur).'); return }
+      renderIndividuSummary()
+    }
+  }
+
+  function renderIndividuSummary() {
+    holder.innerHTML = ''
+    let countdown = 5
+    const totalTelur = draft.turtles.reduce((s,t) => s + Number(t.jumlah||0), 0)
+    const c = card(`
+      <h2 class="font-display text-xl mb-4">Sahkan ${draft.count} Rekod Penyu</h2>
+      <div class="space-y-1 text-sm max-h-64 overflow-y-auto mb-4">
+        ${draft.turtles.map((t,i) => `<div class="flex justify-between border-b border-white/10 py-1.5"><span class="opacity-70">Penyu #${i+1} · ${t.ram} · ${t.bertag?'Bertag':'Tak Bertag'}</span><span class="font-semibold tabular-num">${t.jumlah} telur</span></div>`).join('')}
+      </div>
+      <div class="flex justify-between text-sm mb-4 pt-2 border-t border-white/20"><span class="opacity-80 font-semibold">Jumlah Keseluruhan</span><span class="font-display text-lg tabular-num">${totalTelur} telur</span></div>
+      <div class="flex gap-2">
+        <button id="backBtn" class="btn btn-ghost flex-1">← Betulkan</button>
+        <button id="submitBtn" class="btn btn-primary flex-1" disabled>Tunggu 5s...</button>
+      </div>
+    `)
+    holder.appendChild(c)
+    c.querySelector('#backBtn').onclick = renderTurtleList
+    const submitBtn = c.querySelector('#submitBtn')
+    const iv = setInterval(() => {
+      countdown--
+      if (countdown <= 0) { clearInterval(iv); submitBtn.disabled = false; submitBtn.textContent = 'Hantar Sekarang' }
+      else submitBtn.textContent = `Tunggu ${countdown}s...`
+    }, 1000)
+    submitBtn.onclick = async () => {
+      submitBtn.disabled = true; submitBtn.textContent = 'Menghantar...'
+      const rows = draft.turtles.map(t => ({
+        island: state.island, tarikh_dijumpai: draft.tarikh, species: SPECIES[0],
+        bertag: t.bertag, ram: t.ram, jumlah_telur_diram: Number(t.jumlah),
+        status: 'diram', created_by: state.profile.id
+      }))
+      let err = null
+      if (!navigator.onLine) { rows.forEach(payload => queueWrite({ table:'nest_records', op:'insert', payload })) }
+      else { const res = await supabase.from('nest_records').insert(rows); err = res.error }
+      if (err) { submitBtn.disabled = false; submitBtn.textContent = 'Hantar Sekarang'; alert('Gagal menghantar: ' + err.message); return }
+      clearDraft('individu')
+      holder.innerHTML = ''
+      holder.appendChild(card(`<div class="text-center py-10"><div class="text-5xl mb-3">✅</div><p class="font-display text-lg">${draft.count} rekod dihantar!</p></div>`))
+      setTimeout(() => { draft.turtles = []; draft.count = 1; ensureTurtles(1); renderSetup() }, 1800)
+    }
+  }
+
+  renderSetup()
+  return holder
+}
+
+// =========================================================================
+// ENTRIES LIST — "Entri Saya" / "Entri Semua" with click-to-edit
+// =========================================================================
+async function screenEntries() {
+  const wrap = document.createElement('div')
+  wrap.innerHTML = `
+    <h1 class="font-display text-2xl mb-4">Entri</h1>
+    <div class="seg mb-5">
+      <button id="tabSaya" class="${state.entriesTab==='saya'?'active':''}">Entri Saya</button>
+      <button id="tabSemua" class="${state.entriesTab==='semua'?'active':''}">Entri Semua</button>
+    </div>
+    <div id="entriesList">Memuatkan...</div>
+  `
+  const listEl = wrap.querySelector('#entriesList')
+  async function loadList() {
+    listEl.innerHTML = 'Memuatkan...'
+    const scopeOwn = state.entriesTab === 'saya'
+    let dq = supabase.from('daily_entries').select('*, staff_profiles(full_name)').eq('island', state.island).order('tarikh', { ascending:false }).limit(30)
+    let nq = supabase.from('nest_records').select('*, staff_profiles(full_name)').eq('island', state.island).order('tarikh_dijumpai', { ascending:false }).limit(30)
+    if (scopeOwn) { dq = dq.eq('created_by', state.profile.id); nq = nq.eq('created_by', state.profile.id) }
+    const [{ data: daily }, { data: nests }] = await Promise.all([dq, nq])
+    const combined = [
+      ...(daily||[]).map(d => ({ type:'harian', date: d.tarikh, id: d.id, owner: d.created_by, ownerName: d.staff_profiles?.full_name || '?', summary: `${d.ram} · ${d.bilangan_penyu_bertag+d.bilangan_penyu_takbertag} ekor · ${d.jumlah_telur_diram_bertag+d.jumlah_telur_diram_takbertag} telur` })),
+      ...(nests||[]).map(n => ({ type:'individu', date: n.tarikh_dijumpai, id: n.id, owner: n.created_by, ownerName: n.staff_profiles?.full_name || '?', summary: `${n.ram} · ${n.bertag?'Bertag':'Tak Bertag'} · ${n.jumlah_telur_diram} telur${n.status==='menetas' ? ' · Menetas' : ''}` }))
+    ].sort((a,b) => new Date(b.date) - new Date(a.date))
+
+    listEl.innerHTML = ''
+    if (!combined.length) { listEl.appendChild(card('<div class="text-center py-8 opacity-80">Belum ada entri.</div>')); return }
+    combined.forEach((e, i) => {
+      const canEdit = e.owner === state.profile.id || state.profile.role === 'admin'
+      const row = flatCard(`
+        <div class="list-row ${canEdit ? 'cursor-pointer' : ''}">
+          <div class="avatar-badge">${e.ownerName.charAt(0).toUpperCase()}</div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="font-semibold text-sm">${e.date}</span>
+              <span class="type-pill ${e.type==='harian'?'type-harian':'type-individu'}">${e.type==='harian'?'Harian':'Individu'}</span>
+            </div>
+            <div class="text-xs opacity-75 tabular-num">${e.summary}</div>
+            <div class="text-[11px] opacity-50">${e.ownerName}</div>
+          </div>
+          ${canEdit ? '<span class="opacity-50">✏️</span>' : ''}
+        </div>
+      `, 'mb-2 p-2')
+      if (canEdit) row.onclick = () => { state.editTarget = { type: e.type, id: e.id }; go('editentry') }
+      listEl.appendChild(row)
+    })
+  }
+  wrap.querySelector('#tabSaya').onclick = () => { state.entriesTab='saya'; wrap.querySelector('#tabSaya').className='active'; wrap.querySelector('#tabSemua').className=''; loadList() }
+  wrap.querySelector('#tabSemua').onclick = () => { state.entriesTab='semua'; wrap.querySelector('#tabSemua').className='active'; wrap.querySelector('#tabSaya').className=''; loadList() }
+  loadList()
   return wrap
 }
 
-// ---------- My Entries ----------
-async function screenMyEntries() {
+// ---------- Edit entry (fixes old bug: now always targets a specific id) ----------
+async function screenEditEntry() {
+  const target = state.editTarget
+  if (!target) { go('entries'); return document.createElement('div') }
   const wrap = document.createElement('div')
-  wrap.innerHTML = `<h1 class="font-display text-2xl mb-5">Entri Saya</h1><div id="list">Memuatkan...</div>`
-  const { data } = await supabase.from('nest_records').select('*').eq('created_by', state.profile.id).order('tarikh_dijumpai', { ascending:false }).limit(50)
-  const list = wrap.querySelector('#list')
-  list.innerHTML = ''
-  if (!data || !data.length) {
-    list.appendChild(card(`<div class="text-center py-8 opacity-80">Belum ada entri. Tekan "Sarang Baru" untuk mula.</div>`))
-  } else {
-    data.forEach(e => {
-      const badgeMap = { diram: ['Menunggu','bg-amber-500/20 text-amber-300'], menetas: ['Menetas','bg-emerald-400/20 text-emerald-300'], gagal: ['Gagal','bg-red-500/20 text-red-300'] }
-      const [label, cls] = badgeMap[e.status] || badgeMap.diram
-      list.appendChild(card(`
-        <div class="flex items-center justify-between">
-          <div>
-            <div class="font-semibold">${e.tarikh_dijumpai} · ${e.ram} · ${e.bertag?'Bertag':'Tak Bertag'}</div>
-            <div class="text-sm opacity-75 tabular-num">${e.jumlah_telur_diram} telur${e.status==='menetas' ? ` · ${e.telur_menetas} menetas / ${e.telur_buruk} buruk` : ''}</div>
-          </div>
-          <span class="text-xs font-semibold px-2 py-1 rounded ${cls}">${label}</span>
+  const backBtn = document.createElement('button')
+  backBtn.className = 'btn-back'; backBtn.textContent = '← Balik ke senarai'
+  backBtn.onclick = () => go('entries')
+  wrap.appendChild(backBtn)
+
+  if (target.type === 'harian') {
+    const { data: d } = await supabase.from('daily_entries').select('*').eq('id', target.id).single()
+    if (!d) { wrap.appendChild(card('Rekod tidak dijumpai.')); return wrap }
+    const c = card(`
+      <h2 class="font-display text-xl mb-4">Edit Entri Harian</h2>
+      <div class="space-y-3">
+        <div><label class="text-xs opacity-70">Tarikh</label><input type="date" id="e_tarikh" value="${d.tarikh}" /></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs opacity-70">Bilangan Bertag</label><input type="number" id="e_bp_b" value="${d.bilangan_penyu_bertag}" /></div>
+          <div><label class="text-xs opacity-70">Bilangan Tak Bertag</label><input type="number" id="e_bp_t" value="${d.bilangan_penyu_takbertag}" /></div>
         </div>
-      `, 'mb-3'))
-    })
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs opacity-70">Telur Diram Bertag</label><input type="number" id="e_td_b" value="${d.jumlah_telur_diram_bertag}" /></div>
+          <div><label class="text-xs opacity-70">Telur Diram Tak Bertag</label><input type="number" id="e_td_t" value="${d.jumlah_telur_diram_takbertag}" /></div>
+        </div>
+        <div class="eyebrow mt-2">Hatch (isi bila dah menetas, ~45-60 hari)</div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs opacity-70">Menetas Bertag</label><input type="number" id="e_tm_b" value="${d.telur_menetas_bertag ?? ''}" /></div>
+          <div><label class="text-xs opacity-70">Menetas Tak Bertag</label><input type="number" id="e_tm_t" value="${d.telur_menetas_takbertag ?? ''}" /></div>
+        </div>
+        <div><label class="text-xs opacity-70">Jumlah Telur Dikeluarkan</label><input type="number" id="e_dk" value="${d.jumlah_telur_dikeluarkan ?? ''}" /></div>
+        <div><label class="text-xs opacity-70">Catatan</label><textarea id="e_cat" rows="2">${d.catatan||''}</textarea></div>
+        <button id="e_save" class="btn btn-primary w-full mt-2">Simpan Perubahan</button>
+      </div>
+    `)
+    wrap.appendChild(c)
+    c.querySelector('#e_save').onclick = async () => {
+      const payload = {
+        tarikh: c.querySelector('#e_tarikh').value,
+        bilangan_penyu_bertag: Number(c.querySelector('#e_bp_b').value||0),
+        bilangan_penyu_takbertag: Number(c.querySelector('#e_bp_t').value||0),
+        jumlah_telur_diram_bertag: Number(c.querySelector('#e_td_b').value||0),
+        jumlah_telur_diram_takbertag: Number(c.querySelector('#e_td_t').value||0),
+        telur_menetas_bertag: c.querySelector('#e_tm_b').value === '' ? null : Number(c.querySelector('#e_tm_b').value),
+        telur_menetas_takbertag: c.querySelector('#e_tm_t').value === '' ? null : Number(c.querySelector('#e_tm_t').value),
+        jumlah_telur_dikeluarkan: c.querySelector('#e_dk').value === '' ? null : Number(c.querySelector('#e_dk').value),
+        catatan: c.querySelector('#e_cat').value || null,
+        updated_by: state.profile.id
+      }
+      const { error } = await supabase.from('daily_entries').update(payload).eq('id', target.id)
+      if (error) { alert('Gagal simpan: ' + error.message); return }
+      alert('Disimpan ✓'); go('entries')
+    }
+  } else {
+    const { data: n } = await supabase.from('nest_records').select('*').eq('id', target.id).single()
+    if (!n) { wrap.appendChild(card('Rekod tidak dijumpai.')); return wrap }
+    const c = card(`
+      <h2 class="font-display text-xl mb-4">Edit Rekod Penyu</h2>
+      <div class="space-y-3">
+        <div><label class="text-xs opacity-70">Tarikh Dijumpai</label><input type="date" id="e_tarikh" value="${n.tarikh_dijumpai}" /></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs opacity-70">Status Tag</label>
+            <div class="seg mt-1"><button type="button" id="e_b_yes" class="${n.bertag?'active':''}">Bertag</button><button type="button" id="e_b_no" class="${!n.bertag?'active':''}">Tak Bertag</button></div>
+          </div>
+          <div><label class="text-xs opacity-70">RAM</label>
+            <div class="seg mt-1"><button type="button" id="e_r_lpp" class="${n.ram==='LPP'?'active':''}">LPP</button><button type="button" id="e_r_sfc" class="${n.ram==='SFC'?'active':''}">SFC</button></div>
+          </div>
+        </div>
+        <div><label class="text-xs opacity-70">Jumlah Telur Diram</label><input type="number" id="e_td" value="${n.jumlah_telur_diram}" /></div>
+        <div class="eyebrow mt-2">Hatch (isi bila dah menetas)</div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs opacity-70">Telur Menetas</label><input type="number" id="e_tm" value="${n.telur_menetas ?? ''}" /></div>
+          <div><label class="text-xs opacity-70">Telur Buruk</label><input type="number" id="e_tb" value="${n.telur_buruk ?? ''}" /></div>
+        </div>
+        <div><label class="text-xs opacity-70">Catatan</label><textarea id="e_cat" rows="2">${n.catatan||''}</textarea></div>
+        <button id="e_save" class="btn btn-primary w-full mt-2">Simpan Perubahan</button>
+      </div>
+    `)
+    wrap.appendChild(c)
+    let bertag = n.bertag, ram = n.ram
+    c.querySelector('#e_b_yes').onclick = () => { bertag=true; c.querySelector('#e_b_yes').className='active'; c.querySelector('#e_b_no').className='' }
+    c.querySelector('#e_b_no').onclick = () => { bertag=false; c.querySelector('#e_b_no').className='active'; c.querySelector('#e_b_yes').className='' }
+    c.querySelector('#e_r_lpp').onclick = () => { ram='LPP'; c.querySelector('#e_r_lpp').className='active'; c.querySelector('#e_r_sfc').className='' }
+    c.querySelector('#e_r_sfc').onclick = () => { ram='SFC'; c.querySelector('#e_r_sfc').className='active'; c.querySelector('#e_r_lpp').className='' }
+    c.querySelector('#e_save').onclick = async () => {
+      const menetas = c.querySelector('#e_tm').value === '' ? null : Number(c.querySelector('#e_tm').value)
+      const payload = {
+        tarikh_dijumpai: c.querySelector('#e_tarikh').value, bertag, ram,
+        jumlah_telur_diram: Number(c.querySelector('#e_td').value||0),
+        telur_menetas: menetas,
+        telur_buruk: c.querySelector('#e_tb').value === '' ? null : Number(c.querySelector('#e_tb').value),
+        status: menetas !== null ? 'menetas' : 'diram',
+        catatan: c.querySelector('#e_cat').value || null,
+        updated_by: state.profile.id
+      }
+      const { error } = await supabase.from('nest_records').update(payload).eq('id', target.id)
+      if (error) { alert('Gagal simpan: ' + error.message); return }
+      alert('Disimpan ✓'); go('entries')
+    }
   }
   return wrap
 }
 
-// ---------- Dashboard ----------
+// =========================================================================
+// DASHBOARD — gamified progress + real charts + year comparison
+// =========================================================================
+let chartInstances = []
+function destroyCharts() { chartInstances.forEach(c => c.destroy()); chartInstances = [] }
+
 async function screenDashboard() {
   const year = new Date().getFullYear()
+  destroyCharts()
   const wrap = document.createElement('div')
   wrap.innerHTML = `<h1 class="font-display text-2xl mb-5">Dashboard ${year}</h1><div id="stats">Memuatkan...</div>`
   const { data } = await supabase.rpc('get_dashboard_totals', { p_year: year })
@@ -523,41 +763,107 @@ async function screenDashboard() {
   const target = data?.target || 20000
   const pct = Math.min(100, Math.round((jumlahTelur/target)*100))
   const hatchRate = (jumlahMenetas+jumlahBuruk) ? Math.round((jumlahMenetas/(jumlahMenetas+jumlahBuruk))*100) : 0
+  const level = Math.floor(pct / 20) + 1
+
   stats.innerHTML = ''
+
   stats.appendChild(card(`
-    <div class="text-sm opacity-70 mb-1">Jumlah Telur vs Sasaran</div>
-    <div class="font-display text-4xl tabular-num mb-3">${jumlahTelur.toLocaleString()}</div>
-    <div class="h-2 rounded-full bg-black/20 overflow-hidden"><div class="h-full bg-emerald-400" style="width:${pct}%"></div></div>
-    <div class="text-xs opacity-70 mt-1">${pct}% daripada sasaran ${target.toLocaleString()}</div>
+    <div class="flex items-center justify-between mb-2">
+      <div class="eyebrow">Misi Tahun ${year}</div>
+      <div class="text-xs font-bold px-2 py-1 rounded-full bg-emerald-400/20 text-emerald-300">LEVEL ${level}</div>
+    </div>
+    <div class="font-display text-4xl tabular-num mb-1">${jumlahTelur.toLocaleString()} <span class="text-lg opacity-60">/ ${target.toLocaleString()}</span></div>
+    <div class="xp-bar mt-3">
+      <div class="xp-fill" style="width:${pct}%"></div>
+      ${[25,50,75].map(m => `<div class="milestone" style="left:${m}%"></div>`).join('')}
+    </div>
+    <div class="text-xs opacity-70 mt-2">${pct}% menuju sasaran · Baki <span class="tabular-num font-semibold">${(target-jumlahTelur).toLocaleString()}</span> telur</div>
   `, 'mb-4'))
-  stats.appendChild(card(`<div class="text-sm opacity-70">Kadar Menetas</div><div class="font-display text-3xl tabular-num">${hatchRate}%</div>`, 'mb-4'))
-  stats.appendChild(card(`<div class="text-sm opacity-70">Telur Buruk</div><div class="font-display text-3xl tabular-num text-red-400">${jumlahBuruk.toLocaleString()}</div>`, 'mb-4'))
-  stats.appendChild(card(`<div class="text-sm opacity-70">Baki ke Sasaran</div><div class="font-display text-2xl tabular-num">${(target-jumlahTelur).toLocaleString()}</div>`))
+
+  stats.appendChild(flatCard(`
+    <div class="eyebrow mb-3">Trend Bulanan ${year}</div>
+    <canvas id="chartBar" height="180"></canvas>
+  `, 'mb-4'))
+  stats.appendChild(flatCard(`
+    <div class="eyebrow mb-3">Kumulatif Sepanjang Tahun</div>
+    <canvas id="chartLine" height="180"></canvas>
+  `, 'mb-4'))
+  stats.appendChild(flatCard(`
+    <div class="flex items-center justify-between mb-3">
+      <div class="eyebrow">Perbandingan Tahun</div>
+      <select id="compareYears" class="!w-auto text-xs !py-1 !px-2">
+        <option value="2">2 tahun</option>
+        <option value="3">3 tahun</option>
+        <option value="5">5 tahun</option>
+      </select>
+    </div>
+    <canvas id="chartCompare" height="200"></canvas>
+  `, 'mb-4'))
+
+  const secondaryRow = document.createElement('div')
+  secondaryRow.className = 'grid grid-cols-2 gap-3'
+  secondaryRow.appendChild(flatCard(`<div class="text-xs opacity-70">Kadar Menetas</div><div class="font-display text-2xl tabular-num">${hatchRate}%</div>`))
+  secondaryRow.appendChild(flatCard(`<div class="text-xs opacity-70">Telur Buruk</div><div class="font-display text-2xl tabular-num text-red-400">${jumlahBuruk.toLocaleString()}</div>`))
+  stats.appendChild(secondaryRow)
+
+  const monthly = data?.monthly || MONTH_LABELS.map(m => ({ month: m, telur: 0 }))
+  const barCtx = stats.querySelector('#chartBar').getContext('2d')
+  chartInstances.push(new Chart(barCtx, {
+    type: 'bar',
+    data: { labels: monthly.map(m=>m.month), datasets: [{ label:'Telur', data: monthly.map(m=>m.telur), backgroundColor:'#2E9099', borderRadius:6 }] },
+    options: { plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af'} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
+  }))
+  let cumulative = 0
+  const cumData = monthly.map(m => (cumulative += m.telur))
+  const lineCtx = stats.querySelector('#chartLine').getContext('2d')
+  chartInstances.push(new Chart(lineCtx, {
+    type: 'line',
+    data: { labels: monthly.map(m=>m.month), datasets: [{ label:'Kumulatif', data: cumData, borderColor:'#6EE7B7', backgroundColor:'rgba(110,231,183,.15)', fill:true, tension:.35 }] },
+    options: { plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af'} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
+  }))
+
+  async function renderCompare(nYears) {
+    const years = Array.from({length:nYears}, (_,i) => year - i).reverse()
+    const { data: multi } = await supabase.rpc('get_multi_year_monthly', { p_years: years })
+    const colors = ['#2E9099','#6EE7B7','#E0A458','#E1604C','#9AB18F']
+    const datasets = years.map((y,i) => ({
+      label: String(y),
+      data: (multi?.[y] || monthly.map(m=>({month:m.month,telur:0}))).map(m=>m.telur),
+      borderColor: colors[i % colors.length], backgroundColor:'transparent', tension:.35
+    }))
+    const compareCtx = stats.querySelector('#chartCompare').getContext('2d')
+    chartInstances.push(new Chart(compareCtx, {
+      type: 'line',
+      data: { labels: MONTH_LABELS, datasets },
+      options: { plugins:{legend:{labels:{color:'#9ca3af'}}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af'} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
+    }))
+  }
+  renderCompare(2)
+  stats.querySelector('#compareYears').onchange = (e) => {
+    chartInstances[chartInstances.length-1]?.destroy()
+    chartInstances.pop()
+    renderCompare(Number(e.target.value))
+  }
+
   return wrap
 }
 
-// ---------- Admin ----------
-const MONTH_LABELS = ['Jan','Feb','Mac','Apr','Mei','Jun','Jul','Ogo','Sep','Okt','Nov','Dis']
-
+// =========================================================================
+// ADMIN
+// =========================================================================
 async function screenAdmin() {
   if (state.profile?.role !== 'admin') return card('Akses admin sahaja.')
   const year = new Date().getFullYear()
   const { data: t } = await supabase.from('targets').select('*').eq('year', year).maybeSingle()
   const { data: mt } = await supabase.from('monthly_targets').select('*').eq('year', year)
-  const { data: logins } = await supabase
-    .from('login_log')
-    .select('*, staff_profiles(full_name, island)')
-    .order('logged_in_at', { ascending: false })
-    .limit(20)
+  const { data: logins } = await supabase.from('login_log').select('*, staff_profiles(full_name, island)').order('logged_in_at', { ascending: false }).limit(20)
 
   const wrap = document.createElement('div')
   wrap.innerHTML = `<h1 class="font-display text-2xl mb-5">Tetapan Admin</h1><div id="adminBody" class="space-y-5"></div>`
   const body = wrap.querySelector('#adminBody')
 
-  // --- Yearly target ---
   const targetCard = card(`
     <h2 class="font-display text-lg mb-3">Sasaran Tahunan</h2>
-    <p class="text-sm opacity-70 mb-3">Tukar sendiri setiap tahun — tiada perlu coding.</p>
     <div class="flex gap-2">
       <input type="number" id="a_year" value="${year}" class="w-28" />
       <input type="number" id="a_target" placeholder="cth: 20000" value="${t?.target_value||''}" class="flex-1" />
@@ -571,82 +877,73 @@ async function screenAdmin() {
     const m = targetCard.querySelector('#a_msg'); m.textContent = 'Sasaran disimpan ✓'; m.classList.remove('hidden')
   }
 
-  // --- Monthly targets ---
   async function loadMonthlyTargets(yr) {
     const { data } = await supabase.from('monthly_targets').select('*').eq('year', yr)
-    const map = {}
-    ;(data || []).forEach(r => { map[r.month] = r.target_value })
-    return map
+    const map = {}; (data||[]).forEach(r => map[r.month] = r.target_value); return map
   }
-
   function monthGridHTML(map) {
-    return MONTH_LABELS.map((label, i) => {
-      const m = i + 1
-      return `<div><label class="text-xs opacity-70">${label}</label><input type="number" id="am_${m}" value="${map[m] ?? ''}" placeholder="-" /></div>`
-    }).join('')
+    return MONTH_LABELS.map((label,i) => { const m=i+1; return `<div><label class="text-xs opacity-70">${label}</label><input type="number" id="am_${m}" value="${map[m] ?? ''}" placeholder="-" /></div>` }).join('')
   }
-
-  const initialMonthlyMap = {}
-  ;(mt || []).forEach(r => { initialMonthlyMap[r.month] = r.target_value })
-
+  const initialMonthlyMap = {}; (mt||[]).forEach(r => initialMonthlyMap[r.month] = r.target_value)
   const monthlyCard = card(`
     <div class="flex items-center justify-between mb-3">
       <h2 class="font-display text-lg">Sasaran Bulanan</h2>
       <input type="number" id="a_monthlyYear" value="${year}" class="w-24" />
     </div>
-    <p class="text-sm opacity-70 mb-3">Pilihan — pecahkan sasaran tahunan ikut bulan kalau perlu.</p>
     <div class="grid grid-cols-3 gap-2" id="a_monthGrid">${monthGridHTML(initialMonthlyMap)}</div>
     <button id="a_saveMonthly" class="btn btn-primary mt-3">Simpan Sasaran Bulanan</button>
     <div id="a_monthlyMsg" class="hidden text-sm mt-2 text-emerald-300"></div>
   `)
   body.appendChild(monthlyCard)
-
   monthlyCard.querySelector('#a_monthlyYear').onchange = async (e) => {
-    const yr = Number(e.target.value)
-    const map = await loadMonthlyTargets(yr)
+    const map = await loadMonthlyTargets(Number(e.target.value))
     monthlyCard.querySelector('#a_monthGrid').innerHTML = monthGridHTML(map)
     monthlyCard.querySelector('#a_monthlyMsg').classList.add('hidden')
   }
-
   monthlyCard.querySelector('#a_saveMonthly').onclick = async () => {
     const yr = Number(monthlyCard.querySelector('#a_monthlyYear').value)
-    const rows = MONTH_LABELS.map((_, i) => {
-      const m = i + 1
-      const val = monthlyCard.querySelector(`#am_${m}`).value
-      return val === '' ? null : { year: yr, month: m, target_value: Number(val) }
-    }).filter(Boolean)
+    const rows = MONTH_LABELS.map((_,i) => { const m=i+1; const val = monthlyCard.querySelector(`#am_${m}`).value; return val==='' ? null : { year: yr, month: m, target_value: Number(val) } }).filter(Boolean)
     if (rows.length) await supabase.from('monthly_targets').upsert(rows)
     const m = monthlyCard.querySelector('#a_monthlyMsg'); m.textContent = 'Sasaran bulanan disimpan ✓'; m.classList.remove('hidden')
   }
 
-  // --- Video background (now a repo file, not an in-app upload) ---
-  body.appendChild(card(`
-    <h2 class="font-display text-lg mb-3">Video Latar Belakang</h2>
-    <p class="text-sm opacity-70">
-      Video disimpan terus dalam repo (bukan Supabase) sebab senang dan tak
-      selalu berubah. Untuk tukar: ganti fail <code class="bg-black/30 px-1 rounded">assets/background.mp4</code>
-      dalam repo GitHub kau dengan video baru (nama fail kena sama), then:
-    </p>
-    <pre class="bg-black/30 rounded px-3 py-2 text-xs mt-2 overflow-x-auto">git add assets/background.mp4
-git commit -m "update background video"
-git push</pre>
-    <p class="text-sm opacity-70 mt-2">Live dalam ~30 saat lepas push.</p>
-  `))
+  const exportCard = card(`
+    <h2 class="font-display text-lg mb-3">Eksport Excel</h2>
+    <p class="text-sm opacity-70 mb-3">Jana fail Excel ikut format rasmi (JAN-DIS + JUMLAH tahunan), formula pengiraan kekal utuh.</p>
+    <div class="flex gap-2">
+      <select id="ex_island">${ISLANDS.map(i=>`<option value="${i.code}" ${i.code===state.island?'selected':''}>${i.code}</option>`).join('')}</select>
+      <input type="number" id="ex_year" value="${year}" class="flex-1" />
+    </div>
+    <button id="ex_go" class="btn btn-primary w-full mt-3">Jana &amp; Muat Turun Excel</button>
+    <div id="ex_msg" class="hidden text-sm mt-2 text-emerald-300"></div>
+  `)
+  body.appendChild(exportCard)
+  exportCard.querySelector('#ex_go').onclick = async () => {
+    const btn = exportCard.querySelector('#ex_go')
+    btn.disabled = true; btn.textContent = 'Menjana...'
+    try {
+      await exportToExcel(exportCard.querySelector('#ex_island').value, Number(exportCard.querySelector('#ex_year').value))
+      const m = exportCard.querySelector('#ex_msg'); m.textContent = 'Excel dimuat turun ✓'; m.classList.remove('hidden')
+    } catch (err) {
+      alert('Gagal jana Excel: ' + err.message)
+    }
+    btn.disabled = false; btn.textContent = 'Jana & Muat Turun Excel'
+  }
 
-  // --- Staff login history ---
-  const historyRows = (logins || []).map(l => {
+  const historyRows = (logins||[]).map(l => {
     const name = l.staff_profiles?.full_name || 'Tidak diketahui'
     const island = l.staff_profiles?.island || l.island || '-'
     const time = new Date(l.logged_in_at).toLocaleString('ms-MY')
-    return `<div class="flex justify-between border-b border-white/10 pb-2 text-sm">
-      <span>${name} <span class="opacity-60">(${island})</span></span>
-      <span class="opacity-70 tabular-num">${time}</span>
-    </div>`
+    return `<div class="flex justify-between border-b border-white/10 pb-2 text-sm"><span>${name} <span class="opacity-60">(${island})</span></span><span class="opacity-70 tabular-num">${time}</span></div>`
   }).join('') || '<div class="text-sm opacity-70">Belum ada rekod log masuk.</div>'
+  body.appendChild(card(`<h2 class="font-display text-lg mb-3">Sejarah Log Masuk Staf</h2><div class="space-y-2">${historyRows}</div>`))
 
   body.appendChild(card(`
-    <h2 class="font-display text-lg mb-3">Sejarah Log Masuk Staf</h2>
-    <div class="space-y-2">${historyRows}</div>
+    <h2 class="font-display text-lg mb-3">Video Latar Belakang</h2>
+    <p class="text-sm opacity-70">Ganti fail <code class="bg-black/30 px-1 rounded">assets/background.mp4</code> dalam repo, then:</p>
+    <pre class="bg-black/30 rounded px-3 py-2 text-xs mt-2 overflow-x-auto">git add assets/background.mp4
+git commit -m "update video"
+git push</pre>
   `))
 
   body.appendChild(card(`
@@ -655,6 +952,62 @@ git push</pre>
       <a href="https://app.supabase.com" target="_blank" class="underline text-teal-300">Supabase Table Editor → staff_profiles</a>.</p>
   `))
   return wrap
+}
+
+// ---------- Excel export logic ----------
+async function exportToExcel(island, year) {
+  const templateUrl = `assets/template-${island}.xlsx`
+  const res = await fetch(templateUrl)
+  if (!res.ok) throw new Error(`Template ${templateUrl} tidak dijumpai`)
+  const buf = await res.arrayBuffer()
+  const wb = XLSX.read(buf, { type: 'array', cellFormula: true, cellStyles: true })
+
+  const yearStart = `${year}-01-01`
+  const yearEnd = `${year}-12-31`
+  const { data: dailyRows } = await supabase.from('daily_entries').select('*').eq('island', island).gte('tarikh', yearStart).lte('tarikh', yearEnd)
+  const { data: nestRows } = await supabase.from('nest_records').select('*').eq('island', island).gte('tarikh_dijumpai', yearStart).lte('tarikh_dijumpai', yearEnd)
+
+  const buckets = {}
+  function ensureBucket(date, ram) {
+    const key = `${date}|${ram}`
+    if (!buckets[key]) buckets[key] = { bp_b:0, bp_t:0, td_b:0, td_t:0, tm_b:0, tm_t:0, tm_has:false, dk:0, cat:[] }
+    return buckets[key]
+  }
+  ;(dailyRows||[]).forEach(d => {
+    const b = ensureBucket(d.tarikh, d.ram)
+    b.bp_b += d.bilangan_penyu_bertag; b.bp_t += d.bilangan_penyu_takbertag
+    b.td_b += d.jumlah_telur_diram_bertag; b.td_t += d.jumlah_telur_diram_takbertag
+    if (d.telur_menetas_bertag !== null) { b.tm_b += d.telur_menetas_bertag||0; b.tm_has = true }
+    if (d.telur_menetas_takbertag !== null) { b.tm_t += d.telur_menetas_takbertag||0; b.tm_has = true }
+    if (d.jumlah_telur_dikeluarkan) b.dk += d.jumlah_telur_dikeluarkan
+    if (d.catatan) b.cat.push(d.catatan)
+  })
+  ;(nestRows||[]).forEach(n => {
+    const b = ensureBucket(n.tarikh_dijumpai, n.ram)
+    if (n.bertag) { b.bp_b += 1; b.td_b += n.jumlah_telur_diram; if (n.telur_menetas !== null) { b.tm_b += n.telur_menetas||0; b.tm_has = true } }
+    else { b.bp_t += 1; b.td_t += n.jumlah_telur_diram; if (n.telur_menetas !== null) { b.tm_t += n.telur_menetas||0; b.tm_has = true } }
+    if (n.jumlah_dikeluarkan) b.dk += n.jumlah_dikeluarkan
+    if (n.catatan) b.cat.push(n.catatan)
+  })
+
+  MONTH_SHEET_NAMES.forEach((sheetName, mi) => {
+    const ws = wb.Sheets[sheetName]
+    if (!ws) return
+    const daysInMonth = new Date(year, mi+1, 0).getDate()
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = `${year}-${String(mi+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
+      const row = 7 + day
+      const lpp = buckets[`${dateStr}|LPP`]
+      const sfc = buckets[`${dateStr}|SFC`]
+      const setCell = (col, val) => { if (val !== undefined && val !== null && val !== 0) ws[`${col}${row}`] = { t:'n', v: val } }
+      if (lpp) { setCell('C', lpp.bp_b); setCell('D', lpp.bp_t); setCell('G', lpp.td_b); setCell('H', lpp.td_t); if (lpp.tm_has) { setCell('K', lpp.tm_b); setCell('L', lpp.tm_t) } if (lpp.dk) setCell('S', lpp.dk) }
+      if (sfc) { setCell('E', sfc.bp_b); setCell('F', sfc.bp_t); setCell('I', sfc.td_b); setCell('J', sfc.td_t); if (sfc.tm_has) { setCell('M', sfc.tm_b); setCell('N', sfc.tm_t) } if (sfc.dk) setCell('T', sfc.dk) }
+      const notes = [...(lpp?.cat||[]), ...(sfc?.cat||[])].join('; ')
+      if (notes) ws[`T${row}`] = { t:'s', v: notes }
+    }
+  })
+
+  XLSX.writeFile(wb, `Penyu-${island}-${year}.xlsx`)
 }
 
 // ---------- Init ----------
