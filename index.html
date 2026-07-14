@@ -619,8 +619,8 @@ async function screenEntries() {
   async function loadList() {
     listEl.innerHTML = 'Memuatkan...'
     const scopeOwn = state.entriesTab === 'saya'
-    let dq = supabase.from('daily_entries').select('*, staff_profiles(full_name)').eq('island', state.island).order('tarikh', { ascending:false }).limit(100)
-    let nq = supabase.from('nest_records').select('*, staff_profiles(full_name)').eq('island', state.island).order('tarikh_dijumpai', { ascending:false }).limit(100)
+    let dq = supabase.from('daily_entries').select('*, staff_profiles!created_by(full_name)').eq('island', state.island).order('tarikh', { ascending:false }).limit(100)
+    let nq = supabase.from('nest_records').select('*, staff_profiles!created_by(full_name)').eq('island', state.island).order('tarikh_dijumpai', { ascending:false }).limit(100)
     if (scopeOwn) { dq = dq.eq('created_by', state.profile.id); nq = nq.eq('created_by', state.profile.id) }
     if (monthFilter) {
       const [y,m] = monthFilter.split('-')
@@ -852,7 +852,7 @@ async function screenDashboard() {
   const barChart = new Chart(barCtx, {
     type: 'bar',
     data: { labels: monthly.map(m=>m.month), datasets: [{ label:'Telur', data: monthly.map(m=>m.telur), backgroundColor:'#2E9099', borderRadius:6 }] },
-    options: { plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af'} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
+    options: { plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af', precision:0} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
   })
   chartInstances.push(barChart)
 
@@ -865,7 +865,7 @@ async function screenDashboard() {
   const lineChart = new Chart(lineCtx, {
     type: 'line',
     data: { labels: monthly.map(m=>m.month), datasets: [{ label:'Kumulatif', data: cumulativeChart('telur'), borderColor:'#6EE7B7', backgroundColor:'rgba(110,231,183,.15)', fill:true, tension:.35 }] },
-    options: { plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af'} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
+    options: { plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af', precision:0} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
   })
   chartInstances.push(lineChart)
 
