@@ -925,34 +925,6 @@ async function screenAdmin() {
     <div id="adminBody" class="space-y-5"></div>`
   const body = wrap.querySelector('#adminBody')
 
-  const targetCard = card(`
-    <h2 class="font-display text-lg mb-3">Sasaran Tahunan</h2>
-    <div class="flex gap-2">
-      <select id="a_target_island">${ISLANDS.map(i=>`<option value="${i.code}" ${i.code===state.island?'selected':''}>${i.code}</option>`).join('')}</select>
-      <input type="number" id="a_year" value="${year}" class="w-24" />
-      <input type="number" id="a_target" placeholder="cth: 20000" value="${t?.target_value||''}" class="flex-1" />
-    </div>
-    <button id="a_saveTarget" class="btn btn-primary mt-3">Simpan Sasaran</button>
-    <div id="a_msg" class="hidden text-sm mt-2 text-emerald-300"></div>
-  `)
-  body.appendChild(targetCard)
-  async function reloadYearlyTarget() {
-    const isl = targetCard.querySelector('#a_target_island').value
-    const yr = Number(targetCard.querySelector('#a_year').value)
-    const { data } = await supabase.from('targets').select('*').eq('year', yr).eq('island', isl).maybeSingle()
-    targetCard.querySelector('#a_target').value = data?.target_value || ''
-  }
-  targetCard.querySelector('#a_target_island').onchange = reloadYearlyTarget
-  targetCard.querySelector('#a_year').onchange = reloadYearlyTarget
-  targetCard.querySelector('#a_saveTarget').onclick = async () => {
-    await supabase.from('targets').upsert({
-      year: Number(targetCard.querySelector('#a_year').value),
-      island: targetCard.querySelector('#a_target_island').value,
-      target_value: Number(targetCard.querySelector('#a_target').value)
-    })
-    const m = targetCard.querySelector('#a_msg'); m.textContent = 'Sasaran disimpan ✓'; m.classList.remove('hidden')
-  }
-
   async function loadMonthlyTargets(yr, isl) {
     const { data } = await supabase.from('monthly_targets').select('*').eq('year', yr).eq('island', isl)
     const map = {}; (data||[]).forEach(r => map[r.month] = r.target_value); return map
@@ -960,43 +932,62 @@ async function screenAdmin() {
   function monthGridHTML(map) {
     return MONTH_LABELS.map((label,i) => { const m=i+1; return `<div><label class="text-xs opacity-70">${label}</label><input type="number" id="am_${m}" value="${map[m] ?? ''}" placeholder="-" /></div>` }).join('')
   }
+  function computeYearlyTotal(card) {
+    let total = 0
+    MONTH_LABELS.forEach((_,i) => { const v = card.querySelector(`#am_${i+1}`).value; if (v !== '') total += Number(v) })
+    card.querySelector('#a_yearlyTotal').textContent = total.toLocaleString()
+    return total
+  }
   const initialMonthlyMap = {}; (mt||[]).forEach(r => initialMonthlyMap[r.month] = r.target_value)
-  const monthlyCard = card(`
+  const initialTotal = Object.values(initialMonthlyMap).reduce((s,v) => s + (v||0), 0)
+  const targetCard = card(`
     <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-      <h2 class="font-display text-lg">Sasaran Bulanan</h2>
-      <div class="flex gap-2">
-        <select id="a_monthlyIsland">${ISLANDS.map(i=>`<option value="${i.code}" ${i.code===state.island?'selected':''}>${i.code}</option>`).join('')}</select>
-        <input type="number" id="a_monthlyYear" value="${year}" class="w-24" />
+      <h2 class="font-display text-lg">Sasaran</h2>
+      <div class="grid grid-cols-2 gap-2">
+        <select id="a_island">${ISLANDS.map(i=>`<option value="${i.code}" ${i.code===state.island?'selected':''}>${i.code}</option>`).join('')}</select>
+        <select id="a_year">${Array.from({length:8},(_,i)=>year-2+i).map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join('')}</select>
       </div>
     </div>
+    <p class="text-sm opacity-70 mb-3">Isi sasaran ikut bulan — jumlah tahunan dikira automatik.</p>
     <div class="grid grid-cols-3 gap-2" id="a_monthGrid">${monthGridHTML(initialMonthlyMap)}</div>
-    <button id="a_saveMonthly" class="btn btn-primary mt-3">Simpan Sasaran Bulanan</button>
-    <div id="a_monthlyMsg" class="hidden text-sm mt-2 text-emerald-300"></div>
+    <div class="flex justify-between items-center mt-4 pt-3 border-t border-white/10">
+      <span class="text-sm opacity-80 font-semibold">Jumlah Sasaran Tahunan</span>
+      <span id="a_yearlyTotal" class="font-display text-xl tabular-num">${initialTotal.toLocaleString()}</span>
+    </div>
+    <button id="a_saveTarget" class="btn btn-primary w-full mt-3">Simpan Sasaran</button>
+    <div id="a_msg" class="hidden text-sm mt-2 text-emerald-300"></div>
   `)
-  body.appendChild(monthlyCard)
-  async function reloadMonthlyGrid() {
-    const yr = Number(monthlyCard.querySelector('#a_monthlyYear').value)
-    const isl = monthlyCard.querySelector('#a_monthlyIsland').value
+  body.appendChild(targetCard)
+
+  async function reloadTargetCard() {
+    const yr = Number(targetCard.querySelector('#a_year').value)
+    const isl = targetCard.querySelector('#a_island').value
     const map = await loadMonthlyTargets(yr, isl)
-    monthlyCard.querySelector('#a_monthGrid').innerHTML = monthGridHTML(map)
-    monthlyCard.querySelector('#a_monthlyMsg').classList.add('hidden')
+    targetCard.querySelector('#a_monthGrid').innerHTML = monthGridHTML(map)
+    targetCard.querySelectorAll('#a_monthGrid input').forEach(inp => inp.addEventListener('input', () => computeYearlyTotal(targetCard)))
+    computeYearlyTotal(targetCard)
+    targetCard.querySelector('#a_msg').classList.add('hidden')
   }
-  monthlyCard.querySelector('#a_monthlyYear').onchange = reloadMonthlyGrid
-  monthlyCard.querySelector('#a_monthlyIsland').onchange = reloadMonthlyGrid
-  monthlyCard.querySelector('#a_saveMonthly').onclick = async () => {
-    const yr = Number(monthlyCard.querySelector('#a_monthlyYear').value)
-    const isl = monthlyCard.querySelector('#a_monthlyIsland').value
-    const rows = MONTH_LABELS.map((_,i) => { const m=i+1; const val = monthlyCard.querySelector(`#am_${m}`).value; return val==='' ? null : { year: yr, island: isl, month: m, target_value: Number(val) } }).filter(Boolean)
+  targetCard.querySelector('#a_island').onchange = reloadTargetCard
+  targetCard.querySelector('#a_year').onchange = reloadTargetCard
+  targetCard.querySelectorAll('#a_monthGrid input').forEach(inp => inp.addEventListener('input', () => computeYearlyTotal(targetCard)))
+
+  targetCard.querySelector('#a_saveTarget').onclick = async () => {
+    const yr = Number(targetCard.querySelector('#a_year').value)
+    const isl = targetCard.querySelector('#a_island').value
+    const rows = MONTH_LABELS.map((_,i) => { const m=i+1; const val = targetCard.querySelector(`#am_${m}`).value; return val==='' ? null : { year: yr, island: isl, month: m, target_value: Number(val) } }).filter(Boolean)
     if (rows.length) await supabase.from('monthly_targets').upsert(rows)
-    const m = monthlyCard.querySelector('#a_monthlyMsg'); m.textContent = 'Sasaran bulanan disimpan ✓'; m.classList.remove('hidden')
+    const total = computeYearlyTotal(targetCard)
+    await supabase.from('targets').upsert({ year: yr, island: isl, target_value: total })
+    const m = targetCard.querySelector('#a_msg'); m.textContent = 'Sasaran disimpan ✓ (tahunan dikira dari jumlah bulanan)'; m.classList.remove('hidden')
   }
 
   const exportCard = card(`
     <h2 class="font-display text-lg mb-3">Eksport Excel</h2>
     <p class="text-sm opacity-70 mb-3">Jana fail Excel ikut format rasmi (JAN-DIS + JUMLAH tahunan), formula pengiraan kekal utuh.</p>
-    <div class="flex gap-2">
-      <select id="ex_island">${ISLANDS.map(i=>`<option value="${i.code}" ${i.code===state.island?'selected':''}>${i.code}</option>`).join('')}</select>
-      <select id="ex_year" class="flex-1">${Array.from({length:8},(_,i)=>year-2+i).map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join('')}</select>
+    <div class="grid grid-cols-2 gap-2">
+      <div><label class="text-xs opacity-70">Pulau</label><select id="ex_island">${ISLANDS.map(i=>`<option value="${i.code}" ${i.code===state.island?'selected':''}>${i.code}</option>`).join('')}</select></div>
+      <div><label class="text-xs opacity-70">Tahun</label><select id="ex_year">${Array.from({length:8},(_,i)=>year-2+i).map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join('')}</select></div>
     </div>
     <button id="ex_go" class="btn btn-primary w-full mt-3">Jana &amp; Muat Turun Excel</button>
     <div id="ex_msg" class="hidden text-sm mt-2 text-emerald-300"></div>
