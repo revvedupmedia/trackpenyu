@@ -116,6 +116,7 @@
 
 <nav id="navbar" class="fixed bottom-0 inset-x-0 px-4 pb-4 hidden">
   <div class="frosted flex items-center justify-around px-2 py-2 max-w-md mx-auto overflow-x-auto">
+    <span id="islandBadge" class="text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-400/20 text-emerald-300 flex-shrink-0"></span>
     <button onclick="go('entry')" class="flex flex-col items-center px-2.5 py-1.5">🐢<span class="text-[10px]">Log</span></button>
     <button onclick="go('entries')" class="flex flex-col items-center px-2.5 py-1.5">📋<span class="text-[10px]">Entri</span></button>
     <button onclick="go('dashboard')" class="flex flex-col items-center px-2.5 py-1.5">📊<span class="text-[10px]">Dashboard</span></button>
@@ -223,6 +224,8 @@ async function render(route) {
   if (state.profile) {
     document.getElementById('navAdmin').classList.toggle('hidden', state.profile.role !== 'admin')
     document.getElementById('navAdmin').classList.toggle('flex', state.profile.role === 'admin')
+    const badge = document.getElementById('islandBadge')
+    if (badge) badge.textContent = state.island
   }
   const screens = { island: screenIsland, login: screenLogin, entry: screenEntry,
     entries: screenEntries, editentry: screenEditEntry, dashboard: screenDashboard, admin: screenAdmin }
@@ -330,6 +333,10 @@ function screenEntry() {
   const wrap = document.createElement('div')
   let mode = localStorage.getItem('penyu-lastmode') || 'harian'
   wrap.innerHTML = `
+    <div class="flex items-center gap-2 mb-4">
+      <h1 class="font-display text-2xl">Entri</h1>
+      <span class="rounded px-2.5 py-1 text-xs font-semibold bg-teal-900/40">${state.island}</span>
+    </div>
     <div class="seg mb-6">
       <button id="modeHarian" class="${mode==='harian'?'active':''}">Entri Harian</button>
       <button id="modeIndividu" class="${mode==='individu'?'active':''}">Entri Individu</button>
@@ -593,7 +600,10 @@ function buildIndividuForm() {
 async function screenEntries() {
   const wrap = document.createElement('div')
   wrap.innerHTML = `
-    <h1 class="font-display text-2xl mb-4">Entri</h1>
+    <div class="flex items-center gap-2 mb-4">
+      <h1 class="font-display text-2xl">Entri</h1>
+      <span class="rounded px-2.5 py-1 text-xs font-semibold bg-teal-900/40">${state.island}</span>
+    </div>
     <div class="seg mb-5">
       <button id="tabSaya" class="${state.entriesTab==='saya'?'active':''}">Entri Saya</button>
       <button id="tabSemua" class="${state.entriesTab==='semua'?'active':''}">Entri Semua</button>
@@ -754,8 +764,8 @@ async function screenDashboard() {
   const year = new Date().getFullYear()
   destroyCharts()
   const wrap = document.createElement('div')
-  wrap.innerHTML = `<h1 class="font-display text-2xl mb-5">Dashboard ${year}</h1><div id="stats">Memuatkan...</div>`
-  const { data } = await supabase.rpc('get_dashboard_totals', { p_year: year })
+  wrap.innerHTML = `<h1 class="font-display text-2xl mb-1">Dashboard</h1><div class="inline-block rounded px-2.5 py-1 text-xs font-semibold mb-4 bg-teal-900/40">${state.island}</div><div id="stats">Memuatkan...</div>`
+  const { data } = await supabase.rpc('get_dashboard_totals', { p_year: year, p_island: state.island })
   const stats = wrap.querySelector('#stats')
   const jumlahTelur = data?.jumlah_telur || 0
   const jumlahMenetas = data?.jumlah_menetas || 0
@@ -824,7 +834,7 @@ async function screenDashboard() {
 
   async function renderCompare(nYears) {
     const years = Array.from({length:nYears}, (_,i) => year - i).reverse()
-    const { data: multi } = await supabase.rpc('get_multi_year_monthly', { p_years: years })
+    const { data: multi } = await supabase.rpc('get_multi_year_monthly', { p_years: years, p_island: state.island })
     const colors = ['#2E9099','#6EE7B7','#E0A458','#E1604C','#9AB18F']
     const datasets = years.map((y,i) => ({
       label: String(y),
@@ -859,7 +869,12 @@ async function screenAdmin() {
   const { data: logins } = await supabase.from('login_log').select('*, staff_profiles(full_name, island)').order('logged_in_at', { ascending: false }).limit(20)
 
   const wrap = document.createElement('div')
-  wrap.innerHTML = `<h1 class="font-display text-2xl mb-5">Tetapan Admin</h1><div id="adminBody" class="space-y-5"></div>`
+  wrap.innerHTML = `
+    <div class="flex items-center gap-2 mb-5">
+      <h1 class="font-display text-2xl">Tetapan Admin</h1>
+      <span class="rounded px-2.5 py-1 text-xs font-semibold bg-teal-900/40">${state.island}</span>
+    </div>
+    <div id="adminBody" class="space-y-5"></div>`
   const body = wrap.querySelector('#adminBody')
 
   const targetCard = card(`
@@ -999,11 +1014,16 @@ async function exportToExcel(island, year) {
       const row = 7 + day
       const lpp = buckets[`${dateStr}|LPP`]
       const sfc = buckets[`${dateStr}|SFC`]
-      const setCell = (col, val) => { if (val !== undefined && val !== null && val !== 0) ws[`${col}${row}`] = { t:'n', v: val } }
+      const setCell = (col, val) => {
+        if (val === undefined || val === null || val === 0) return
+        const ref = `${col}${row}`
+        const existing = ws[ref] || {}
+        ws[ref] = { ...existing, t:'n', v: val }
+      }
       if (lpp) { setCell('C', lpp.bp_b); setCell('D', lpp.bp_t); setCell('G', lpp.td_b); setCell('H', lpp.td_t); if (lpp.tm_has) { setCell('K', lpp.tm_b); setCell('L', lpp.tm_t) } if (lpp.dk) setCell('S', lpp.dk) }
       if (sfc) { setCell('E', sfc.bp_b); setCell('F', sfc.bp_t); setCell('I', sfc.td_b); setCell('J', sfc.td_t); if (sfc.tm_has) { setCell('M', sfc.tm_b); setCell('N', sfc.tm_t) } if (sfc.dk) setCell('T', sfc.dk) }
       const notes = [...(lpp?.cat||[]), ...(sfc?.cat||[])].join('; ')
-      if (notes) ws[`T${row}`] = { t:'s', v: notes }
+      if (notes) { const ref = `T${row}`; ws[ref] = { ...(ws[ref]||{}), t:'s', v: notes } }
     }
   })
 
