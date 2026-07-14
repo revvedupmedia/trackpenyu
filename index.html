@@ -118,6 +118,8 @@
   .month-hp-label { font-size:.6rem; text-transform:uppercase; letter-spacing:.06em; opacity:.85; }
   .month-hp-value { font-family:'JetBrains Mono',monospace; font-weight:700; font-size:.68rem; line-height:1.15; text-align:center; }
   .month-hp-pct { font-size:.58rem; opacity:.75; }
+  .month-hp.achieved { border:2px solid #FFD700; animation: achievedPulse 2.2s ease-in-out infinite; }
+  @keyframes achievedPulse { 0%,100%{ box-shadow:0 0 8px rgba(255,215,0,.3);} 50%{ box-shadow:0 0 22px rgba(255,215,0,.75);} }
 
   .list-row { display:flex; align-items:center; gap:.75rem; padding:.85rem; border-radius:1rem; }
   .list-row:hover { background:rgba(255,255,255,.03); }
@@ -1107,13 +1109,13 @@ async function screenDashboard() {
     const mTarget = monthlyTargetMap[m]
     const mPct = mTarget ? Math.round((actual / mTarget) * 100) : 0
     const fillPct = Math.min(100, mPct)
-    const over = mPct > 100
+    const achieved = mTarget && mPct >= 100
     return `
-      <div class="month-hp">
+      <div class="month-hp ${achieved ? 'achieved' : ''}">
         <div class="month-hp-fill" data-fill="${mTarget ? fillPct : 0}" style="width:0%; background:${progressColor(mPct)};"></div>
         <div class="month-hp-content">
-          <span class="month-hp-label">${label}</span>
-          <span class="month-hp-value tabular-num">${actual.toLocaleString()} / ${mTarget ? mTarget.toLocaleString() : '—'}</span>
+          <span class="month-hp-label">${label}${achieved ? ' 🏆' : ''}</span>
+          <span class="month-hp-value tabular-num"><span class="mhp-count" data-count="${actual}">0</span> / ${mTarget ? mTarget.toLocaleString() : '—'}</span>
           <span class="month-hp-pct tabular-num">${mTarget ? mPct + '%' : ''}</span>
         </div>
       </div>
@@ -1171,6 +1173,7 @@ async function screenDashboard() {
       const heroBar = stats.querySelector('#heroBar')
       if (heroBar) heroBar.style.width = pct + '%'
       stats.querySelectorAll('.month-hp-fill').forEach(f => { f.style.width = f.dataset.fill + '%' })
+      stats.querySelectorAll('.mhp-count').forEach(el => animateCount(el, Number(el.dataset.count)))
     })
   })
 
@@ -1342,7 +1345,7 @@ async function screenAdmin() {
   if (!isKerani) {
   const importCard = card(`
     <h2 class="font-display text-lg mb-3">Import Excel</h2>
-    <p class="text-sm opacity-70 mb-3">Auto key-in dari fail Excel sedia ada (format sama dengan eksport/template rasmi). <span class="text-amber-400">Awas: import fail yang sama dua kali akan menggandakan data.</span></p>
+    <p class="text-sm opacity-70 mb-3">Auto key-in dari fail Excel sedia ada (format sama dengan eksport/template rasmi). <span class="text-emerald-300">Selamat import berulang kali — hari yang sudah wujud dalam app akan dilangkau automatik, hanya data baharu dimasukkan.</span></p>
     <div class="grid grid-cols-2 gap-2 mb-3">
       <div><label class="text-xs opacity-70">Pulau</label><select id="im_island">${ISLANDS.map(i=>`<option value="${i.code}" ${i.code===state.island?'selected':''}>${i.code}</option>`).join('')}</select></div>
       <div><label class="text-xs opacity-70">Tahun</label><select id="im_year">${Array.from({length:8},(_,i)=>year-5+i).map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join('')}</select></div>
@@ -1364,6 +1367,7 @@ async function screenAdmin() {
       const yr = Number(importCard.querySelector('#im_year').value)
       const buf = await file.arrayBuffer()
       const wb = XLSX.read(buf, { type: 'array' })
+      const batchId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
       const rows = []
       MONTH_SHEET_NAMES.forEach((sheetName, mi) => {
         const ws = wb.Sheets[sheetName]
@@ -1389,7 +1393,7 @@ async function screenAdmin() {
               telur_menetas_bertag: (v.tm_b || v.tm_t) ? v.tm_b : null,
               telur_menetas_takbertag: (v.tm_b || v.tm_t) ? v.tm_t : null,
               jumlah_telur_dikeluarkan: v.dk || null,
-              catatan: cat, created_by: state.profile.id
+              catatan: cat, created_by: state.profile.id, import_batch: batchId
             }
           }
           const lppRow = build('LPP', lpp); if (lppRow) rows.push(lppRow)
@@ -1397,14 +1401,36 @@ async function screenAdmin() {
         }
       })
       if (!rows.length) { toast('Tiada data dijumpai dalam fail. Pastikan format ikut template rasmi.', 'error'); imGo.disabled = false; imGo.textContent = 'Import Sekarang'; return }
-      imGo.textContent = `Memasukkan ${rows.length} rekod...`
+
+      // Dedupe: fetch existing (tarikh|ram) pairs for this island+year and
+      // skip any import row that already exists — so re-importing an
+      // updated file only adds the genuinely new days.
+      imGo.textContent = 'Menyemak data sedia ada...'
+      const { data: existing } = await supabase.from('daily_entries')
+        .select('tarikh, ram')
+        .eq('island', island)
+        .gte('tarikh', `${yr}-01-01`).lte('tarikh', `${yr}-12-31`)
+        .limit(2000)
+      const existingKeys = new Set((existing||[]).map(e => `${e.tarikh}|${e.ram}`))
+      const newRows = rows.filter(r => !existingKeys.has(`${r.tarikh}|${r.ram}`))
+      const skipped = rows.length - newRows.length
+
+      if (!newRows.length) {
+        toast(`Semua ${rows.length} rekod sudah wujud dalam app — tiada yang diimport.`, 'info')
+        imGo.disabled = false; imGo.textContent = 'Import Sekarang'
+        return
+      }
+
+      imGo.textContent = `Memasukkan ${newRows.length} rekod baharu...`
       // Chunked insert (avoid huge single request)
-      for (let i = 0; i < rows.length; i += 100) {
-        const { error } = await supabase.from('daily_entries').insert(rows.slice(i, i+100))
+      for (let i = 0; i < newRows.length; i += 100) {
+        const { error } = await supabase.from('daily_entries').insert(newRows.slice(i, i+100))
         if (error) throw error
       }
-      const m = importCard.querySelector('#im_msg'); m.textContent = `${rows.length} rekod diimport ✓`; m.classList.remove('hidden')
-      toast(`${rows.length} rekod diimport`, 'success')
+      const m = importCard.querySelector('#im_msg')
+      m.textContent = `${newRows.length} rekod baharu diimport ✓${skipped ? ` (${skipped} dilangkau — sudah wujud)` : ''}`
+      m.classList.remove('hidden')
+      toast(`${newRows.length} baharu diimport${skipped ? `, ${skipped} dilangkau` : ''}`, 'success')
       imFile.value = ''
       imGo.textContent = 'Pilih fail dahulu'
     } catch (err) {
@@ -1413,6 +1439,113 @@ async function screenAdmin() {
     }
   }
   } // end !isKerani (import)
+
+  // --- Sejarah Import + Undo (admin only) ---
+  if (!isKerani) {
+  const histCard = card(`
+    <h2 class="font-display text-lg mb-3">Sejarah Import</h2>
+    <p class="text-sm opacity-70 mb-3">Kalau tersilap import (cth: fail sama dua kali), buang seluruh batch di sini — data lain tidak terjejas.</p>
+    <div id="importHist">${skeletonBlock(2)}</div>
+  `)
+  body.appendChild(histCard)
+  async function loadImportHistory() {
+    const el = histCard.querySelector('#importHist')
+    const { data: imported } = await supabase.from('daily_entries')
+      .select('import_batch, island, tarikh, created_at')
+      .not('import_batch', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1000)
+    const batches = {}
+    ;(imported||[]).forEach(r => {
+      if (!batches[r.import_batch]) batches[r.import_batch] = { count:0, island:r.island, minD:r.tarikh, maxD:r.tarikh, when:r.created_at }
+      const b = batches[r.import_batch]
+      b.count++
+      if (r.tarikh < b.minD) b.minD = r.tarikh
+      if (r.tarikh > b.maxD) b.maxD = r.tarikh
+    })
+    const entries = Object.entries(batches)
+    if (!entries.length) { el.innerHTML = '<div class="text-sm opacity-70">Belum ada import.</div>'; return }
+    el.innerHTML = ''
+    entries.forEach(([id, b]) => {
+      const row = document.createElement('div')
+      row.className = 'flex items-center justify-between gap-2 border-b border-white/10 pb-2 mb-2 text-sm'
+      row.innerHTML = `
+        <div>
+          <div class="font-semibold">${b.island} · ${b.count} rekod</div>
+          <div class="text-xs opacity-70">${fmtDate(b.minD)} → ${fmtDate(b.maxD)} · diimport ${new Date(b.when).toLocaleString('ms-MY')}</div>
+        </div>
+        <button class="btn btn-sm" style="background:rgba(225,96,76,.15); border:1px solid rgba(225,96,76,.4); color:#E1604C;">Buang</button>
+      `
+      row.querySelector('button').onclick = async () => {
+        if (!confirm(`Buang import ini (${b.count} rekod, ${b.island})? Tindakan ini kekal.`)) return
+        const { error } = await supabase.from('daily_entries').delete().eq('import_batch', id)
+        if (error) { toast('Gagal buang: ' + error.message, 'error'); return }
+        toast(`${b.count} rekod import dibuang`, 'success')
+        loadImportHistory()
+      }
+      el.appendChild(row)
+    })
+  }
+  loadImportHistory()
+
+  // --- Data Lama Bulanan (admin only) — untuk tahun tanpa perincian harian (cth 2025 ke bawah) ---
+  const legacyCard = card(`
+    <h2 class="font-display text-lg mb-3">Data Lama (Bulanan)</h2>
+    <p class="text-sm opacity-70 mb-3">Untuk tahun lama yang hanya ada jumlah bulanan (tiada perincian harian). Data ini masuk dalam Dashboard &amp; perbandingan tahun secara automatik.</p>
+    <div class="grid grid-cols-3 gap-2 mb-3">
+      <div><label class="text-xs opacity-70">Pulau</label><select id="lg_island">${ISLANDS.map(i=>`<option value="${i.code}" ${i.code===state.island?'selected':''}>${i.code}</option>`).join('')}</select></div>
+      <div><label class="text-xs opacity-70">Tahun</label><select id="lg_year">${Array.from({length:15},(_,i)=>year-14+i).map(y=>`<option value="${y}" ${y===year-1?'selected':''}>${y}</option>`).join('')}</select></div>
+      <div><label class="text-xs opacity-70">Bulan</label><select id="lg_month">${MONTH_LABELS.map((ml,i)=>`<option value="${i+1}">${ml}</option>`).join('')}</select></div>
+    </div>
+    <div class="grid grid-cols-2 gap-2 mb-3">
+      <div><label class="text-xs opacity-70">Bilangan Penyu</label><input type="number" inputmode="numeric" id="lg_penyu" /></div>
+      <div><label class="text-xs opacity-70">Jumlah Telur</label><input type="number" inputmode="numeric" id="lg_telur" /></div>
+      <div><label class="text-xs opacity-70">Telur Menetas (pilihan)</label><input type="number" inputmode="numeric" id="lg_menetas" /></div>
+      <div><label class="text-xs opacity-70">Telur Buruk (pilihan)</label><input type="number" inputmode="numeric" id="lg_buruk" /></div>
+    </div>
+    <button id="lg_save" class="btn btn-primary w-full">Simpan Bulan Ini</button>
+    <div class="eyebrow mt-4 mb-2">Data tersimpan</div>
+    <div id="lg_list" class="text-sm">${skeletonBlock(1)}</div>
+  `)
+  body.appendChild(legacyCard)
+  const lgIsl = () => legacyCard.querySelector('#lg_island').value
+  const lgYr = () => Number(legacyCard.querySelector('#lg_year').value)
+  const lgMo = () => Number(legacyCard.querySelector('#lg_month').value)
+  async function loadLegacyRow() {
+    const { data } = await supabase.from('monthly_summaries').select('*')
+      .eq('island', lgIsl()).eq('year', lgYr()).eq('month', lgMo()).maybeSingle()
+    legacyCard.querySelector('#lg_penyu').value = data?.bilangan_penyu ?? ''
+    legacyCard.querySelector('#lg_telur').value = data?.jumlah_telur ?? ''
+    legacyCard.querySelector('#lg_menetas').value = data?.telur_menetas ?? ''
+    legacyCard.querySelector('#lg_buruk').value = data?.telur_buruk ?? ''
+  }
+  async function loadLegacyList() {
+    const el = legacyCard.querySelector('#lg_list')
+    const { data } = await supabase.from('monthly_summaries').select('*')
+      .eq('island', lgIsl()).eq('year', lgYr()).order('month')
+    if (!data || !data.length) { el.innerHTML = '<div class="opacity-70">Tiada data untuk tahun ini lagi.</div>'; return }
+    el.innerHTML = data.map(r =>
+      `<div class="flex justify-between border-b border-white/10 py-1.5"><span class="opacity-70">${MONTH_LABELS[r.month-1]}</span><span class="tabular-num font-semibold">${r.bilangan_penyu} penyu · ${r.jumlah_telur.toLocaleString()} telur</span></div>`
+    ).join('')
+  }
+  legacyCard.querySelector('#lg_island').onchange = () => { loadLegacyRow(); loadLegacyList() }
+  legacyCard.querySelector('#lg_year').onchange = () => { loadLegacyRow(); loadLegacyList() }
+  legacyCard.querySelector('#lg_month').onchange = loadLegacyRow
+  legacyCard.querySelector('#lg_save').onclick = async () => {
+    const payload = {
+      island: lgIsl(), year: lgYr(), month: lgMo(),
+      bilangan_penyu: Number(legacyCard.querySelector('#lg_penyu').value || 0),
+      jumlah_telur: Number(legacyCard.querySelector('#lg_telur').value || 0),
+      telur_menetas: legacyCard.querySelector('#lg_menetas').value === '' ? null : Number(legacyCard.querySelector('#lg_menetas').value),
+      telur_buruk: legacyCard.querySelector('#lg_buruk').value === '' ? null : Number(legacyCard.querySelector('#lg_buruk').value)
+    }
+    const { error } = await supabase.from('monthly_summaries').upsert(payload)
+    if (error) { toast('Gagal simpan: ' + error.message, 'error'); return }
+    toast(`${MONTH_LABELS[lgMo()-1]} ${lgYr()} disimpan`, 'success')
+    loadLegacyList()
+  }
+  loadLegacyRow(); loadLegacyList()
+  } // end !isKerani (import history + legacy)
 
   if (!isKerani) {
   const historyRows = (logins||[]).map(l => {
