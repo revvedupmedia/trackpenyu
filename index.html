@@ -76,6 +76,12 @@
   #app { animation:appIn .35s cubic-bezier(.16,1,.3,1); }
   @keyframes appIn { from{opacity:0;} to{opacity:1;} }
 
+  @keyframes splashPop { 0%{opacity:0; transform:scale(.55) rotate(-10deg);} 60%{opacity:1; transform:scale(1.08) rotate(2deg);} 100%{opacity:1; transform:scale(1) rotate(0);} }
+  @keyframes splashFade { from{opacity:0; transform:translateY(10px);} to{opacity:1; transform:translateY(0);} }
+  @keyframes splashRing { 0%{transform:scale(.9); opacity:.5;} 100%{transform:scale(1.6); opacity:0;} }
+  .splash-ring { position:absolute; inset:0; border-radius:2rem; border:2px solid #6EE7B7; animation:splashRing 1.8s ease-out infinite; }
+  .splash-logo-wrap { position:relative; width:112px; height:112px; display:flex; align-items:center; justify-content:center; }
+
   #bgvideo { position:fixed; inset:0; width:100%; height:100%; object-fit:cover; z-index:-2; filter:brightness(1.2); }
   #bgtint { position:fixed; inset:0; z-index:-1; background:rgba(6,19,25,.2); }
   html.light #bgtint { background:rgba(247,242,231,.2); }
@@ -169,8 +175,7 @@ async function logout() {
   state.profile = null
   state.island = null
   sessionStorage.removeItem('penyu-island')
-  location.hash = 'island'
-  render('island')
+  go('splash')
 }
 window.logout = logout
 const savedTheme = localStorage.getItem('penyu-theme') || 'dark'
@@ -235,7 +240,7 @@ async function render(route) {
     const badge = document.getElementById('islandBadge')
     if (badge) badge.textContent = state.island
   }
-  const screens = { island: screenIsland, login: screenLogin, entry: screenEntry,
+  const screens = { splash: screenSplash, island: screenIsland, login: screenLogin, entry: screenEntry,
     entries: screenEntries, editentry: screenEditEntry, dashboard: screenDashboard, admin: screenAdmin }
   app.innerHTML = ''
   const el = await (screens[route] || screenIsland)()
@@ -274,6 +279,28 @@ function flatCard(innerHTML, extraClass = '') {
   d.className = `frosted-flat p-4 screen ${extraClass}`
   d.innerHTML = innerHTML
   return d
+}
+
+// ---------- Splash (plays on cold load + after logout) ----------
+function screenSplash() {
+  const wrap = document.createElement('div')
+  wrap.className = 'min-h-[70vh] flex flex-col items-center justify-center gap-5 screen cursor-pointer'
+  wrap.innerHTML = `
+    <div class="splash-logo-wrap">
+      <div class="splash-ring"></div>
+      <div class="splash-ring" style="animation-delay:.4s"></div>
+      <img src="assets/logo.png" id="splashLogo" class="w-24 h-24 object-contain rounded-2xl relative z-10" style="animation: splashPop .7s cubic-bezier(.34,1.56,.64,1) both; box-shadow:0 8px 30px rgba(0,0,0,.4);" />
+    </div>
+    <div class="text-center" style="animation: splashFade .8s ease .25s both;">
+      <h1 class="font-display text-3xl font-semibold">Penyu Tracker</h1>
+      <p class="opacity-60 text-sm mt-1">Memuatkan...</p>
+    </div>
+  `
+  const img = wrap.querySelector('#splashLogo')
+  img.onerror = () => { img.style.display = 'none' }
+  const timer = setTimeout(() => go('island'), 1800)
+  wrap.onclick = () => { clearTimeout(timer); go('island') }
+  return wrap
 }
 
 // ---------- Island select ----------
@@ -1155,7 +1182,7 @@ async function exportToExcel(island, year) {
 }
 
 // ---------- Init ----------
-render(location.hash.slice(1) || 'island')
+render(location.hash.slice(1) || 'splash')
 </script>
 </body>
 </html>
