@@ -604,27 +604,44 @@ async function screenEntries() {
       <h1 class="font-display text-2xl">Entri</h1>
       <span class="rounded px-2.5 py-1 text-xs font-semibold bg-teal-900/40">${state.island}</span>
     </div>
-    <div class="seg mb-5">
+    <div class="seg mb-3">
       <button id="tabSaya" class="${state.entriesTab==='saya'?'active':''}">Entri Saya</button>
       <button id="tabSemua" class="${state.entriesTab==='semua'?'active':''}">Entri Semua</button>
+    </div>
+    <div class="flex gap-2 mb-5">
+      <input type="month" id="filterMonth" class="flex-1" value="${new Date().toISOString().slice(0,7)}" />
+      <button id="filterClear" class="btn btn-ghost btn-sm">Semua Tarikh</button>
     </div>
     <div id="entriesList">Memuatkan...</div>
   `
   const listEl = wrap.querySelector('#entriesList')
+  let monthFilter = null // null = show all, else 'YYYY-MM'
   async function loadList() {
     listEl.innerHTML = 'Memuatkan...'
     const scopeOwn = state.entriesTab === 'saya'
-    let dq = supabase.from('daily_entries').select('*, staff_profiles(full_name)').eq('island', state.island).order('tarikh', { ascending:false }).limit(30)
-    let nq = supabase.from('nest_records').select('*, staff_profiles(full_name)').eq('island', state.island).order('tarikh_dijumpai', { ascending:false }).limit(30)
+    let dq = supabase.from('daily_entries').select('*, staff_profiles(full_name)').eq('island', state.island).order('tarikh', { ascending:false }).limit(100)
+    let nq = supabase.from('nest_records').select('*, staff_profiles(full_name)').eq('island', state.island).order('tarikh_dijumpai', { ascending:false }).limit(100)
     if (scopeOwn) { dq = dq.eq('created_by', state.profile.id); nq = nq.eq('created_by', state.profile.id) }
-    const [{ data: daily }, { data: nests }] = await Promise.all([dq, nq])
+    if (monthFilter) {
+      const [y,m] = monthFilter.split('-')
+      const lastDay = new Date(Number(y), Number(m), 0).getDate()
+      dq = dq.gte('tarikh', `${monthFilter}-01`).lte('tarikh', `${monthFilter}-${lastDay}`)
+      nq = nq.gte('tarikh_dijumpai', `${monthFilter}-01`).lte('tarikh_dijumpai', `${monthFilter}-${lastDay}`)
+    }
+    const [dailyRes, nestRes] = await Promise.all([dq, nq])
+    if (dailyRes.error || nestRes.error) {
+      listEl.innerHTML = ''
+      listEl.appendChild(card(`<div class="text-sm text-red-400">Ralat memuatkan entri: ${dailyRes.error?.message || nestRes.error?.message}</div>`))
+      return
+    }
+    const daily = dailyRes.data, nests = nestRes.data
     const combined = [
       ...(daily||[]).map(d => ({ type:'harian', date: d.tarikh, id: d.id, owner: d.created_by, ownerName: d.staff_profiles?.full_name || '?', summary: `${d.ram} · ${d.bilangan_penyu_bertag+d.bilangan_penyu_takbertag} ekor · ${d.jumlah_telur_diram_bertag+d.jumlah_telur_diram_takbertag} telur` })),
       ...(nests||[]).map(n => ({ type:'individu', date: n.tarikh_dijumpai, id: n.id, owner: n.created_by, ownerName: n.staff_profiles?.full_name || '?', summary: `${n.ram} · ${n.bertag?'Bertag':'Tak Bertag'} · ${n.jumlah_telur_diram} telur${n.status==='menetas' ? ' · Menetas' : ''}` }))
     ].sort((a,b) => new Date(b.date) - new Date(a.date))
 
     listEl.innerHTML = ''
-    if (!combined.length) { listEl.appendChild(card('<div class="text-center py-8 opacity-80">Belum ada entri.</div>')); return }
+    if (!combined.length) { listEl.appendChild(card('<div class="text-center py-8 opacity-80">Tiada entri untuk tempoh ini.</div>')); return }
     combined.forEach((e, i) => {
       const canEdit = e.owner === state.profile.id || state.profile.role === 'admin'
       const row = flatCard(`
@@ -647,6 +664,9 @@ async function screenEntries() {
   }
   wrap.querySelector('#tabSaya').onclick = () => { state.entriesTab='saya'; wrap.querySelector('#tabSaya').className='active'; wrap.querySelector('#tabSemua').className=''; loadList() }
   wrap.querySelector('#tabSemua').onclick = () => { state.entriesTab='semua'; wrap.querySelector('#tabSemua').className='active'; wrap.querySelector('#tabSaya').className=''; loadList() }
+  wrap.querySelector('#filterMonth').onchange = (e) => { monthFilter = e.target.value || null; loadList() }
+  wrap.querySelector('#filterClear').onclick = () => { monthFilter = null; wrap.querySelector('#filterMonth').value = ''; loadList() }
+  monthFilter = wrap.querySelector('#filterMonth').value || null
   loadList()
   return wrap
 }
@@ -770,8 +790,9 @@ async function screenDashboard() {
   const jumlahTelur = data?.jumlah_telur || 0
   const jumlahMenetas = data?.jumlah_menetas || 0
   const jumlahBuruk = data?.jumlah_buruk || 0
-  const target = data?.target || 20000
-  const pct = Math.min(100, Math.round((jumlahTelur/target)*100))
+  const jumlahPenyu = data?.jumlah_penyu || 0
+  const target = data?.target || 0
+  const pct = target ? Math.min(100, Math.round((jumlahTelur/target)*100)) : 0
   const hatchRate = (jumlahMenetas+jumlahBuruk) ? Math.round((jumlahMenetas/(jumlahMenetas+jumlahBuruk))*100) : 0
   const level = Math.floor(pct / 20) + 1
 
@@ -782,20 +803,26 @@ async function screenDashboard() {
       <div class="eyebrow">Misi Tahun ${year}</div>
       <div class="text-xs font-bold px-2 py-1 rounded-full bg-emerald-400/20 text-emerald-300">LEVEL ${level}</div>
     </div>
-    <div class="font-display text-4xl tabular-num mb-1">${jumlahTelur.toLocaleString()} <span class="text-lg opacity-60">/ ${target.toLocaleString()}</span></div>
+    <div class="font-display text-4xl tabular-num mb-1">${jumlahTelur.toLocaleString()} <span class="text-lg opacity-60">/ ${target ? target.toLocaleString() : '—'}</span></div>
     <div class="xp-bar mt-3">
       <div class="xp-fill" style="width:${pct}%"></div>
       ${[25,50,75].map(m => `<div class="milestone" style="left:${m}%"></div>`).join('')}
     </div>
-    <div class="text-xs opacity-70 mt-2">${pct}% menuju sasaran · Baki <span class="tabular-num font-semibold">${(target-jumlahTelur).toLocaleString()}</span> telur</div>
+    <div class="text-xs opacity-70 mt-2">${target ? pct + '% menuju sasaran · Baki ' + (target-jumlahTelur).toLocaleString() + ' telur' : 'Sasaran belum ditetapkan untuk ' + state.island + ' (Admin → Sasaran Tahunan)'}</div>
   `, 'mb-4'))
 
   stats.appendChild(flatCard(`
-    <div class="eyebrow mb-3">Trend Bulanan ${year}</div>
+    <div class="flex items-center justify-between mb-3">
+      <div class="eyebrow">Trend Bulanan ${year}</div>
+      <select id="metricSelect" class="!w-auto text-xs !py-1 !px-2">
+        <option value="telur">Jumlah Telur</option>
+        <option value="penyu">Bilangan Penyu</option>
+      </select>
+    </div>
     <canvas id="chartBar" height="180"></canvas>
   `, 'mb-4'))
   stats.appendChild(flatCard(`
-    <div class="eyebrow mb-3">Kumulatif Sepanjang Tahun</div>
+    <div class="eyebrow mb-3" id="cumulativeLabel">Kumulatif Sepanjang Tahun (Telur)</div>
     <canvas id="chartLine" height="180"></canvas>
   `, 'mb-4'))
   stats.appendChild(flatCard(`
@@ -811,26 +838,47 @@ async function screenDashboard() {
   `, 'mb-4'))
 
   const secondaryRow = document.createElement('div')
-  secondaryRow.className = 'grid grid-cols-2 gap-3'
+  secondaryRow.className = 'grid grid-cols-3 gap-3'
+  secondaryRow.appendChild(flatCard(`<div class="text-xs opacity-70">Bilangan Penyu</div><div class="font-display text-2xl tabular-num">${jumlahPenyu.toLocaleString()}</div>`))
   secondaryRow.appendChild(flatCard(`<div class="text-xs opacity-70">Kadar Menetas</div><div class="font-display text-2xl tabular-num">${hatchRate}%</div>`))
   secondaryRow.appendChild(flatCard(`<div class="text-xs opacity-70">Telur Buruk</div><div class="font-display text-2xl tabular-num text-red-400">${jumlahBuruk.toLocaleString()}</div>`))
   stats.appendChild(secondaryRow)
 
   const monthly = data?.monthly || MONTH_LABELS.map(m => ({ month: m, telur: 0 }))
+  const monthlyPenyu = data?.monthly_penyu || MONTH_LABELS.map(m => ({ month: m, penyu: 0 }))
+  let currentMetric = 'telur'
+
   const barCtx = stats.querySelector('#chartBar').getContext('2d')
-  chartInstances.push(new Chart(barCtx, {
+  const barChart = new Chart(barCtx, {
     type: 'bar',
     data: { labels: monthly.map(m=>m.month), datasets: [{ label:'Telur', data: monthly.map(m=>m.telur), backgroundColor:'#2E9099', borderRadius:6 }] },
     options: { plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af'} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
-  }))
-  let cumulative = 0
-  const cumData = monthly.map(m => (cumulative += m.telur))
+  })
+  chartInstances.push(barChart)
+
+  function cumulativeChart(metric) {
+    const src = metric === 'telur' ? monthly.map(m=>m.telur) : monthlyPenyu.map(m=>m.penyu)
+    let c = 0
+    return src.map(v => (c += v))
+  }
   const lineCtx = stats.querySelector('#chartLine').getContext('2d')
-  chartInstances.push(new Chart(lineCtx, {
+  const lineChart = new Chart(lineCtx, {
     type: 'line',
-    data: { labels: monthly.map(m=>m.month), datasets: [{ label:'Kumulatif', data: cumData, borderColor:'#6EE7B7', backgroundColor:'rgba(110,231,183,.15)', fill:true, tension:.35 }] },
+    data: { labels: monthly.map(m=>m.month), datasets: [{ label:'Kumulatif', data: cumulativeChart('telur'), borderColor:'#6EE7B7', backgroundColor:'rgba(110,231,183,.15)', fill:true, tension:.35 }] },
     options: { plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af'} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
-  }))
+  })
+  chartInstances.push(lineChart)
+
+  stats.querySelector('#metricSelect').onchange = (e) => {
+    currentMetric = e.target.value
+    const isEggs = currentMetric === 'telur'
+    barChart.data.datasets[0].label = isEggs ? 'Telur' : 'Penyu'
+    barChart.data.datasets[0].data = isEggs ? monthly.map(m=>m.telur) : monthlyPenyu.map(m=>m.penyu)
+    barChart.update()
+    lineChart.data.datasets[0].data = cumulativeChart(currentMetric)
+    lineChart.update()
+    stats.querySelector('#cumulativeLabel').textContent = isEggs ? 'Kumulatif Sepanjang Tahun (Telur)' : 'Kumulatif Sepanjang Tahun (Penyu)'
+  }
 
   async function renderCompare(nYears) {
     const years = Array.from({length:nYears}, (_,i) => year - i).reverse()
@@ -864,8 +912,8 @@ async function screenDashboard() {
 async function screenAdmin() {
   if (state.profile?.role !== 'admin') return card('Akses admin sahaja.')
   const year = new Date().getFullYear()
-  const { data: t } = await supabase.from('targets').select('*').eq('year', year).maybeSingle()
-  const { data: mt } = await supabase.from('monthly_targets').select('*').eq('year', year)
+  const { data: t } = await supabase.from('targets').select('*').eq('year', year).eq('island', state.island).maybeSingle()
+  const { data: mt } = await supabase.from('monthly_targets').select('*').eq('year', year).eq('island', state.island)
   const { data: logins } = await supabase.from('login_log').select('*, staff_profiles(full_name, island)').order('logged_in_at', { ascending: false }).limit(20)
 
   const wrap = document.createElement('div')
@@ -880,20 +928,33 @@ async function screenAdmin() {
   const targetCard = card(`
     <h2 class="font-display text-lg mb-3">Sasaran Tahunan</h2>
     <div class="flex gap-2">
-      <input type="number" id="a_year" value="${year}" class="w-28" />
+      <select id="a_target_island">${ISLANDS.map(i=>`<option value="${i.code}" ${i.code===state.island?'selected':''}>${i.code}</option>`).join('')}</select>
+      <input type="number" id="a_year" value="${year}" class="w-24" />
       <input type="number" id="a_target" placeholder="cth: 20000" value="${t?.target_value||''}" class="flex-1" />
     </div>
     <button id="a_saveTarget" class="btn btn-primary mt-3">Simpan Sasaran</button>
     <div id="a_msg" class="hidden text-sm mt-2 text-emerald-300"></div>
   `)
   body.appendChild(targetCard)
+  async function reloadYearlyTarget() {
+    const isl = targetCard.querySelector('#a_target_island').value
+    const yr = Number(targetCard.querySelector('#a_year').value)
+    const { data } = await supabase.from('targets').select('*').eq('year', yr).eq('island', isl).maybeSingle()
+    targetCard.querySelector('#a_target').value = data?.target_value || ''
+  }
+  targetCard.querySelector('#a_target_island').onchange = reloadYearlyTarget
+  targetCard.querySelector('#a_year').onchange = reloadYearlyTarget
   targetCard.querySelector('#a_saveTarget').onclick = async () => {
-    await supabase.from('targets').upsert({ year: Number(targetCard.querySelector('#a_year').value), target_value: Number(targetCard.querySelector('#a_target').value) })
+    await supabase.from('targets').upsert({
+      year: Number(targetCard.querySelector('#a_year').value),
+      island: targetCard.querySelector('#a_target_island').value,
+      target_value: Number(targetCard.querySelector('#a_target').value)
+    })
     const m = targetCard.querySelector('#a_msg'); m.textContent = 'Sasaran disimpan ✓'; m.classList.remove('hidden')
   }
 
-  async function loadMonthlyTargets(yr) {
-    const { data } = await supabase.from('monthly_targets').select('*').eq('year', yr)
+  async function loadMonthlyTargets(yr, isl) {
+    const { data } = await supabase.from('monthly_targets').select('*').eq('year', yr).eq('island', isl)
     const map = {}; (data||[]).forEach(r => map[r.month] = r.target_value); return map
   }
   function monthGridHTML(map) {
@@ -901,23 +962,31 @@ async function screenAdmin() {
   }
   const initialMonthlyMap = {}; (mt||[]).forEach(r => initialMonthlyMap[r.month] = r.target_value)
   const monthlyCard = card(`
-    <div class="flex items-center justify-between mb-3">
+    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
       <h2 class="font-display text-lg">Sasaran Bulanan</h2>
-      <input type="number" id="a_monthlyYear" value="${year}" class="w-24" />
+      <div class="flex gap-2">
+        <select id="a_monthlyIsland">${ISLANDS.map(i=>`<option value="${i.code}" ${i.code===state.island?'selected':''}>${i.code}</option>`).join('')}</select>
+        <input type="number" id="a_monthlyYear" value="${year}" class="w-24" />
+      </div>
     </div>
     <div class="grid grid-cols-3 gap-2" id="a_monthGrid">${monthGridHTML(initialMonthlyMap)}</div>
     <button id="a_saveMonthly" class="btn btn-primary mt-3">Simpan Sasaran Bulanan</button>
     <div id="a_monthlyMsg" class="hidden text-sm mt-2 text-emerald-300"></div>
   `)
   body.appendChild(monthlyCard)
-  monthlyCard.querySelector('#a_monthlyYear').onchange = async (e) => {
-    const map = await loadMonthlyTargets(Number(e.target.value))
+  async function reloadMonthlyGrid() {
+    const yr = Number(monthlyCard.querySelector('#a_monthlyYear').value)
+    const isl = monthlyCard.querySelector('#a_monthlyIsland').value
+    const map = await loadMonthlyTargets(yr, isl)
     monthlyCard.querySelector('#a_monthGrid').innerHTML = monthGridHTML(map)
     monthlyCard.querySelector('#a_monthlyMsg').classList.add('hidden')
   }
+  monthlyCard.querySelector('#a_monthlyYear').onchange = reloadMonthlyGrid
+  monthlyCard.querySelector('#a_monthlyIsland').onchange = reloadMonthlyGrid
   monthlyCard.querySelector('#a_saveMonthly').onclick = async () => {
     const yr = Number(monthlyCard.querySelector('#a_monthlyYear').value)
-    const rows = MONTH_LABELS.map((_,i) => { const m=i+1; const val = monthlyCard.querySelector(`#am_${m}`).value; return val==='' ? null : { year: yr, month: m, target_value: Number(val) } }).filter(Boolean)
+    const isl = monthlyCard.querySelector('#a_monthlyIsland').value
+    const rows = MONTH_LABELS.map((_,i) => { const m=i+1; const val = monthlyCard.querySelector(`#am_${m}`).value; return val==='' ? null : { year: yr, island: isl, month: m, target_value: Number(val) } }).filter(Boolean)
     if (rows.length) await supabase.from('monthly_targets').upsert(rows)
     const m = monthlyCard.querySelector('#a_monthlyMsg'); m.textContent = 'Sasaran bulanan disimpan ✓'; m.classList.remove('hidden')
   }
@@ -927,7 +996,7 @@ async function screenAdmin() {
     <p class="text-sm opacity-70 mb-3">Jana fail Excel ikut format rasmi (JAN-DIS + JUMLAH tahunan), formula pengiraan kekal utuh.</p>
     <div class="flex gap-2">
       <select id="ex_island">${ISLANDS.map(i=>`<option value="${i.code}" ${i.code===state.island?'selected':''}>${i.code}</option>`).join('')}</select>
-      <input type="number" id="ex_year" value="${year}" class="flex-1" />
+      <select id="ex_year" class="flex-1">${Array.from({length:8},(_,i)=>year-2+i).map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join('')}</select>
     </div>
     <button id="ex_go" class="btn btn-primary w-full mt-3">Jana &amp; Muat Turun Excel</button>
     <div id="ex_msg" class="hidden text-sm mt-2 text-emerald-300"></div>
