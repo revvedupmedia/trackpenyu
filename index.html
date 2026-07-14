@@ -502,25 +502,48 @@ async function screenAdmin() {
   }
 
   // --- Monthly targets ---
-  const monthlyMap = {}
-  ;(mt || []).forEach(r => { monthlyMap[r.month] = r.target_value })
-  const monthInputs = MONTH_LABELS.map((label, i) => {
-    const m = i + 1
-    return `<div><label class="text-xs opacity-70">${label}</label><input type="number" id="am_${m}" value="${monthlyMap[m] ?? ''}" placeholder="-" /></div>`
-  }).join('')
+  async function loadMonthlyTargets(yr) {
+    const { data } = await supabase.from('monthly_targets').select('*').eq('year', yr)
+    const map = {}
+    ;(data || []).forEach(r => { map[r.month] = r.target_value })
+    return map
+  }
+
+  function monthGridHTML(map) {
+    return MONTH_LABELS.map((label, i) => {
+      const m = i + 1
+      return `<div><label class="text-xs opacity-70">${label}</label><input type="number" id="am_${m}" value="${map[m] ?? ''}" placeholder="-" /></div>`
+    }).join('')
+  }
+
+  const initialMonthlyMap = {}
+  ;(mt || []).forEach(r => { initialMonthlyMap[r.month] = r.target_value })
+
   const monthlyCard = card(`
-    <h2 class="font-display text-lg mb-3">Sasaran Bulanan ${year}</h2>
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-display text-lg">Sasaran Bulanan</h2>
+      <input type="number" id="a_monthlyYear" value="${year}" class="w-24" />
+    </div>
     <p class="text-sm opacity-70 mb-3">Pilihan — pecahkan sasaran tahunan ikut bulan kalau perlu.</p>
-    <div class="grid grid-cols-3 gap-2">${monthInputs}</div>
+    <div class="grid grid-cols-3 gap-2" id="a_monthGrid">${monthGridHTML(initialMonthlyMap)}</div>
     <button id="a_saveMonthly" class="btn btn-primary mt-3">Simpan Sasaran Bulanan</button>
     <div id="a_monthlyMsg" class="hidden text-sm mt-2 text-emerald-300"></div>
   `)
   body.appendChild(monthlyCard)
+
+  monthlyCard.querySelector('#a_monthlyYear').onchange = async (e) => {
+    const yr = Number(e.target.value)
+    const map = await loadMonthlyTargets(yr)
+    monthlyCard.querySelector('#a_monthGrid').innerHTML = monthGridHTML(map)
+    monthlyCard.querySelector('#a_monthlyMsg').classList.add('hidden')
+  }
+
   monthlyCard.querySelector('#a_saveMonthly').onclick = async () => {
+    const yr = Number(monthlyCard.querySelector('#a_monthlyYear').value)
     const rows = MONTH_LABELS.map((_, i) => {
       const m = i + 1
       const val = monthlyCard.querySelector(`#am_${m}`).value
-      return val === '' ? null : { year, month: m, target_value: Number(val) }
+      return val === '' ? null : { year: yr, month: m, target_value: Number(val) }
     }).filter(Boolean)
     if (rows.length) await supabase.from('monthly_targets').upsert(rows)
     const m = monthlyCard.querySelector('#a_monthlyMsg'); m.textContent = 'Sasaran bulanan disimpan ✓'; m.classList.remove('hidden')
