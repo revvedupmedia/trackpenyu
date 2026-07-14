@@ -299,6 +299,28 @@ function skeletonBlock(lines = 3) {
   return `<div class="space-y-3">${Array.from({length:lines},(_,i)=>`<div class="skel ${heights[i % heights.length]}"></div>`).join('')}</div>`
 }
 
+// ---------- Progress bar color by percentage ----------
+// <25% merah, 25-50% oren-merah, 50-75% oren-amber, 75%+ kuning gold
+function progressColor(pct) {
+  if (pct >= 75) return 'linear-gradient(90deg,#B8860B,#FFD700)'
+  if (pct >= 50) return 'linear-gradient(90deg,#C2410C,#F59E0B)'
+  if (pct >= 25) return 'linear-gradient(90deg,#B91C1C,#EA580C)'
+  return 'linear-gradient(90deg,#7F1D1D,#DC2626)'
+}
+function progressGlow(pct) {
+  if (pct >= 75) return '0 0 16px rgba(255,215,0,.55)'
+  if (pct >= 50) return '0 0 16px rgba(245,158,11,.5)'
+  if (pct >= 25) return '0 0 16px rgba(234,88,12,.45)'
+  return '0 0 16px rgba(220,38,38,.45)'
+}
+
+// ---------- Date formatter dd-mm-yyyy ----------
+function fmtDate(iso) {
+  if (!iso) return '-'
+  const [y, m, d] = iso.split('-')
+  return `${d}-${m}-${y}`
+}
+
 // ---------- Router ----------
 function go(route) {
   if (location.hash.slice(1) === route) render(route)
@@ -319,8 +341,9 @@ async function render(route) {
     }
   }
   if (state.profile) {
-    document.getElementById('navAdmin').classList.toggle('hidden', state.profile.role !== 'admin')
-    document.getElementById('navAdmin').classList.toggle('flex', state.profile.role === 'admin')
+    const showAdminTab = state.profile.role === 'admin' || state.profile.role === 'kerani'
+    document.getElementById('navAdmin').classList.toggle('hidden', !showAdminTab)
+    document.getElementById('navAdmin').classList.toggle('flex', showAdminTab)
     const badge = document.getElementById('islandBadge')
     if (badge) badge.textContent = state.island
   }
@@ -339,7 +362,7 @@ async function loadProfile(userId) {
 
 async function enforceIslandGate() {
   if (!state.profile) return false
-  if (state.profile.role === 'admin') return true
+  if (state.profile.role === 'admin' || state.profile.role === 'kerani') return true
   if (!state.island || state.profile.island !== state.island) {
     await supabase.auth.signOut()
     state.profile = null
@@ -449,6 +472,9 @@ function screenLogin() {
 // ENTRY — two modes: Harian (daily aggregate) and Individu (per-turtle)
 // =========================================================================
 function screenEntry() {
+  if (state.profile?.role === 'kerani') {
+    return card('Akaun Kerani adalah lihat-sahaja. Anda boleh semak data di tab Entri dan Dashboard, atau eksport Excel di tab Admin.')
+  }
   const wrap = document.createElement('div')
   let mode = localStorage.getItem('penyu-lastmode') || 'harian'
   wrap.innerHTML = `
@@ -540,14 +566,46 @@ function buildHarianForm() {
     }
   }
 
-  function renderHarianSummary(payload) {
+  async function renderHarianSummary(payload) {
     holder.innerHTML = ''
     let countdown = 5
+
+    // Duplicate check: same island + date + RAM with identical counts —
+    // warn (showing who keyed the existing one) but allow "Teruskan"
+    // after the usual 5s, since genuine repeats can happen in nature.
+    let dupWarningHTML = ''
+    let isDuplicate = false
+    if (navigator.onLine) {
+      const { data: dups } = await supabase.from('daily_entries')
+        .select('*, staff_profiles!daily_entries_created_by_fkey(full_name)')
+        .eq('island', state.island).eq('tarikh', payload.tarikh).eq('ram', payload.ram)
+      const matches = (dups||[]).filter(d =>
+        d.bilangan_penyu_bertag === payload.bilangan_penyu_bertag &&
+        d.bilangan_penyu_takbertag === payload.bilangan_penyu_takbertag &&
+        d.jumlah_telur_diram_bertag === payload.jumlah_telur_diram_bertag &&
+        d.jumlah_telur_diram_takbertag === payload.jumlah_telur_diram_takbertag
+      )
+      if (matches.length) {
+        isDuplicate = true
+        dupWarningHTML = `
+          <div class="text-sm bg-amber-500/10 border border-amber-500/40 rounded-xl px-3 py-3 mb-4">
+            <div class="font-semibold mb-2">⚠️ Data serupa sudah wujud untuk hari ini:</div>
+            ${matches.map(d => `
+              <div class="border-t border-amber-500/20 pt-2 mt-2 text-xs">
+                <div>${fmtDate(d.tarikh)} · ${d.ram} · Penyu ${d.bilangan_penyu_bertag}/${d.bilangan_penyu_takbertag} · Telur ${d.jumlah_telur_diram_bertag}/${d.jumlah_telur_diram_takbertag}</div>
+                <div class="opacity-70">Dimasukkan oleh: ${d.staff_profiles?.full_name || 'Tidak diketahui'}</div>
+              </div>`).join('')}
+            <div class="opacity-80 mt-2 text-xs">Pastikan ini bukan entri berganda sebelum teruskan.</div>
+          </div>`
+      }
+    }
+
     const c = card(`
       <h2 class="font-display text-xl mb-4">Sahkan Data Harian</h2>
+      ${dupWarningHTML}
       <div class="space-y-2 text-sm">
         <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Pulau</span><span class="font-semibold">${state.island}</span></div>
-        <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Tarikh</span><span class="font-semibold">${payload.tarikh}</span></div>
+        <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Tarikh</span><span class="font-semibold">${fmtDate(payload.tarikh)}</span></div>
         <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">RAM</span><span class="font-semibold">${payload.ram}</span></div>
         <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Bilangan Penyu (Bertag/Tak)</span><span class="font-semibold tabular-num">${payload.bilangan_penyu_bertag} / ${payload.bilangan_penyu_takbertag}</span></div>
         <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Jumlah Telur (Bertag/Tak)</span><span class="font-semibold tabular-num">${payload.jumlah_telur_diram_bertag} / ${payload.jumlah_telur_diram_takbertag}</span></div>
@@ -560,9 +618,10 @@ function buildHarianForm() {
     holder.appendChild(c)
     c.querySelector('#backBtn').onclick = renderForm
     const submitBtn = c.querySelector('#submitBtn')
+    const readyLabel = isDuplicate ? 'Teruskan' : 'Hantar Sekarang'
     const iv = setInterval(() => {
       countdown--
-      if (countdown <= 0) { clearInterval(iv); submitBtn.disabled = false; submitBtn.textContent = 'Hantar Sekarang' }
+      if (countdown <= 0) { clearInterval(iv); submitBtn.disabled = false; submitBtn.textContent = readyLabel }
       else submitBtn.textContent = `Tunggu ${countdown}s...`
     }, 1000)
     submitBtn.onclick = async () => {
@@ -570,7 +629,7 @@ function buildHarianForm() {
       let err = null
       if (!navigator.onLine) { queueWrite({ table:'daily_entries', op:'insert', payload }) }
       else { const res = await supabase.from('daily_entries').insert(payload); err = res.error }
-      if (err) { submitBtn.disabled = false; submitBtn.textContent = 'Hantar Sekarang'; toast('Gagal menghantar: ' + err.message, 'error'); return }
+      if (err) { submitBtn.disabled = false; submitBtn.textContent = readyLabel; toast('Gagal menghantar: ' + err.message, 'error'); return }
       clearDraft('harian')
       holder.innerHTML = ''
       holder.appendChild(card(`<div class="text-center py-10"><div class="text-5xl mb-3">✅</div><p class="font-display text-lg">${navigator.onLine ? 'Data harian dihantar!' : 'Disimpan — akan sync bila online'}</p></div>`))
@@ -617,7 +676,7 @@ function buildIndividuForm() {
     holder.innerHTML = ''
     const header = document.createElement('div')
     header.className = 'flex items-center justify-between mb-4'
-    header.innerHTML = `<button class="btn-back">← Tukar bilangan</button><span class="eyebrow">${draft.tarikh} · ${draft.count} ekor</span>`
+    header.innerHTML = `<button class="btn-back">← Tukar bilangan</button><span class="eyebrow">${fmtDate(draft.tarikh)} · ${draft.count} ekor</span>`
     header.querySelector('button').onclick = renderSetup
     holder.appendChild(header)
 
@@ -730,11 +789,18 @@ async function screenEntries() {
     <div class="flex gap-2 mb-5">
       <input type="month" id="filterMonth" class="flex-1" value="${new Date().toISOString().slice(0,7)}" />
       <button id="filterClear" class="btn btn-ghost btn-sm">Semua Tarikh</button>
+      ${state.profile?.role === 'admin' ? '<button id="bulkToggle" class="btn btn-ghost btn-sm">Pilih</button>' : ''}
+    </div>
+    <div id="bulkBar" class="hidden frosted-flat p-3 mb-4 flex items-center justify-between gap-2">
+      <span class="text-sm"><span id="bulkCount" class="font-semibold tabular-num">0</span> dipilih</span>
+      <button id="bulkDelete" class="btn btn-sm" style="background:rgba(225,96,76,.15); border:1px solid rgba(225,96,76,.4); color:#E1604C;" disabled>Tunggu 5s...</button>
     </div>
     <div id="entriesList" class="stagger">${skeletonBlock(4)}</div>
   `
   const listEl = wrap.querySelector('#entriesList')
   let monthFilter = null // null = show all, else 'YYYY-MM'
+  let bulkMode = false
+  const bulkSelected = new Map() // id -> type
   async function loadList() {
     listEl.innerHTML = skeletonBlock(4)
     const scopeOwn = state.entriesTab === 'saya'
@@ -763,8 +829,10 @@ async function screenEntries() {
     if (!combined.length) { listEl.appendChild(card('<div class="text-center py-8 opacity-80">Tiada entri untuk tempoh ini.</div>')); return }
     combined.forEach((e, i) => {
       const canEdit = e.owner === state.profile.id || state.profile.role === 'admin'
+      const checkboxHTML = bulkMode ? `<input type="checkbox" class="bulk-check w-5 h-5 flex-shrink-0" data-id="${e.id}" data-type="${e.type}" ${bulkSelected.has(e.id)?'checked':''} />` : ''
       const row = flatCard(`
         <div class="list-row ${canEdit ? 'cursor-pointer' : ''}">
+          ${checkboxHTML}
           <div class="avatar-badge">${e.ownerName.charAt(0).toUpperCase()}</div>
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2">
@@ -777,9 +845,65 @@ async function screenEntries() {
           ${canEdit ? '<span class="opacity-50">✏️</span>' : ''}
         </div>
       `, 'mb-2 p-2')
-      if (canEdit) row.onclick = () => { state.editTarget = { type: e.type, id: e.id }; go('editentry') }
+      if (bulkMode) {
+        row.onclick = (ev) => {
+          const cb = row.querySelector('.bulk-check')
+          if (ev.target !== cb) cb.checked = !cb.checked
+          if (cb.checked) bulkSelected.set(e.id, e.type)
+          else bulkSelected.delete(e.id)
+          updateBulkBar()
+        }
+      } else if (canEdit) {
+        row.onclick = () => { state.editTarget = { type: e.type, id: e.id }; go('editentry') }
+      }
       listEl.appendChild(row)
     })
+  }
+
+  function updateBulkBar() {
+    wrap.querySelector('#bulkCount').textContent = bulkSelected.size
+  }
+
+  const bulkToggleBtn = wrap.querySelector('#bulkToggle')
+  if (bulkToggleBtn) {
+    let armTimer = null
+    bulkToggleBtn.onclick = () => {
+      bulkMode = !bulkMode
+      bulkSelected.clear()
+      updateBulkBar()
+      bulkToggleBtn.textContent = bulkMode ? 'Batal' : 'Pilih'
+      const bar = wrap.querySelector('#bulkBar')
+      bar.classList.toggle('hidden', !bulkMode)
+      bar.classList.toggle('flex', bulkMode)
+      const delBtn = wrap.querySelector('#bulkDelete')
+      clearInterval(armTimer)
+      if (bulkMode) {
+        // Arm the bulk delete button with the same 5s safety delay
+        let cd = 5
+        delBtn.disabled = true
+        delBtn.textContent = `Tunggu ${cd}s...`
+        armTimer = setInterval(() => {
+          cd--
+          if (cd <= 0) { clearInterval(armTimer); delBtn.disabled = false; delBtn.textContent = 'Padam Terpilih' }
+          else delBtn.textContent = `Tunggu ${cd}s...`
+        }, 1000)
+      }
+      loadList()
+    }
+    wrap.querySelector('#bulkDelete').onclick = async () => {
+      if (!bulkSelected.size) { toast('Tiada entri dipilih.', 'info'); return }
+      if (!confirm(`Padam ${bulkSelected.size} entri terpilih? Tindakan ini kekal.`)) return
+      const dailyIds = [], nestIds = []
+      bulkSelected.forEach((type, id) => (type === 'harian' ? dailyIds : nestIds).push(id))
+      let err = null
+      if (dailyIds.length) { const r = await supabase.from('daily_entries').delete().in('id', dailyIds); err = err || r.error }
+      if (nestIds.length) { const r = await supabase.from('nest_records').delete().in('id', nestIds); err = err || r.error }
+      if (err) { toast('Gagal padam: ' + err.message, 'error'); return }
+      toast(`${bulkSelected.size} entri dipadam`, 'success')
+      bulkSelected.clear()
+      updateBulkBar()
+      loadList()
+    }
   }
   wrap.querySelector('#tabSaya').onclick = () => { state.entriesTab='saya'; wrap.querySelector('#tabSaya').className='active'; wrap.querySelector('#tabSemua').className=''; loadList() }
   wrap.querySelector('#tabSemua').onclick = () => { state.entriesTab='semua'; wrap.querySelector('#tabSemua').className='active'; wrap.querySelector('#tabSaya').className=''; loadList() }
@@ -928,9 +1052,24 @@ function destroyCharts() { chartInstances.forEach(c => c.destroy()); chartInstan
 async function screenDashboard() {
   const year = new Date().getFullYear()
   destroyCharts()
+  // Admin & kerani can flip between islands without re-logging in;
+  // staff are locked to their own island.
+  const canSwitch = state.profile?.role === 'admin' || state.profile?.role === 'kerani'
+  if (!state.viewIsland) state.viewIsland = state.island
+  const viewIsland = canSwitch ? state.viewIsland : state.island
   const wrap = document.createElement('div')
-  wrap.innerHTML = `<h1 class="font-display text-2xl mb-1">Dashboard</h1><div class="inline-block rounded px-2.5 py-1 text-xs font-semibold mb-4 bg-teal-900/40">${state.island}</div><div id="stats" class="stagger">${skeletonBlock(5)}</div>`
-  const { data } = await supabase.rpc('get_dashboard_totals', { p_year: year, p_island: state.island })
+  const switcherHTML = canSwitch ? `
+    <div class="seg mb-4" id="islandSwitcher">
+      ${ISLANDS.map(i => `<button data-isl="${i.code}" class="${i.code===viewIsland?'active':''}">${i.code}</button>`).join('')}
+    </div>` : `<div class="inline-block rounded px-2.5 py-1 text-xs font-semibold mb-4 bg-teal-900/40">${viewIsland}</div>`
+  wrap.innerHTML = `<h1 class="font-display text-2xl mb-2">Dashboard</h1>${switcherHTML}<div id="stats" class="stagger">${skeletonBlock(5)}</div>`
+  if (canSwitch) {
+    wrap.querySelectorAll('#islandSwitcher button').forEach(b => b.onclick = () => {
+      state.viewIsland = b.dataset.isl
+      go('dashboard')
+    })
+  }
+  const { data } = await supabase.rpc('get_dashboard_totals', { p_year: year, p_island: viewIsland })
   const stats = wrap.querySelector('#stats')
   const jumlahTelur = data?.jumlah_telur || 0
   const jumlahMenetas = data?.jumlah_menetas || 0
@@ -950,14 +1089,14 @@ async function screenDashboard() {
     </div>
     <div class="font-display text-5xl tabular-num mb-1"><span id="heroCount">0</span> <span class="text-lg opacity-60">/ ${target ? target.toLocaleString() : '—'}</span></div>
     <div class="xp-bar mt-3">
-      <div class="xp-fill" style="width:${pct}%"></div>
+      <div class="xp-fill" id="heroBar" style="width:0%; background:${progressColor(pct)}; box-shadow:${progressGlow(pct)};"></div>
       ${[25,50,75].map(m => `<div class="milestone" style="left:${m}%"></div>`).join('')}
     </div>
     <div class="text-xs opacity-70 mt-2">${target ? pct + '% menuju sasaran · Baki ' + (target-jumlahTelur).toLocaleString() + ' telur' : 'Sasaran belum ditetapkan untuk ' + state.island + ' (Admin → Sasaran Tahunan)'}</div>
   `, 'mb-4'))
 
   // Monthly HP-bar grid — per-month actual vs target, game-style progress
-  const { data: monthlyTargetsRows } = await supabase.from('monthly_targets').select('*').eq('year', year).eq('island', state.island)
+  const { data: monthlyTargetsRows } = await supabase.from('monthly_targets').select('*').eq('year', year).eq('island', viewIsland)
   const monthlyTargetMap = {}
   ;(monthlyTargetsRows||[]).forEach(r => { monthlyTargetMap[r.month] = r.target_value })
   const monthlyActual = data?.monthly || MONTH_LABELS.map(m => ({ month: m, telur: 0 }))
@@ -971,7 +1110,7 @@ async function screenDashboard() {
     const over = mPct > 100
     return `
       <div class="month-hp">
-        <div class="month-hp-fill ${over ? 'over' : ''}" style="width:${mTarget ? fillPct : 0}%"></div>
+        <div class="month-hp-fill" data-fill="${mTarget ? fillPct : 0}" style="width:0%; background:${progressColor(mPct)};"></div>
         <div class="month-hp-content">
           <span class="month-hp-label">${label}</span>
           <span class="month-hp-value tabular-num">${actual.toLocaleString()} / ${mTarget ? mTarget.toLocaleString() : '—'}</span>
@@ -1026,6 +1165,13 @@ async function screenDashboard() {
     const cp = stats.querySelector('#cntPenyu'); if (cp) animateCount(cp, jumlahPenyu)
     const ch = stats.querySelector('#cntHatch'); if (ch) animateCount(ch, hatchRate, { suffix: '%' })
     const cb = stats.querySelector('#cntBuruk'); if (cb) animateCount(cb, jumlahBuruk)
+    // Bars fill from 0 → actual value (double rAF so the browser paints
+    // the 0% state first, letting the CSS width transition actually run)
+    requestAnimationFrame(() => {
+      const heroBar = stats.querySelector('#heroBar')
+      if (heroBar) heroBar.style.width = pct + '%'
+      stats.querySelectorAll('.month-hp-fill').forEach(f => { f.style.width = f.dataset.fill + '%' })
+    })
   })
 
   const monthly = data?.monthly || MONTH_LABELS.map(m => ({ month: m, telur: 0 }))
@@ -1066,7 +1212,7 @@ async function screenDashboard() {
 
   async function renderCompare(nYears) {
     const years = Array.from({length:nYears}, (_,i) => year - i).reverse()
-    const { data: multi } = await supabase.rpc('get_multi_year_monthly', { p_years: years, p_island: state.island })
+    const { data: multi } = await supabase.rpc('get_multi_year_monthly', { p_years: years, p_island: viewIsland })
     const colors = ['#2E9099','#6EE7B7','#E0A458','#E1604C','#9AB18F']
     const datasets = years.map((y,i) => ({
       label: String(y),
@@ -1094,7 +1240,8 @@ async function screenDashboard() {
 // ADMIN
 // =========================================================================
 async function screenAdmin() {
-  if (state.profile?.role !== 'admin') return card('Akses admin sahaja.')
+  const isKerani = state.profile?.role === 'kerani'
+  if (state.profile?.role !== 'admin' && !isKerani) return card('Akses admin sahaja.')
   const year = new Date().getFullYear()
   const { data: t } = await supabase.from('targets').select('*').eq('year', year).eq('island', state.island).maybeSingle()
   const { data: mt } = await supabase.from('monthly_targets').select('*').eq('year', year).eq('island', state.island)
@@ -1124,6 +1271,7 @@ async function screenAdmin() {
   }
   const initialMonthlyMap = {}; (mt||[]).forEach(r => initialMonthlyMap[r.month] = r.target_value)
   const initialTotal = Object.values(initialMonthlyMap).reduce((s,v) => s + (v||0), 0)
+  if (!isKerani) {
   const targetCard = card(`
     <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
       <h2 class="font-display text-lg">Sasaran</h2>
@@ -1165,6 +1313,7 @@ async function screenAdmin() {
     await supabase.from('targets').upsert({ year: yr, island: isl, target_value: total })
     const m = targetCard.querySelector('#a_msg'); m.textContent = 'Sasaran disimpan ✓ (tahunan dikira dari jumlah bulanan)'; m.classList.remove('hidden')
   }
+  } // end !isKerani (sasaran)
 
   const exportCard = card(`
     <h2 class="font-display text-lg mb-3">Eksport Excel</h2>
@@ -1189,6 +1338,83 @@ async function screenAdmin() {
     btn.disabled = false; btn.textContent = 'Jana & Muat Turun Excel'
   }
 
+  // --- Excel import (admin only) ---
+  if (!isKerani) {
+  const importCard = card(`
+    <h2 class="font-display text-lg mb-3">Import Excel</h2>
+    <p class="text-sm opacity-70 mb-3">Auto key-in dari fail Excel sedia ada (format sama dengan eksport/template rasmi). <span class="text-amber-400">Awas: import fail yang sama dua kali akan menggandakan data.</span></p>
+    <div class="grid grid-cols-2 gap-2 mb-3">
+      <div><label class="text-xs opacity-70">Pulau</label><select id="im_island">${ISLANDS.map(i=>`<option value="${i.code}" ${i.code===state.island?'selected':''}>${i.code}</option>`).join('')}</select></div>
+      <div><label class="text-xs opacity-70">Tahun</label><select id="im_year">${Array.from({length:8},(_,i)=>year-5+i).map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join('')}</select></div>
+    </div>
+    <input type="file" accept=".xlsx" id="im_file" class="text-sm" />
+    <button id="im_go" class="btn btn-primary w-full mt-3" disabled>Pilih fail dahulu</button>
+    <div id="im_msg" class="hidden text-sm mt-2 text-emerald-300"></div>
+  `)
+  body.appendChild(importCard)
+  const imFile = importCard.querySelector('#im_file')
+  const imGo = importCard.querySelector('#im_go')
+  imFile.onchange = () => { imGo.disabled = !imFile.files.length; imGo.textContent = imFile.files.length ? 'Import Sekarang' : 'Pilih fail dahulu' }
+  imGo.onclick = async () => {
+    const file = imFile.files[0]
+    if (!file) return
+    imGo.disabled = true; imGo.textContent = 'Membaca fail...'
+    try {
+      const island = importCard.querySelector('#im_island').value
+      const yr = Number(importCard.querySelector('#im_year').value)
+      const buf = await file.arrayBuffer()
+      const wb = XLSX.read(buf, { type: 'array' })
+      const rows = []
+      MONTH_SHEET_NAMES.forEach((sheetName, mi) => {
+        const ws = wb.Sheets[sheetName]
+        if (!ws) return
+        const daysInMonth = new Date(yr, mi+1, 0).getDate()
+        const num = (ref) => { const c = ws[ref]; const v = c ? Number(c.v) : 0; return isNaN(v) ? 0 : v }
+        const txt = (ref) => { const c = ws[ref]; return c && c.v != null ? String(c.v) : null }
+        for (let day = 1; day <= daysInMonth; day++) {
+          const r = 7 + day
+          const dateStr = `${yr}-${String(mi+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
+          // LPP: C,D (penyu) G,H (telur) K,L (menetas) S (dikeluarkan)
+          const lpp = { bp_b:num(`C${r}`), bp_t:num(`D${r}`), td_b:num(`G${r}`), td_t:num(`H${r}`), tm_b:num(`K${r}`), tm_t:num(`L${r}`), dk:num(`S${r}`) }
+          // SFC: E,F / I,J / M,N
+          const sfc = { bp_b:num(`E${r}`), bp_t:num(`F${r}`), td_b:num(`I${r}`), td_t:num(`J${r}`), tm_b:num(`M${r}`), tm_t:num(`N${r}`), dk:0 }
+          const cat = txt(`T${r}`)
+          const build = (ram, v) => {
+            const hasData = v.bp_b || v.bp_t || v.td_b || v.td_t || v.tm_b || v.tm_t || v.dk
+            if (!hasData) return null
+            return {
+              island, tarikh: dateStr, ram,
+              bilangan_penyu_bertag: v.bp_b, bilangan_penyu_takbertag: v.bp_t,
+              jumlah_telur_diram_bertag: v.td_b, jumlah_telur_diram_takbertag: v.td_t,
+              telur_menetas_bertag: (v.tm_b || v.tm_t) ? v.tm_b : null,
+              telur_menetas_takbertag: (v.tm_b || v.tm_t) ? v.tm_t : null,
+              jumlah_telur_dikeluarkan: v.dk || null,
+              catatan: cat, created_by: state.profile.id
+            }
+          }
+          const lppRow = build('LPP', lpp); if (lppRow) rows.push(lppRow)
+          const sfcRow = build('SFC', sfc); if (sfcRow) rows.push(sfcRow)
+        }
+      })
+      if (!rows.length) { toast('Tiada data dijumpai dalam fail. Pastikan format ikut template rasmi.', 'error'); imGo.disabled = false; imGo.textContent = 'Import Sekarang'; return }
+      imGo.textContent = `Memasukkan ${rows.length} rekod...`
+      // Chunked insert (avoid huge single request)
+      for (let i = 0; i < rows.length; i += 100) {
+        const { error } = await supabase.from('daily_entries').insert(rows.slice(i, i+100))
+        if (error) throw error
+      }
+      const m = importCard.querySelector('#im_msg'); m.textContent = `${rows.length} rekod diimport ✓`; m.classList.remove('hidden')
+      toast(`${rows.length} rekod diimport`, 'success')
+      imFile.value = ''
+      imGo.textContent = 'Pilih fail dahulu'
+    } catch (err) {
+      toast('Gagal import: ' + err.message, 'error')
+      imGo.disabled = false; imGo.textContent = 'Import Sekarang'
+    }
+  }
+  } // end !isKerani (import)
+
+  if (!isKerani) {
   const historyRows = (logins||[]).map(l => {
     const name = l.staff_profiles?.full_name || 'Tidak diketahui'
     const island = l.staff_profiles?.island || l.island || '-'
@@ -1210,6 +1436,7 @@ git push</pre>
     <p class="text-sm opacity-70">Tambah staf, tetapkan pulau, atau tukar peranan di
       <a href="https://app.supabase.com" target="_blank" class="underline text-teal-300">Supabase Table Editor → staff_profiles</a>.</p>
   `))
+  } // end !isKerani (admin-only cards)
   return wrap
 }
 
