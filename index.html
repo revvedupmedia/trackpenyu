@@ -680,6 +680,30 @@ async function screenEntries() {
 }
 
 // ---------- Edit entry (fixes old bug: now always targets a specific id) ----------
+function attachDeleteUI(wrap, table, id) {
+  const delCard = card(`
+    <h2 class="font-display text-lg mb-2 text-red-400">Zon Bahaya</h2>
+    <p class="text-sm opacity-70 mb-3">Padam rekod ini secara kekal. Tindakan ini tidak boleh dibatalkan.</p>
+    <button id="e_del" class="btn w-full" style="background:rgba(225,96,76,.15); border:1px solid rgba(225,96,76,.4); color:#E1604C;" disabled>Tunggu 5s...</button>
+  `, 'mt-4')
+  wrap.appendChild(delCard)
+  const delBtn = delCard.querySelector('#e_del')
+  let countdown = 5
+  const iv = setInterval(() => {
+    countdown--
+    if (countdown <= 0) { clearInterval(iv); delBtn.disabled = false; delBtn.textContent = 'Padam Entri Ini' }
+    else delBtn.textContent = `Tunggu ${countdown}s...`
+  }, 1000)
+  delBtn.onclick = async () => {
+    if (!confirm('Padam rekod ini? Tindakan ini kekal.')) return
+    delBtn.disabled = true
+    const { error } = await supabase.from(table).delete().eq('id', id)
+    if (error) { alert('Gagal padam: ' + error.message); delBtn.disabled = false; return }
+    alert('Rekod dipadam ✓')
+    go('entries')
+  }
+}
+
 async function screenEditEntry() {
   const target = state.editTarget
   if (!target) { go('entries'); return document.createElement('div') }
@@ -732,6 +756,7 @@ async function screenEditEntry() {
       if (error) { alert('Gagal simpan: ' + error.message); return }
       alert('Disimpan ✓'); go('entries')
     }
+    attachDeleteUI(wrap, 'daily_entries', target.id)
   } else {
     const { data: n } = await supabase.from('nest_records').select('*').eq('id', target.id).single()
     if (!n) { wrap.appendChild(card('Rekod tidak dijumpai.')); return wrap }
@@ -778,6 +803,7 @@ async function screenEditEntry() {
       if (error) { alert('Gagal simpan: ' + error.message); return }
       alert('Disimpan ✓'); go('entries')
     }
+    attachDeleteUI(wrap, 'nest_records', target.id)
   }
   return wrap
 }
