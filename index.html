@@ -126,6 +126,47 @@
   .type-pill { font-size:.65rem; font-weight:700; padding:.15rem .5rem; border-radius:999px; text-transform:uppercase; letter-spacing:.03em; }
   .type-harian { background:rgba(124,148,115,.25); color:#9AB18F; }
   .type-individu { background:rgba(46,144,153,.25); color:#6EE7B7; }
+
+  /* ---------- Toast notifications (replaces browser alert) ---------- */
+  #toastHost { position:fixed; top:1rem; left:50%; transform:translateX(-50%); z-index:100; display:flex; flex-direction:column; gap:.5rem; width:min(92vw, 380px); pointer-events:none; }
+  .toast {
+    display:flex; align-items:center; gap:.6rem; padding:.8rem 1rem;
+    border-radius:1rem; font-size:.85rem; font-weight:600;
+    backdrop-filter:blur(10px); pointer-events:auto;
+    box-shadow:0 10px 30px rgba(0,0,0,.45);
+    animation: toastIn .45s cubic-bezier(.34,1.56,.64,1) both;
+  }
+  .toast.leaving { animation: toastOut .3s ease both; }
+  @keyframes toastIn { from{opacity:0; transform:translateY(-16px) scale(.92);} to{opacity:1; transform:translateY(0) scale(1);} }
+  @keyframes toastOut { from{opacity:1; transform:translateY(0) scale(1);} to{opacity:0; transform:translateY(-10px) scale(.95);} }
+  .toast-success { background:rgba(16,74,58,.92); border:1px solid rgba(110,231,183,.45); }
+  .toast-error { background:rgba(80,24,18,.92); border:1px solid rgba(225,96,76,.5); }
+  .toast-info { background:rgba(10,31,43,.94); border:1px solid rgba(46,144,153,.45); }
+  html.light .toast-success { background:rgba(209,250,229,.96); }
+  html.light .toast-error { background:rgba(254,226,221,.96); }
+  html.light .toast-info { background:rgba(247,242,231,.96); }
+
+  /* ---------- Skeleton shimmer loading ---------- */
+  .skel { position:relative; overflow:hidden; border-radius:.75rem; background:rgba(255,255,255,.06); }
+  html.light .skel { background:rgba(0,0,0,.07); }
+  .skel::after {
+    content:''; position:absolute; inset:0;
+    background:linear-gradient(90deg, transparent, rgba(255,255,255,.09), transparent);
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+  html.light .skel::after { background:linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent); }
+  @keyframes shimmer { from{transform:translateX(-100%);} to{transform:translateX(100%);} }
+
+  /* ---------- Staggered card entrances ---------- */
+  .stagger > .screen, .stagger > .frosted, .stagger > .frosted-flat { animation:screenIn .5s cubic-bezier(.16,1,.3,1) both; }
+  .stagger > *:nth-child(1) { animation-delay:.03s; }
+  .stagger > *:nth-child(2) { animation-delay:.09s; }
+  .stagger > *:nth-child(3) { animation-delay:.15s; }
+  .stagger > *:nth-child(4) { animation-delay:.21s; }
+  .stagger > *:nth-child(5) { animation-delay:.27s; }
+  .stagger > *:nth-child(6) { animation-delay:.33s; }
+  .stagger > *:nth-child(7) { animation-delay:.39s; }
+  .stagger > *:nth-child(8) { animation-delay:.45s; }
 </style>
 </head>
 <body class="dark">
@@ -134,6 +175,7 @@
 <div class="ambient-orb" id="orb1"></div>
 <div class="ambient-orb" id="orb2"></div>
 
+<div id="toastHost"></div>
 <div id="app" class="max-w-lg mx-auto px-5 py-8 pb-28"></div>
 
 <nav id="navbar" class="fixed bottom-0 inset-x-0 px-4 pb-4 hidden">
@@ -223,6 +265,40 @@ function saveDraft(key, data) { localStorage.setItem('draft-' + key, JSON.string
 function loadDraft(key) { try { return JSON.parse(localStorage.getItem('draft-' + key)) } catch { return null } }
 function clearDraft(key) { localStorage.removeItem('draft-' + key) }
 
+// ---------- Toast notifications ----------
+function toast(message, type = 'info') {
+  const host = document.getElementById('toastHost')
+  const icons = { success:'✅', error:'⚠️', info:'💬' }
+  const el = document.createElement('div')
+  el.className = `toast toast-${type}`
+  el.innerHTML = `<span>${icons[type] || icons.info}</span><span>${message}</span>`
+  host.appendChild(el)
+  const dismiss = () => {
+    el.classList.add('leaving')
+    setTimeout(() => el.remove(), 320)
+  }
+  el.onclick = dismiss
+  setTimeout(dismiss, type === 'error' ? 4500 : 2800)
+}
+
+// ---------- Counting number animation ----------
+function animateCount(el, target, { duration = 1100, suffix = '' } = {}) {
+  const start = performance.now()
+  function frame(now) {
+    const t = Math.min(1, (now - start) / duration)
+    const eased = 1 - Math.pow(1 - t, 3) // ease-out cubic
+    el.textContent = Math.round(target * eased).toLocaleString() + suffix
+    if (t < 1) requestAnimationFrame(frame)
+  }
+  requestAnimationFrame(frame)
+}
+
+// ---------- Skeleton loading blocks ----------
+function skeletonBlock(lines = 3) {
+  const heights = ['h-8 w-2/5', 'h-24 w-full', 'h-24 w-full', 'h-16 w-full', 'h-16 w-3/4']
+  return `<div class="space-y-3">${Array.from({length:lines},(_,i)=>`<div class="skel ${heights[i % heights.length]}"></div>`).join('')}</div>`
+}
+
 // ---------- Router ----------
 function go(route) {
   if (location.hash.slice(1) === route) render(route)
@@ -269,7 +345,7 @@ async function enforceIslandGate() {
     state.profile = null
     sessionStorage.removeItem('penyu-island')
     state.island = null
-    alert(`Akaun ini ditugaskan ke ${state.profile?.island || 'pulau lain'}. Log masuk dari pulau anda sendiri.`)
+    toast(`Akaun ini ditugaskan ke ${state.profile?.island || 'pulau lain'}. Log masuk dari pulau anda sendiri.`, 'error')
     location.hash = 'island'
     return false
   }
@@ -320,7 +396,7 @@ function screenIsland() {
       <h1 class="font-display text-3xl font-semibold">Penyu Tracker</h1>
       <p class="opacity-80 mt-2">Pilih pulau stesen anda</p>
     </div>
-    <div class="grid gap-4 w-full" id="islandList"></div>
+    <div class="grid gap-4 w-full stagger" id="islandList"></div>
   `
   const list = wrap.querySelector('#islandList')
   ISLANDS.forEach(isl => {
@@ -494,7 +570,7 @@ function buildHarianForm() {
       let err = null
       if (!navigator.onLine) { queueWrite({ table:'daily_entries', op:'insert', payload }) }
       else { const res = await supabase.from('daily_entries').insert(payload); err = res.error }
-      if (err) { submitBtn.disabled = false; submitBtn.textContent = 'Hantar Sekarang'; alert('Gagal menghantar: ' + err.message); return }
+      if (err) { submitBtn.disabled = false; submitBtn.textContent = 'Hantar Sekarang'; toast('Gagal menghantar: ' + err.message, 'error'); return }
       clearDraft('harian')
       holder.innerHTML = ''
       holder.appendChild(card(`<div class="text-center py-10"><div class="text-5xl mb-3">✅</div><p class="font-display text-lg">${navigator.onLine ? 'Data harian dihantar!' : 'Disimpan — akan sync bila online'}</p></div>`))
@@ -587,7 +663,7 @@ function buildIndividuForm() {
     holder.appendChild(submitWrap)
     submitWrap.querySelector('#i_review').onclick = () => {
       const incomplete = draft.turtles.some(t => t.bertag === null || !t.jumlah)
-      if (incomplete) { alert('Sila lengkapkan semua ' + draft.count + ' penyu dahulu (status tag & jumlah telur).'); return }
+      if (incomplete) { toast('Sila lengkapkan semua ' + draft.count + ' penyu dahulu.', 'error'); return }
       renderIndividuSummary()
     }
   }
@@ -625,7 +701,7 @@ function buildIndividuForm() {
       let err = null
       if (!navigator.onLine) { rows.forEach(payload => queueWrite({ table:'nest_records', op:'insert', payload })) }
       else { const res = await supabase.from('nest_records').insert(rows); err = res.error }
-      if (err) { submitBtn.disabled = false; submitBtn.textContent = 'Hantar Sekarang'; alert('Gagal menghantar: ' + err.message); return }
+      if (err) { submitBtn.disabled = false; submitBtn.textContent = 'Hantar Sekarang'; toast('Gagal menghantar: ' + err.message, 'error'); return }
       clearDraft('individu')
       holder.innerHTML = ''
       holder.appendChild(card(`<div class="text-center py-10"><div class="text-5xl mb-3">✅</div><p class="font-display text-lg">${draft.count} rekod dihantar!</p></div>`))
@@ -655,12 +731,12 @@ async function screenEntries() {
       <input type="month" id="filterMonth" class="flex-1" value="${new Date().toISOString().slice(0,7)}" />
       <button id="filterClear" class="btn btn-ghost btn-sm">Semua Tarikh</button>
     </div>
-    <div id="entriesList">Memuatkan...</div>
+    <div id="entriesList" class="stagger">${skeletonBlock(4)}</div>
   `
   const listEl = wrap.querySelector('#entriesList')
   let monthFilter = null // null = show all, else 'YYYY-MM'
   async function loadList() {
-    listEl.innerHTML = 'Memuatkan...'
+    listEl.innerHTML = skeletonBlock(4)
     const scopeOwn = state.entriesTab === 'saya'
     let dq = supabase.from('daily_entries').select('*, staff_profiles!created_by(full_name)').eq('island', state.island).order('tarikh', { ascending:false }).limit(100)
     let nq = supabase.from('nest_records').select('*, staff_profiles!created_by(full_name)').eq('island', state.island).order('tarikh_dijumpai', { ascending:false }).limit(100)
@@ -733,8 +809,8 @@ function attachDeleteUI(wrap, table, id) {
     if (!confirm('Padam rekod ini? Tindakan ini kekal.')) return
     delBtn.disabled = true
     const { error } = await supabase.from(table).delete().eq('id', id)
-    if (error) { alert('Gagal padam: ' + error.message); delBtn.disabled = false; return }
-    alert('Rekod dipadam ✓')
+    if (error) { toast('Gagal padam: ' + error.message, 'error'); delBtn.disabled = false; return }
+    toast('Rekod dipadam', 'success')
     go('entries')
   }
 }
@@ -788,8 +864,8 @@ async function screenEditEntry() {
         updated_by: state.profile.id
       }
       const { error } = await supabase.from('daily_entries').update(payload).eq('id', target.id)
-      if (error) { alert('Gagal simpan: ' + error.message); return }
-      alert('Disimpan ✓'); go('entries')
+      if (error) { toast('Gagal simpan: ' + error.message, 'error'); return }
+      toast('Disimpan', 'success'); go('entries')
     }
     attachDeleteUI(wrap, 'daily_entries', target.id)
   } else {
@@ -835,8 +911,8 @@ async function screenEditEntry() {
         updated_by: state.profile.id
       }
       const { error } = await supabase.from('nest_records').update(payload).eq('id', target.id)
-      if (error) { alert('Gagal simpan: ' + error.message); return }
-      alert('Disimpan ✓'); go('entries')
+      if (error) { toast('Gagal simpan: ' + error.message, 'error'); return }
+      toast('Disimpan', 'success'); go('entries')
     }
     attachDeleteUI(wrap, 'nest_records', target.id)
   }
@@ -853,7 +929,7 @@ async function screenDashboard() {
   const year = new Date().getFullYear()
   destroyCharts()
   const wrap = document.createElement('div')
-  wrap.innerHTML = `<h1 class="font-display text-2xl mb-1">Dashboard</h1><div class="inline-block rounded px-2.5 py-1 text-xs font-semibold mb-4 bg-teal-900/40">${state.island}</div><div id="stats">Memuatkan...</div>`
+  wrap.innerHTML = `<h1 class="font-display text-2xl mb-1">Dashboard</h1><div class="inline-block rounded px-2.5 py-1 text-xs font-semibold mb-4 bg-teal-900/40">${state.island}</div><div id="stats" class="stagger">${skeletonBlock(5)}</div>`
   const { data } = await supabase.rpc('get_dashboard_totals', { p_year: year, p_island: state.island })
   const stats = wrap.querySelector('#stats')
   const jumlahTelur = data?.jumlah_telur || 0
@@ -872,7 +948,7 @@ async function screenDashboard() {
       <div class="eyebrow">Misi Tahun ${year}</div>
       <div class="text-xs font-bold px-2 py-1 rounded-full bg-emerald-400/20 text-emerald-300">LEVEL ${level}</div>
     </div>
-    <div class="font-display text-4xl tabular-num mb-1">${jumlahTelur.toLocaleString()} <span class="text-lg opacity-60">/ ${target ? target.toLocaleString() : '—'}</span></div>
+    <div class="font-display text-5xl tabular-num mb-1"><span id="heroCount">0</span> <span class="text-lg opacity-60">/ ${target ? target.toLocaleString() : '—'}</span></div>
     <div class="xp-bar mt-3">
       <div class="xp-fill" style="width:${pct}%"></div>
       ${[25,50,75].map(m => `<div class="milestone" style="left:${m}%"></div>`).join('')}
@@ -937,11 +1013,20 @@ async function screenDashboard() {
   `, 'mb-4'))
 
   const secondaryRow = document.createElement('div')
-  secondaryRow.className = 'grid grid-cols-3 gap-3'
-  secondaryRow.appendChild(flatCard(`<div class="text-xs opacity-70">Bilangan Penyu</div><div class="font-display text-2xl tabular-num">${jumlahPenyu.toLocaleString()}</div>`))
-  secondaryRow.appendChild(flatCard(`<div class="text-xs opacity-70">Kadar Menetas</div><div class="font-display text-2xl tabular-num">${hatchRate}%</div>`))
-  secondaryRow.appendChild(flatCard(`<div class="text-xs opacity-70">Telur Buruk</div><div class="font-display text-2xl tabular-num text-red-400">${jumlahBuruk.toLocaleString()}</div>`))
+  secondaryRow.className = 'grid grid-cols-3 gap-3 stagger'
+  secondaryRow.appendChild(flatCard(`<div class="text-xs opacity-70">Bilangan Penyu</div><div class="font-display text-2xl tabular-num" id="cntPenyu">0</div>`))
+  secondaryRow.appendChild(flatCard(`<div class="text-xs opacity-70">Kadar Menetas</div><div class="font-display text-2xl tabular-num" id="cntHatch">0%</div>`))
+  secondaryRow.appendChild(flatCard(`<div class="text-xs opacity-70">Telur Buruk</div><div class="font-display text-2xl tabular-num text-red-400" id="cntBuruk">0</div>`))
   stats.appendChild(secondaryRow)
+
+  // Trigger counting animations now that elements are in the DOM
+  requestAnimationFrame(() => {
+    const hero = stats.querySelector('#heroCount')
+    if (hero) animateCount(hero, jumlahTelur)
+    const cp = stats.querySelector('#cntPenyu'); if (cp) animateCount(cp, jumlahPenyu)
+    const ch = stats.querySelector('#cntHatch'); if (ch) animateCount(ch, hatchRate, { suffix: '%' })
+    const cb = stats.querySelector('#cntBuruk'); if (cb) animateCount(cb, jumlahBuruk)
+  })
 
   const monthly = data?.monthly || MONTH_LABELS.map(m => ({ month: m, telur: 0 }))
   const monthlyPenyu = data?.monthly_penyu || MONTH_LABELS.map(m => ({ month: m, penyu: 0 }))
@@ -1021,7 +1106,7 @@ async function screenAdmin() {
       <h1 class="font-display text-2xl">Tetapan Admin</h1>
       <span class="rounded px-2.5 py-1 text-xs font-semibold bg-teal-900/40">${state.island}</span>
     </div>
-    <div id="adminBody" class="space-y-5"></div>`
+    <div id="adminBody" class="space-y-5 stagger"></div>`
   const body = wrap.querySelector('#adminBody')
 
   async function loadMonthlyTargets(yr, isl) {
@@ -1099,7 +1184,7 @@ async function screenAdmin() {
       await exportToExcel(exportCard.querySelector('#ex_island').value, Number(exportCard.querySelector('#ex_year').value))
       const m = exportCard.querySelector('#ex_msg'); m.textContent = 'Excel dimuat turun ✓'; m.classList.remove('hidden')
     } catch (err) {
-      alert('Gagal jana Excel: ' + err.message)
+      toast('Gagal jana Excel: ' + err.message, 'error')
     }
     btn.disabled = false; btn.textContent = 'Jana & Muat Turun Excel'
   }
