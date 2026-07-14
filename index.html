@@ -96,26 +96,12 @@ document.documentElement.classList.remove('dark','light')
 document.documentElement.classList.add(savedTheme)
 document.getElementById('themeIcon').textContent = savedTheme === 'dark' ? '🌙' : '☀️'
 
-// ---------- Background video (from Supabase storage, admin-uploadable) ----------
-async function getAccessToken() {
-  const { data } = await supabase.auth.getSession()
-  return data.session?.access_token
-}
-
-function uploadVideoWithProgress(file, token, onProgress) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.open('POST', `${SUPABASE_URL}/storage/v1/object/app-assets/background.mp4`)
-    xhr.setRequestHeader('Authorization', `Bearer ${token}`)
-    xhr.setRequestHeader('apikey', SUPABASE_ANON_KEY)
-    xhr.setRequestHeader('x-upsert', 'true')
-    xhr.setRequestHeader('Content-Type', file.type || 'video/mp4')
-    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100)) }
-    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(`Upload gagal (${xhr.status})`))
-    xhr.onerror = () => reject(new Error('Ralat rangkaian semasa muat naik'))
-    xhr.send(file)
-  })
-}
+// ---------- Background video (static file in repo, not Supabase Storage —
+// simpler and avoids upload-permission complexity for a file that rarely
+// changes; to update it, replace assets/background.mp4 and git push) ----------
+const bgVideoEl = document.getElementById('bgvideo')
+bgVideoEl.src = 'assets/background.mp4'
+bgVideoEl.onerror = () => { bgVideoEl.style.display = 'none' } // no crash if file not added yet
 const { data: vid } = supabase.storage.from('app-assets').getPublicUrl('background.mp4')
 if (vid?.publicUrl) document.getElementById('bgvideo').src = vid.publicUrl
 
@@ -549,37 +535,19 @@ async function screenAdmin() {
     const m = monthlyCard.querySelector('#a_monthlyMsg'); m.textContent = 'Sasaran bulanan disimpan ✓'; m.classList.remove('hidden')
   }
 
-  // --- Video upload with progress ---
-  const videoCard = card(`
+  // --- Video background (now a repo file, not an in-app upload) ---
+  body.appendChild(card(`
     <h2 class="font-display text-lg mb-3">Video Latar Belakang</h2>
-    <p class="text-sm opacity-70 mb-3">Muat naik video baru (MP4, disyorkan &lt;15MB).</p>
-    <input type="file" accept="video/mp4" id="a_video" class="text-sm" />
-    <div id="a_videoProgress" class="hidden mt-3">
-      <div class="h-2 rounded-full bg-black/20 overflow-hidden"><div id="a_videoBar" class="h-full bg-emerald-400 transition-all" style="width:0%"></div></div>
-      <div id="a_videoPct" class="text-xs opacity-70 mt-1">0%</div>
-    </div>
-    <div id="a_videoMsg" class="hidden text-sm mt-2 text-emerald-300"></div>
-  `)
-  body.appendChild(videoCard)
-  videoCard.querySelector('#a_video').onchange = async (e) => {
-    const file = e.target.files[0]
-    if (!file) return
-    const progWrap = videoCard.querySelector('#a_videoProgress')
-    const bar = videoCard.querySelector('#a_videoBar')
-    const pct = videoCard.querySelector('#a_videoPct')
-    const msg = videoCard.querySelector('#a_videoMsg')
-    msg.classList.add('hidden')
-    progWrap.classList.remove('hidden')
-    bar.style.width = '0%'; pct.textContent = '0%'
-    try {
-      const token = await getAccessToken()
-      await uploadVideoWithProgress(file, token, (p) => { bar.style.width = p + '%'; pct.textContent = p + '%' })
-      msg.textContent = 'Video dikemaskini ✓ (refresh untuk lihat)'
-      msg.classList.remove('hidden')
-    } catch (err) {
-      alert('Gagal muat naik video: ' + err.message)
-    }
-  }
+    <p class="text-sm opacity-70">
+      Video disimpan terus dalam repo (bukan Supabase) sebab senang dan tak
+      selalu berubah. Untuk tukar: ganti fail <code class="bg-black/30 px-1 rounded">assets/background.mp4</code>
+      dalam repo GitHub kau dengan video baru (nama fail kena sama), then:
+    </p>
+    <pre class="bg-black/30 rounded px-3 py-2 text-xs mt-2 overflow-x-auto">git add assets/background.mp4
+git commit -m "update background video"
+git push</pre>
+    <p class="text-sm opacity-70 mt-2">Live dalam ~30 saat lepas push.</p>
+  `))
 
   // --- Staff login history ---
   const historyRows = (logins || []).map(l => {
