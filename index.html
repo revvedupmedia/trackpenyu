@@ -17,8 +17,11 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
 <style>
   :root { --text-color:#F7F2E7; --text-outline:#061319; }
+  html.dark { color-scheme: dark; }
+  html.light { color-scheme: light; }
   html.light { --text-color:#0A1F2B; --text-outline:#F7F2E7; }
   * { transition: background-color .25s ease, border-color .25s ease, box-shadow .25s ease, color .25s ease; }
   body { font-family:'Inter',sans-serif; background:#0A1F2B; min-height:100vh; letter-spacing:-.01em; }
@@ -185,6 +188,7 @@
     <span id="islandBadge" class="text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-400/20 text-emerald-300 flex-shrink-0"></span>
     <button onclick="go('entry')" class="flex flex-col items-center px-2.5 py-1.5">🐢<span class="text-[10px]">Log</span></button>
     <button onclick="go('entries')" class="flex flex-col items-center px-2.5 py-1.5">📋<span class="text-[10px]">Entri</span></button>
+    <button onclick="go('jadual')" class="flex flex-col items-center px-2.5 py-1.5">🗂️<span class="text-[10px]">Jadual</span></button>
     <button onclick="go('dashboard')" class="flex flex-col items-center px-2.5 py-1.5">📊<span class="text-[10px]">Dashboard</span></button>
     <button id="navAdmin" onclick="go('admin')" class="flex-col items-center px-2.5 py-1.5 hidden">⚙️<span class="text-[10px]">Admin</span></button>
     <button onclick="toggleTheme()" class="flex flex-col items-center px-2.5 py-1.5"><span id="themeIcon">🌙</span><span class="text-[10px]">Mod</span></button>
@@ -332,8 +336,8 @@ window.go = go
 window.addEventListener('hashchange', () => render(location.hash.slice(1) || 'island'))
 
 async function render(route) {
-  document.getElementById('navbar').classList.toggle('hidden', !['entry','entries','dashboard','admin'].includes(route))
-  if (['entry','entries','dashboard','admin'].includes(route) && !state.profile) {
+  document.getElementById('navbar').classList.toggle('hidden', !['entry','entries','jadual','dashboard','admin'].includes(route))
+  if (['entry','entries','jadual','dashboard','admin'].includes(route) && !state.profile) {
     const { data } = await supabase.auth.getUser()
     if (!data.user) { route = 'island'; location.hash = 'island' }
     else {
@@ -350,7 +354,7 @@ async function render(route) {
     if (badge) badge.textContent = state.island
   }
   const screens = { splash: screenSplash, island: screenIsland, login: screenLogin, entry: screenEntry,
-    entries: screenEntries, editentry: screenEditEntry, dashboard: screenDashboard, admin: screenAdmin }
+    entries: screenEntries, editentry: screenEditEntry, jadual: screenJadual, dashboard: screenDashboard, admin: screenAdmin }
   app.innerHTML = ''
   const el = await (screens[route] || screenIsland)()
   app.appendChild(el)
@@ -1051,6 +1055,102 @@ async function screenEditEntry() {
 let chartInstances = []
 function destroyCharts() { chartInstances.forEach(c => c.destroy()); chartInstances = [] }
 
+// =========================================================================
+// JADUAL — detailed table view of a single date, including per-turtle
+// breakdown for any Entri Individu rows that day
+// =========================================================================
+async function screenJadual() {
+  const canSwitch = state.profile?.role === 'admin' || state.profile?.role === 'kerani'
+  if (!state.viewIsland) state.viewIsland = state.island
+  const viewIsland = canSwitch ? state.viewIsland : state.island
+  const wrap = document.createElement('div')
+  const todayStr = new Date().toISOString().slice(0,10)
+  const selectedDate = state.jadualDate || todayStr
+
+  const switcherHTML = canSwitch ? `
+    <div class="seg mb-4" id="islandSwitcher">
+      ${ISLANDS.map(i => `<button data-isl="${i.code}" class="${i.code===viewIsland?'active':''}">${i.code}</button>`).join('')}
+    </div>` : `<div class="inline-block rounded px-2.5 py-1 text-xs font-semibold mb-4 bg-teal-900/40">${viewIsland}</div>`
+
+  wrap.innerHTML = `
+    <h1 class="font-display text-2xl mb-2">Jadual</h1>
+    ${switcherHTML}
+    <div class="frosted-flat p-3 mb-4">
+      <label class="text-xs opacity-70">Pilih Tarikh</label>
+      <input type="date" id="jadualDate" value="${selectedDate}" max="${todayStr}" />
+    </div>
+    <div id="jadualBody" class="stagger">${skeletonBlock(3)}</div>
+  `
+  if (canSwitch) {
+    wrap.querySelectorAll('#islandSwitcher button').forEach(b => b.onclick = () => { state.viewIsland = b.dataset.isl; go('jadual') })
+  }
+  wrap.querySelector('#jadualDate').onchange = (e) => { state.jadualDate = e.target.value; go('jadual') }
+
+  const body = wrap.querySelector('#jadualBody')
+  const [{ data: nests }, { data: daily }] = await Promise.all([
+    supabase.from('nest_records').select('*, staff_profiles(full_name)').eq('island', viewIsland).eq('tarikh_dijumpai', selectedDate).order('created_at'),
+    supabase.from('daily_entries').select('*, staff_profiles(full_name)').eq('island', viewIsland).eq('tarikh', selectedDate).order('created_at')
+  ])
+
+  body.innerHTML = ''
+  if ((!nests || !nests.length) && (!daily || !daily.length)) {
+    body.appendChild(card(`<div class="text-center py-8 opacity-80">Tiada data untuk ${fmtDate(selectedDate)} di ${viewIsland}.</div>`))
+    return wrap
+  }
+
+  if (nests && nests.length) {
+    const rows = nests.map((n,i) => `
+      <tr class="border-b border-white/10">
+        <td class="py-2 px-2 opacity-70">${i+1}</td>
+        <td class="py-2 px-2">${n.ram}</td>
+        <td class="py-2 px-2">${n.bertag ? 'Bertag' : 'Tak Bertag'}</td>
+        <td class="py-2 px-2 tabular-num font-semibold">${n.jumlah_telur_diram}</td>
+        <td class="py-2 px-2 tabular-num">${n.telur_menetas ?? '-'}</td>
+        <td class="py-2 px-2 tabular-num">${n.telur_buruk ?? '-'}</td>
+        <td class="py-2 px-2 text-xs opacity-70">${n.staff_profiles?.full_name || '?'}</td>
+      </tr>`).join('')
+    body.appendChild(flatCard(`
+      <div class="eyebrow mb-3">Entri Individu — Detail Per Ekor (${nests.length})</div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm min-w-[520px]">
+          <thead><tr class="text-left opacity-60 text-xs"><th class="py-1 px-2">#</th><th class="py-1 px-2">RAM</th><th class="py-1 px-2">Status</th><th class="py-1 px-2">Telur</th><th class="py-1 px-2">Menetas</th><th class="py-1 px-2">Buruk</th><th class="py-1 px-2">Staff</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `, 'mb-4'))
+  }
+
+  if (daily && daily.length) {
+    const rows = daily.map(d => `
+      <tr class="border-b border-white/10">
+        <td class="py-2 px-2">${d.ram}</td>
+        <td class="py-2 px-2 tabular-num">${d.bilangan_penyu_bertag} / ${d.bilangan_penyu_takbertag}</td>
+        <td class="py-2 px-2 tabular-num font-semibold">${d.jumlah_telur_diram_bertag} / ${d.jumlah_telur_diram_takbertag}</td>
+        <td class="py-2 px-2 tabular-num">${d.telur_menetas_bertag ?? '-'} / ${d.telur_menetas_takbertag ?? '-'}</td>
+        <td class="py-2 px-2 text-xs opacity-70">${d.staff_profiles?.full_name || '?'}</td>
+      </tr>`).join('')
+    body.appendChild(flatCard(`
+      <div class="eyebrow mb-3">Entri Harian — Agregat (${daily.length})</div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm min-w-[480px]">
+          <thead><tr class="text-left opacity-60 text-xs"><th class="py-1 px-2">RAM</th><th class="py-1 px-2">Penyu (B/T)</th><th class="py-1 px-2">Telur (B/T)</th><th class="py-1 px-2">Menetas (B/T)</th><th class="py-1 px-2">Staff</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `, 'mb-4'))
+  }
+
+  const totalTelur = (nests||[]).reduce((s,n) => s + n.jumlah_telur_diram, 0)
+    + (daily||[]).reduce((s,d) => s + d.jumlah_telur_diram_bertag + d.jumlah_telur_diram_takbertag, 0)
+  const totalPenyu = (nests||[]).length + (daily||[]).reduce((s,d) => s + d.bilangan_penyu_bertag + d.bilangan_penyu_takbertag, 0)
+  body.appendChild(flatCard(`
+    <div class="flex justify-between text-sm"><span class="opacity-70">Jumlah Penyu</span><span class="font-semibold tabular-num">${totalPenyu}</span></div>
+    <div class="flex justify-between text-sm mt-1"><span class="opacity-70">Jumlah Telur</span><span class="font-semibold tabular-num">${totalTelur.toLocaleString()}</span></div>
+  `))
+
+  return wrap
+}
+
 async function screenDashboard() {
   const year = new Date().getFullYear()
   destroyCharts()
@@ -1096,6 +1196,29 @@ async function screenDashboard() {
     </div>
     <div class="text-xs opacity-70 mt-2">${target ? pct + '% menuju sasaran · Baki ' + (target-jumlahTelur).toLocaleString() + ' telur' : 'Sasaran belum ditetapkan untuk ' + state.island + ' (Admin → Sasaran Tahunan)'}</div>
   `, 'mb-4'))
+
+  stats.appendChild(flatCard(`
+    <button id="presentBtn" class="btn btn-primary w-full flex items-center justify-center gap-2">
+      <span>🎤</span><span>Jana Pembentangan (PowerPoint)</span>
+    </button>
+    <p class="text-xs opacity-60 mt-2 text-center">Untuk mesyuarat/bentang dengan pengurusan — boleh dibuka terus di PowerPoint atau diimport ke Google Slides.</p>
+    <div id="presentMsg" class="hidden text-xs mt-2 text-emerald-300 text-center"></div>
+  `, 'mb-4'))
+  stats.querySelector('#presentBtn').onclick = async (e) => {
+    const btn = e.currentTarget
+    btn.disabled = true; btn.textContent = 'Menjana pembentangan...'
+    try {
+      await generatePresentation(viewIsland, year, {
+        jumlahTelur, target, pct, hatchRate, jumlahBuruk, jumlahPenyu,
+        monthly: data?.monthly || [], monthlyPenyu: data?.monthly_penyu || []
+      })
+      toast('Pembentangan dimuat turun', 'success')
+    } catch (err) {
+      toast('Gagal jana pembentangan: ' + err.message, 'error')
+    }
+    btn.disabled = false
+    btn.innerHTML = '<span>🎤</span><span>Jana Pembentangan (PowerPoint)</span>'
+  }
 
   // Monthly HP-bar grid — per-month actual vs target, game-style progress
   const { data: monthlyTargetsRows } = await supabase.from('monthly_targets').select('*').eq('year', year).eq('island', viewIsland)
@@ -1574,6 +1697,75 @@ git push</pre>
 }
 
 // ---------- Excel export logic ----------
+// ---------- Presentation generator (PptxGenJS) ----------
+async function generatePresentation(island, year, s) {
+  const pptx = new PptxGenJS()
+  pptx.layout = 'LAYOUT_16x9'
+  const NAVY = '0A1F2B', TEAL = '1F6F78', GLOW = '6EE7B7', SAND = 'F7F2E7', GOLD = 'E0A458', CORAL = 'E1604C'
+
+  function baseSlide() {
+    const sl = pptx.addSlide()
+    sl.background = { color: NAVY }
+    return sl
+  }
+
+  // Slide 1 — Title
+  const s1 = baseSlide()
+  s1.addText('Penyu Tracker', { x:0.6, y:1.7, w:9, h:0.9, fontSize:40, bold:true, color:SAND, fontFace:'Georgia' })
+  s1.addText(`Laporan Prestasi — ${island} · ${year}`, { x:0.6, y:2.5, w:9, h:0.6, fontSize:20, color:GLOW })
+  s1.addText(`Dijana ${new Date().toLocaleDateString('ms-MY')}`, { x:0.6, y:4.9, w:9, h:0.4, fontSize:11, color:'9CA3AF' })
+
+  // Slide 2 — Key numbers
+  const s2 = baseSlide()
+  s2.addText('Pencapaian Sasaran', { x:0.5, y:0.35, fontSize:26, bold:true, color:SAND })
+  const kpis = [
+    [`${s.jumlahTelur.toLocaleString()}`, 'Jumlah Telur', GLOW],
+    [s.target ? `${s.pct}%` : '—', 'Peratus Sasaran', GOLD],
+    [`${s.jumlahPenyu.toLocaleString()}`, 'Bilangan Penyu', SAND],
+    [`${s.hatchRate}%`, 'Kadar Menetas', GLOW],
+    [`${s.jumlahBuruk.toLocaleString()}`, 'Telur Buruk', CORAL],
+    [s.target ? s.target.toLocaleString() : '—', 'Sasaran Tahunan', SAND],
+  ]
+  kpis.forEach((k, i) => {
+    const col = i % 3, row = Math.floor(i / 3)
+    const x = 0.5 + col * 3.1, y = 1.3 + row * 1.9
+    s2.addShape(pptx.ShapeType.roundRect, { x, y, w:2.85, h:1.6, fill:{ color:'123244' }, line:{ color:'1F6F78', width:1 }, rectRadius:0.08 })
+    s2.addText(k[0], { x, y:y+0.15, w:2.85, h:0.8, align:'center', fontSize:28, bold:true, color:k[2] })
+    s2.addText(k[1], { x, y:y+0.95, w:2.85, h:0.4, align:'center', fontSize:12, color:'9CA3AF' })
+  })
+
+  // Slide 3 — Monthly eggs bar chart
+  const s3 = baseSlide()
+  s3.addText('Trend Bulanan — Jumlah Telur', { x:0.5, y:0.35, fontSize:24, bold:true, color:SAND })
+  s3.addChart(pptx.ChartType.bar, [{
+    name: 'Telur', labels: s.monthly.map(m=>m.month), values: s.monthly.map(m=>m.telur)
+  }], {
+    x:0.5, y:1.1, w:9, h:4.2,
+    chartColors:[TEAL], catAxisLabelColor:SAND, valAxisLabelColor:SAND,
+    dataLabelColor:SAND, showLegend:false, showTitle:false,
+    catAxisLineColor:'444444', valAxisLineColor:'444444'
+  })
+
+  // Slide 4 — Monthly turtle count bar chart
+  const s4 = baseSlide()
+  s4.addText('Trend Bulanan — Bilangan Penyu', { x:0.5, y:0.35, fontSize:24, bold:true, color:SAND })
+  s4.addChart(pptx.ChartType.bar, [{
+    name: 'Penyu', labels: s.monthlyPenyu.map(m=>m.month), values: s.monthlyPenyu.map(m=>m.penyu)
+  }], {
+    x:0.5, y:1.1, w:9, h:4.2,
+    chartColors:[GLOW], catAxisLabelColor:SAND, valAxisLabelColor:SAND,
+    dataLabelColor:SAND, showLegend:false, showTitle:false,
+    catAxisLineColor:'444444', valAxisLineColor:'444444'
+  })
+
+  // Slide 5 — Closing
+  const s5 = baseSlide()
+  s5.addText('Terima Kasih', { x:0.6, y:2.2, w:9, h:0.9, fontSize:34, bold:true, color:SAND, fontFace:'Georgia' })
+  s5.addText(`${island} · Penyu Tracker`, { x:0.6, y:2.95, w:9, h:0.5, fontSize:16, color:GLOW })
+
+  pptx.writeFile({ fileName: `Pembentangan-${island}-${year}.pptx` })
+}
+
 async function exportToExcel(island, year) {
   const templateUrl = `assets/template-${island}.xlsx`
   const res = await fetch(templateUrl)
