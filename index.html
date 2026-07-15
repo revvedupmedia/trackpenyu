@@ -123,6 +123,9 @@
   .month-hp-pct { font-size:.58rem; opacity:.75; }
   .month-hp.achieved { border:2px solid #FFD700; animation: achievedPulse 2.2s ease-in-out infinite; }
   @keyframes achievedPulse { 0%,100%{ box-shadow:0 0 8px rgba(255,215,0,.3);} 50%{ box-shadow:0 0 22px rgba(255,215,0,.75);} }
+  .month-hp.cursor-pointer { transition: transform .15s cubic-bezier(.34,1.56,.64,1); }
+  .month-hp.cursor-pointer:hover { transform: translateY(-2px); }
+  .month-hp.cursor-pointer:active { transform: scale(.95); }
 
   .list-row { display:flex; align-items:center; gap:.75rem; padding:.85rem; border-radius:1rem; }
   .list-row:hover { background:rgba(255,255,255,.03); }
@@ -188,7 +191,6 @@
     <span id="islandBadge" class="text-[10px] font-bold px-2 py-1 rounded-full bg-emerald-400/20 text-emerald-300 flex-shrink-0"></span>
     <button onclick="go('entry')" class="flex flex-col items-center px-2.5 py-1.5">🐢<span class="text-[10px]">Log</span></button>
     <button onclick="go('entries')" class="flex flex-col items-center px-2.5 py-1.5">📋<span class="text-[10px]">Entri</span></button>
-    <button onclick="go('jadual')" class="flex flex-col items-center px-2.5 py-1.5">🗂️<span class="text-[10px]">Jadual</span></button>
     <button onclick="go('dashboard')" class="flex flex-col items-center px-2.5 py-1.5">📊<span class="text-[10px]">Dashboard</span></button>
     <button id="navAdmin" onclick="go('admin')" class="flex-col items-center px-2.5 py-1.5 hidden">⚙️<span class="text-[10px]">Admin</span></button>
     <button onclick="toggleTheme()" class="flex flex-col items-center px-2.5 py-1.5"><span id="themeIcon">🌙</span><span class="text-[10px]">Mod</span></button>
@@ -336,8 +338,8 @@ window.go = go
 window.addEventListener('hashchange', () => render(location.hash.slice(1) || 'island'))
 
 async function render(route) {
-  document.getElementById('navbar').classList.toggle('hidden', !['entry','entries','jadual','dashboard','admin'].includes(route))
-  if (['entry','entries','jadual','dashboard','admin'].includes(route) && !state.profile) {
+  document.getElementById('navbar').classList.toggle('hidden', !['entry','entries','dashboard','admin'].includes(route))
+  if (['entry','entries','monthdetail','dashboard','admin'].includes(route) && !state.profile) {
     const { data } = await supabase.auth.getUser()
     if (!data.user) { route = 'island'; location.hash = 'island' }
     else {
@@ -354,7 +356,7 @@ async function render(route) {
     if (badge) badge.textContent = state.island
   }
   const screens = { splash: screenSplash, island: screenIsland, login: screenLogin, entry: screenEntry,
-    entries: screenEntries, editentry: screenEditEntry, jadual: screenJadual, dashboard: screenDashboard, admin: screenAdmin }
+    entries: screenEntries, editentry: screenEditEntry, monthdetail: screenMonthDetail, dashboard: screenDashboard, admin: screenAdmin }
   app.innerHTML = ''
   const el = await (screens[route] || screenIsland)()
   app.appendChild(el)
@@ -1056,96 +1058,116 @@ let chartInstances = []
 function destroyCharts() { chartInstances.forEach(c => c.destroy()); chartInstances = [] }
 
 // =========================================================================
-// JADUAL — detailed table view of a single date, including per-turtle
-// breakdown for any Entri Individu rows that day
+// MONTH DETAIL — opened by tapping a month in "Progress Bulanan" on the
+// Dashboard. Shows a per-day table (only days with data) combining Entri
+// Harian + Entri Individu, same aggregation shape as the Excel export.
 // =========================================================================
-async function screenJadual() {
-  const canSwitch = state.profile?.role === 'admin' || state.profile?.role === 'kerani'
-  if (!state.viewIsland) state.viewIsland = state.island
-  const viewIsland = canSwitch ? state.viewIsland : state.island
+async function screenMonthDetail() {
+  const vm = state.viewMonth
+  if (!vm) { go('dashboard'); return document.createElement('div') }
+  const { island, year, month } = vm
+  const monthLabel = MONTH_LABELS[month - 1]
   const wrap = document.createElement('div')
-  const todayStr = new Date().toISOString().slice(0,10)
-  const selectedDate = state.jadualDate || todayStr
+  const backBtn = document.createElement('button')
+  backBtn.className = 'btn-back'; backBtn.textContent = '← Balik ke Dashboard'
+  backBtn.onclick = () => go('dashboard')
+  wrap.appendChild(backBtn)
 
-  const switcherHTML = canSwitch ? `
-    <div class="seg mb-4" id="islandSwitcher">
-      ${ISLANDS.map(i => `<button data-isl="${i.code}" class="${i.code===viewIsland?'active':''}">${i.code}</button>`).join('')}
-    </div>` : `<div class="inline-block rounded px-2.5 py-1 text-xs font-semibold mb-4 bg-teal-900/40">${viewIsland}</div>`
+  const header = document.createElement('div')
+  header.className = 'flex items-center gap-2 mb-4'
+  header.innerHTML = `<h1 class="font-display text-2xl">${monthLabel} ${year}</h1><span class="rounded px-2.5 py-1 text-xs font-semibold bg-teal-900/40">${island}</span>`
+  wrap.appendChild(header)
 
-  wrap.innerHTML = `
-    <h1 class="font-display text-2xl mb-2">Jadual</h1>
-    ${switcherHTML}
-    <div class="frosted-flat p-3 mb-4">
-      <label class="text-xs opacity-70">Pilih Tarikh</label>
-      <input type="date" id="jadualDate" value="${selectedDate}" max="${todayStr}" />
-    </div>
-    <div id="jadualBody" class="stagger">${skeletonBlock(3)}</div>
-  `
-  if (canSwitch) {
-    wrap.querySelectorAll('#islandSwitcher button').forEach(b => b.onclick = () => { state.viewIsland = b.dataset.isl; go('jadual') })
-  }
-  wrap.querySelector('#jadualDate').onchange = (e) => { state.jadualDate = e.target.value; go('jadual') }
+  const bodyHolder = document.createElement('div')
+  bodyHolder.className = 'stagger'
+  bodyHolder.innerHTML = skeletonBlock(3)
+  wrap.appendChild(bodyHolder)
 
-  const body = wrap.querySelector('#jadualBody')
-  const [{ data: nests }, { data: daily }] = await Promise.all([
-    supabase.from('nest_records').select('*, staff_profiles(full_name)').eq('island', viewIsland).eq('tarikh_dijumpai', selectedDate).order('created_at'),
-    supabase.from('daily_entries').select('*, staff_profiles(full_name)').eq('island', viewIsland).eq('tarikh', selectedDate).order('created_at')
+  const monthStart = `${year}-${String(month).padStart(2,'0')}-01`
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const monthEnd = `${year}-${String(month).padStart(2,'0')}-${String(daysInMonth).padStart(2,'0')}`
+
+  const [{ data: daily }, { data: nests }] = await Promise.all([
+    supabase.from('daily_entries').select('*').eq('island', island).gte('tarikh', monthStart).lte('tarikh', monthEnd),
+    supabase.from('nest_records').select('*').eq('island', island).gte('tarikh_dijumpai', monthStart).lte('tarikh_dijumpai', monthEnd)
   ])
 
-  body.innerHTML = ''
-  if ((!nests || !nests.length) && (!daily || !daily.length)) {
-    body.appendChild(card(`<div class="text-center py-8 opacity-80">Tiada data untuk ${fmtDate(selectedDate)} di ${viewIsland}.</div>`))
+  // Combine LPP + SFC together per day into bertag/tak-bertag totals —
+  // matches how the user reads the Excel export at a glance.
+  const byDay = {}
+  function ensureDay(d) {
+    if (!byDay[d]) byDay[d] = { bp_b:0, bp_t:0, td_b:0, td_t:0, tm_b:0, tm_t:0, hasMenetas:false }
+    return byDay[d]
+  }
+  ;(daily||[]).forEach(d => {
+    const b = ensureDay(d.tarikh)
+    b.bp_b += d.bilangan_penyu_bertag; b.bp_t += d.bilangan_penyu_takbertag
+    b.td_b += d.jumlah_telur_diram_bertag; b.td_t += d.jumlah_telur_diram_takbertag
+    if (d.telur_menetas_bertag !== null) { b.tm_b += d.telur_menetas_bertag||0; b.hasMenetas = true }
+    if (d.telur_menetas_takbertag !== null) { b.tm_t += d.telur_menetas_takbertag||0; b.hasMenetas = true }
+  })
+  ;(nests||[]).forEach(n => {
+    const b = ensureDay(n.tarikh_dijumpai)
+    if (n.bertag) { b.bp_b += 1; b.td_b += n.jumlah_telur_diram; if (n.telur_menetas !== null) { b.tm_b += n.telur_menetas||0; b.hasMenetas = true } }
+    else { b.bp_t += 1; b.td_t += n.jumlah_telur_diram; if (n.telur_menetas !== null) { b.tm_t += n.telur_menetas||0; b.hasMenetas = true } }
+  })
+
+  bodyHolder.innerHTML = ''
+  const dayKeys = Object.keys(byDay).sort()
+  if (!dayKeys.length) {
+    bodyHolder.appendChild(card(`<div class="text-center py-8 opacity-80">Tiada data untuk ${monthLabel} ${year} di ${island} lagi.</div>`))
     return wrap
   }
 
-  if (nests && nests.length) {
-    const rows = nests.map((n,i) => `
+  const rows = dayKeys.map(d => {
+    const v = byDay[d]
+    return `
       <tr class="border-b border-white/10">
-        <td class="py-2 px-2 opacity-70">${i+1}</td>
-        <td class="py-2 px-2">${n.ram}</td>
-        <td class="py-2 px-2">${n.bertag ? 'Bertag' : 'Tak Bertag'}</td>
-        <td class="py-2 px-2 tabular-num font-semibold">${n.jumlah_telur_diram}</td>
-        <td class="py-2 px-2 tabular-num">${n.telur_menetas ?? '-'}</td>
-        <td class="py-2 px-2 tabular-num">${n.telur_buruk ?? '-'}</td>
-        <td class="py-2 px-2 text-xs opacity-70">${n.staff_profiles?.full_name || '?'}</td>
-      </tr>`).join('')
-    body.appendChild(flatCard(`
-      <div class="eyebrow mb-3">Entri Individu — Detail Per Ekor (${nests.length})</div>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm min-w-[520px]">
-          <thead><tr class="text-left opacity-60 text-xs"><th class="py-1 px-2">#</th><th class="py-1 px-2">RAM</th><th class="py-1 px-2">Status</th><th class="py-1 px-2">Telur</th><th class="py-1 px-2">Menetas</th><th class="py-1 px-2">Buruk</th><th class="py-1 px-2">Staff</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    `, 'mb-4'))
-  }
+        <td class="py-2 px-2 whitespace-nowrap">${fmtDate(d)}</td>
+        <td class="py-2 px-2 tabular-num">${v.bp_b}</td>
+        <td class="py-2 px-2 tabular-num">${v.bp_t}</td>
+        <td class="py-2 px-2 tabular-num font-semibold">${v.td_b}</td>
+        <td class="py-2 px-2 tabular-num font-semibold">${v.td_t}</td>
+        <td class="py-2 px-2 tabular-num">${v.hasMenetas ? (v.tm_b + v.tm_t) : '-'}</td>
+      </tr>`
+  }).join('')
 
-  if (daily && daily.length) {
-    const rows = daily.map(d => `
-      <tr class="border-b border-white/10">
-        <td class="py-2 px-2">${d.ram}</td>
-        <td class="py-2 px-2 tabular-num">${d.bilangan_penyu_bertag} / ${d.bilangan_penyu_takbertag}</td>
-        <td class="py-2 px-2 tabular-num font-semibold">${d.jumlah_telur_diram_bertag} / ${d.jumlah_telur_diram_takbertag}</td>
-        <td class="py-2 px-2 tabular-num">${d.telur_menetas_bertag ?? '-'} / ${d.telur_menetas_takbertag ?? '-'}</td>
-        <td class="py-2 px-2 text-xs opacity-70">${d.staff_profiles?.full_name || '?'}</td>
-      </tr>`).join('')
-    body.appendChild(flatCard(`
-      <div class="eyebrow mb-3">Entri Harian — Agregat (${daily.length})</div>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm min-w-[480px]">
-          <thead><tr class="text-left opacity-60 text-xs"><th class="py-1 px-2">RAM</th><th class="py-1 px-2">Penyu (B/T)</th><th class="py-1 px-2">Telur (B/T)</th><th class="py-1 px-2">Menetas (B/T)</th><th class="py-1 px-2">Staff</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    `, 'mb-4'))
-  }
+  const totals = dayKeys.reduce((acc, d) => {
+    const v = byDay[d]
+    acc.bp_b += v.bp_b; acc.bp_t += v.bp_t; acc.td_b += v.td_b; acc.td_t += v.td_t
+    return acc
+  }, { bp_b:0, bp_t:0, td_b:0, td_t:0 })
 
-  const totalTelur = (nests||[]).reduce((s,n) => s + n.jumlah_telur_diram, 0)
-    + (daily||[]).reduce((s,d) => s + d.jumlah_telur_diram_bertag + d.jumlah_telur_diram_takbertag, 0)
-  const totalPenyu = (nests||[]).length + (daily||[]).reduce((s,d) => s + d.bilangan_penyu_bertag + d.bilangan_penyu_takbertag, 0)
-  body.appendChild(flatCard(`
-    <div class="flex justify-between text-sm"><span class="opacity-70">Jumlah Penyu</span><span class="font-semibold tabular-num">${totalPenyu}</span></div>
-    <div class="flex justify-between text-sm mt-1"><span class="opacity-70">Jumlah Telur</span><span class="font-semibold tabular-num">${totalTelur.toLocaleString()}</span></div>
+  bodyHolder.appendChild(flatCard(`
+    <div class="eyebrow mb-3">Jadual Harian — ${dayKeys.length} hari ada data</div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm min-w-[520px]">
+        <thead><tr class="text-left opacity-60 text-xs">
+          <th class="py-1 px-2">Tarikh</th>
+          <th class="py-1 px-2">Penyu<br/>Bertag</th>
+          <th class="py-1 px-2">Penyu<br/>Tak Bertag</th>
+          <th class="py-1 px-2">Telur<br/>Bertag</th>
+          <th class="py-1 px-2">Telur<br/>Tak Bertag</th>
+          <th class="py-1 px-2">Menetas</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr class="border-t-2 border-white/20 font-bold">
+          <td class="py-2 px-2">JUMLAH</td>
+          <td class="py-2 px-2 tabular-num">${totals.bp_b}</td>
+          <td class="py-2 px-2 tabular-num">${totals.bp_t}</td>
+          <td class="py-2 px-2 tabular-num">${totals.td_b}</td>
+          <td class="py-2 px-2 tabular-num">${totals.td_t}</td>
+          <td class="py-2 px-2"></td>
+        </tr></tfoot>
+      </table>
+    </div>
+  `, 'mb-4'))
+
+  bodyHolder.appendChild(flatCard(`
+    <div class="grid grid-cols-2 gap-3 text-sm">
+      <div><span class="opacity-70">Jumlah Bilangan Penyu</span><div class="font-display text-xl tabular-num">${(totals.bp_b+totals.bp_t).toLocaleString()}</div></div>
+      <div><span class="opacity-70">Jumlah Telur</span><div class="font-display text-xl tabular-num">${(totals.td_b+totals.td_t).toLocaleString()}</div></div>
+    </div>
   `))
 
   return wrap
@@ -1197,6 +1219,7 @@ async function screenDashboard() {
     <div class="text-xs opacity-70 mt-2">${target ? pct + '% menuju sasaran · Baki ' + (target-jumlahTelur).toLocaleString() + ' telur' : 'Sasaran belum ditetapkan untuk ' + state.island + ' (Admin → Sasaran Tahunan)'}</div>
   `, 'mb-4'))
 
+  if (state.profile?.role !== 'staff') {
   stats.appendChild(flatCard(`
     <button id="presentBtn" class="btn btn-primary w-full flex items-center justify-center gap-2">
       <span>🎤</span><span>Jana Pembentangan (PowerPoint)</span>
@@ -1219,6 +1242,7 @@ async function screenDashboard() {
     btn.disabled = false
     btn.innerHTML = '<span>🎤</span><span>Jana Pembentangan (PowerPoint)</span>'
   }
+  }
 
   // Monthly HP-bar grid — per-month actual vs target, game-style progress
   const { data: monthlyTargetsRows } = await supabase.from('monthly_targets').select('*').eq('year', year).eq('island', viewIsland)
@@ -1234,7 +1258,7 @@ async function screenDashboard() {
     const fillPct = Math.min(100, mPct)
     const achieved = mTarget && mPct >= 100
     return `
-      <div class="month-hp ${achieved ? 'achieved' : ''}">
+      <div class="month-hp ${achieved ? 'achieved' : ''} cursor-pointer" data-month="${m}">
         <div class="month-hp-fill" data-fill="${mTarget ? fillPct : 0}" style="width:0%; background:${progressColor(mPct)};"></div>
         <div class="month-hp-content">
           <span class="month-hp-label">${label}${achieved ? ' 🏆' : ''}</span>
@@ -1245,10 +1269,18 @@ async function screenDashboard() {
     `
   }).join('')
 
-  stats.appendChild(flatCard(`
-    <div class="eyebrow mb-3">Progress Bulanan ${year}</div>
+  const monthGridCard = flatCard(`
+    <div class="eyebrow mb-1">Progress Bulanan ${year}</div>
+    <p class="text-xs opacity-50 mb-3">Tekan mana-mana bulan untuk lihat jadual harian penuh</p>
     <div class="grid grid-cols-3 gap-2">${hpCells}</div>
-  `, 'mb-4'))
+  `, 'mb-4')
+  stats.appendChild(monthGridCard)
+  monthGridCard.querySelectorAll('.month-hp[data-month]').forEach(cell => {
+    cell.onclick = () => {
+      state.viewMonth = { island: viewIsland, year, month: Number(cell.dataset.month) }
+      go('monthdetail')
+    }
+  })
 
   stats.appendChild(flatCard(`
     <div class="flex items-center justify-between mb-3">
