@@ -156,6 +156,20 @@
   html.light .toast-error { background:rgba(254,226,221,.96); }
   html.light .toast-info { background:rgba(247,242,231,.96); }
 
+  /* ---------- Chart fullscreen expand (double-click / double-tap) ---------- */
+  .chart-expand-btn { width:26px; height:26px; border-radius:.6rem; display:flex; align-items:center; justify-content:center; font-size:.85rem; opacity:.55; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); flex-shrink:0; cursor:pointer; }
+  .chart-expand-btn:hover { opacity:1; }
+  .chart-expand-overlay {
+    position:fixed; inset:0; z-index:200; padding:1rem;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(6,19,25,.75);
+    opacity:0; pointer-events:none; transition:opacity .25s ease;
+  }
+  .chart-expand-overlay.show { opacity:1; pointer-events:auto; }
+  html.light .chart-expand-overlay { background:rgba(237,227,207,.8); }
+  .chart-expand-panel { width:100%; max-width:900px; padding:1.25rem; }
+  .chart-expand-canvas-wrap { position:relative; height:70vh; }
+
   /* ---------- Skeleton shimmer loading ---------- */
   .skel { position:relative; overflow:hidden; border-radius:.75rem; background:rgba(255,255,255,.06); }
   html.light .skel { background:rgba(0,0,0,.07); }
@@ -1059,6 +1073,105 @@ async function screenEditEntry() {
 let chartInstances = []
 function destroyCharts() { chartInstances.forEach(c => c.destroy()); chartInstances = [] }
 
+// Lets hover/touch trigger the tooltip anywhere along a column, not just
+// exactly on top of a point/bar — much easier to hit with a finger.
+const CHART_INTERACTION = { mode: 'index', intersect: false }
+
+// Vertical line that follows the active (hovered/touched) point so the
+// eye has something to track across the chart, mouse or finger alike.
+Chart.register({
+  id: 'crosshairLine',
+  afterDatasetsDraw(chart) {
+    const active = chart.getActiveElements()
+    if (!active.length) return
+    const { ctx, chartArea: { top, bottom } } = chart
+    const x = active[0].element.x
+    ctx.save()
+    ctx.beginPath()
+    ctx.moveTo(x, top); ctx.lineTo(x, bottom)
+    ctx.lineWidth = 1
+    ctx.strokeStyle = 'rgba(110,231,183,.5)'
+    ctx.setLineDash([4, 4])
+    ctx.stroke()
+    ctx.restore()
+  }
+})
+
+// Double-click (desktop) or double-tap (mobile) a chart card to blow it up
+// to fullscreen — small charts are hard to read/aim at on a phone.
+function attachChartExpand(cardEl, titleFn, chartGetter) {
+  function trigger() {
+    const chart = chartGetter()
+    if (!chart) return
+    openChartFullscreen(titleFn(), chart.config.type, chart.data, chart.options)
+  }
+  cardEl.addEventListener('dblclick', (e) => { e.preventDefault(); trigger() })
+  let lastTap = 0
+  cardEl.addEventListener('touchend', () => {
+    const now = Date.now()
+    if (now - lastTap < 350) trigger()
+    lastTap = now
+  })
+  const btn = cardEl.querySelector('.chart-expand-btn')
+  if (btn) btn.onclick = (e) => { e.stopPropagation(); trigger() }
+}
+
+function openChartFullscreen(title, type, data, options) {
+  const overlay = document.createElement('div')
+  overlay.className = 'chart-expand-overlay'
+  overlay.innerHTML = `
+    <div class="chart-expand-panel frosted">
+      <div class="flex items-center justify-between mb-3">
+        <div class="eyebrow">${title}</div>
+        <button class="btn btn-ghost btn-sm" id="chartExpandClose">✕ Tutup</button>
+      </div>
+      <div class="chart-expand-canvas-wrap"><canvas id="chartExpandCanvas"></canvas></div>
+    </div>`
+  document.body.appendChild(overlay)
+  requestAnimationFrame(() => overlay.classList.add('show'))
+  const clonedData = JSON.parse(JSON.stringify(data))
+  const clonedOptions = JSON.parse(JSON.stringify(options))
+  clonedOptions.maintainAspectRatio = false
+  clonedOptions.interaction = CHART_INTERACTION
+  const expandChart = new Chart(overlay.querySelector('#chartExpandCanvas').getContext('2d'), { type, data: clonedData, options: clonedOptions })
+  function close() {
+    expandChart.destroy()
+    overlay.classList.remove('show')
+    document.removeEventListener('keydown', onKey)
+    setTimeout(() => overlay.remove(), 250)
+  }
+  function onKey(e) { if (e.key === 'Escape') close() }
+  document.addEventListener('keydown', onKey)
+  overlay.querySelector('#chartExpandClose').onclick = close
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close() })
+  overlay.addEventListener('dblclick', (e) => { if (e.target === overlay) close() })
+}
+
+// Touch-drag axis lock for horizontally-scrollable strips sitting inside a
+// vertically-scrollable page — without this, a diagonal-ish swipe that
+// starts on the element can get "stuck" scrolling sideways only. Once we
+// see which axis the finger committed to, we get out of the other axis's
+// way for the rest of that gesture.
+function axisLockScroll(el) {
+  if (!el || el.dataset.axisLocked) return
+  el.dataset.axisLocked = '1'
+  let startX = 0, startY = 0, axis = null
+  el.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return
+    startX = e.touches[0].clientX; startY = e.touches[0].clientY; axis = null
+  }, { passive: true })
+  el.addEventListener('touchmove', (e) => {
+    if (e.touches.length !== 1 || axis) return
+    const dx = e.touches[0].clientX - startX, dy = e.touches[0].clientY - startY
+    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+      axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y'
+      el.style.overflowX = axis === 'x' ? 'auto' : 'hidden'
+    }
+  }, { passive: true })
+  el.addEventListener('touchend', () => { axis = null; el.style.overflowX = 'auto' }, { passive: true })
+}
+axisLockScroll(document.querySelector('#navbar .frosted'))
+
 // =========================================================================
 // MONTH DETAIL — opened by tapping a month in "Progress Bulanan" on the
 // Dashboard. Shows a per-day table (only days with data) combining Entri
@@ -1140,7 +1253,7 @@ async function screenMonthDetail() {
     return acc
   }, { bp_b:0, bp_t:0, td_b:0, td_t:0 })
 
-  bodyHolder.appendChild(flatCard(`
+  const tableCard = flatCard(`
     <div class="eyebrow mb-3">Jadual Harian — ${dayKeys.length} hari ada data</div>
     <div class="overflow-x-auto">
       <table class="w-full text-sm min-w-[520px]">
@@ -1163,7 +1276,9 @@ async function screenMonthDetail() {
         </tr></tfoot>
       </table>
     </div>
-  `, 'mb-4'))
+  `, 'mb-4')
+  bodyHolder.appendChild(tableCard)
+  axisLockScroll(tableCard.querySelector('.overflow-x-auto'))
 
   bodyHolder.appendChild(flatCard(`
     <div class="grid grid-cols-2 gap-3 text-sm">
@@ -1284,31 +1399,43 @@ async function screenDashboard() {
     }
   })
 
-  stats.appendChild(flatCard(`
+  const barCard = flatCard(`
     <div class="flex items-center justify-between mb-3">
       <div class="eyebrow">Trend Bulanan ${year}</div>
-      <select id="metricSelect" class="!w-auto text-xs !py-1 !px-2">
-        <option value="telur">Jumlah Telur</option>
-        <option value="penyu">Bilangan Penyu</option>
-      </select>
+      <div class="flex items-center gap-2">
+        <select id="metricSelect" class="!w-auto text-xs !py-1 !px-2">
+          <option value="telur">Jumlah Telur</option>
+          <option value="penyu">Bilangan Penyu</option>
+        </select>
+        <button class="chart-expand-btn" title="Paparan penuh">⤢</button>
+      </div>
     </div>
     <canvas id="chartBar" height="180"></canvas>
-  `, 'mb-4'))
-  stats.appendChild(flatCard(`
-    <div class="eyebrow mb-3" id="cumulativeLabel">Kumulatif Sepanjang Tahun (Telur)</div>
+  `, 'mb-4')
+  stats.appendChild(barCard)
+  const lineCard = flatCard(`
+    <div class="flex items-center justify-between mb-3">
+      <div class="eyebrow" id="cumulativeLabel">Kumulatif Sepanjang Tahun (Telur)</div>
+      <button class="chart-expand-btn" title="Paparan penuh">⤢</button>
+    </div>
     <canvas id="chartLine" height="180"></canvas>
-  `, 'mb-4'))
-  stats.appendChild(flatCard(`
+  `, 'mb-4')
+  stats.appendChild(lineCard)
+  const compareCard = flatCard(`
     <div class="flex items-center justify-between mb-3">
       <div class="eyebrow">Perbandingan Tahun</div>
-      <select id="compareYears" class="!w-auto text-xs !py-1 !px-2">
-        <option value="2">2 tahun</option>
-        <option value="3">3 tahun</option>
-        <option value="5">5 tahun</option>
-      </select>
+      <div class="flex items-center gap-2">
+        <select id="compareYears" class="!w-auto text-xs !py-1 !px-2">
+          <option value="2">2 tahun</option>
+          <option value="3">3 tahun</option>
+          <option value="5">5 tahun</option>
+        </select>
+        <button class="chart-expand-btn" title="Paparan penuh">⤢</button>
+      </div>
     </div>
     <canvas id="chartCompare" height="200"></canvas>
-  `, 'mb-4'))
+  `, 'mb-4')
+  stats.appendChild(compareCard)
 
   const secondaryRow = document.createElement('div')
   secondaryRow.className = 'grid grid-cols-3 gap-3 stagger'
@@ -1342,9 +1469,10 @@ async function screenDashboard() {
   const barChart = new Chart(barCtx, {
     type: 'bar',
     data: { labels: monthly.map(m=>m.month), datasets: [{ label:'Telur', data: monthly.map(m=>m.telur), backgroundColor:'#2E9099', borderRadius:6 }] },
-    options: { plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af', precision:0} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
+    options: { interaction: CHART_INTERACTION, plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af', precision:0} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
   })
   chartInstances.push(barChart)
+  attachChartExpand(barCard, () => `Trend Bulanan ${year} — ${currentMetric === 'telur' ? 'Jumlah Telur' : 'Bilangan Penyu'}`, () => barChart)
 
   function cumulativeChart(metric) {
     const src = metric === 'telur' ? monthly.map(m=>m.telur) : monthlyPenyu.map(m=>m.penyu)
@@ -1355,9 +1483,10 @@ async function screenDashboard() {
   const lineChart = new Chart(lineCtx, {
     type: 'line',
     data: { labels: monthly.map(m=>m.month), datasets: [{ label:'Kumulatif', data: cumulativeChart('telur'), borderColor:'#6EE7B7', backgroundColor:'rgba(110,231,183,.15)', fill:true, tension:.35 }] },
-    options: { plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af', precision:0} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
+    options: { interaction: CHART_INTERACTION, plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af', precision:0} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
   })
   chartInstances.push(lineChart)
+  attachChartExpand(lineCard, () => stats.querySelector('#cumulativeLabel').textContent, () => lineChart)
 
   stats.querySelector('#metricSelect').onchange = (e) => {
     currentMetric = e.target.value
@@ -1370,6 +1499,7 @@ async function screenDashboard() {
     stats.querySelector('#cumulativeLabel').textContent = isEggs ? 'Kumulatif Sepanjang Tahun (Telur)' : 'Kumulatif Sepanjang Tahun (Penyu)'
   }
 
+  let compareChart = null
   async function renderCompare(nYears) {
     const years = Array.from({length:nYears}, (_,i) => year - i).reverse()
     const { data: multi } = await supabase.rpc('get_multi_year_monthly', { p_years: years, p_island: viewIsland })
@@ -1380,13 +1510,15 @@ async function screenDashboard() {
       borderColor: colors[i % colors.length], backgroundColor:'transparent', tension:.35
     }))
     const compareCtx = stats.querySelector('#chartCompare').getContext('2d')
-    chartInstances.push(new Chart(compareCtx, {
+    compareChart = new Chart(compareCtx, {
       type: 'line',
       data: { labels: MONTH_LABELS, datasets },
-      options: { plugins:{legend:{labels:{color:'#9ca3af'}}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af'} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
-    }))
+      options: { interaction: CHART_INTERACTION, plugins:{legend:{labels:{color:'#9ca3af'}}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af'} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
+    })
+    chartInstances.push(compareChart)
   }
   renderCompare(2)
+  attachChartExpand(compareCard, () => 'Perbandingan Tahun', () => compareChart)
   stats.querySelector('#compareYears').onchange = (e) => {
     chartInstances[chartInstances.length-1]?.destroy()
     chartInstances.pop()
