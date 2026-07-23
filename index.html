@@ -1091,89 +1091,141 @@ async function screenMonthDetail() {
 
   const [{ data: daily }, { data: nests }] = await Promise.all([
     supabase.from('daily_entries').select('*').eq('island', island).gte('tarikh', monthStart).lte('tarikh', monthEnd),
-    supabase.from('nest_records').select('*').eq('island', island).gte('tarikh_dijumpai', monthStart).lte('tarikh_dijumpai', monthEnd)
+    supabase.from('nest_records').select('*').eq('island', island).gte('tarikh_dijumpai', monthStart).lte('tarikh_dijumpai', monthEnd).order('created_at')
   ])
 
-  // Combine LPP + SFC together per day into bertag/tak-bertag totals —
-  // matches how the user reads the Excel export at a glance.
-  const byDay = {}
-  function ensureDay(d) {
-    if (!byDay[d]) byDay[d] = { bp_b:0, bp_t:0, td_b:0, td_t:0, tm_b:0, tm_t:0, hasMenetas:false }
-    return byDay[d]
+  let tab = 'ringkasan'
+  const tabsWrap = document.createElement('div')
+  tabsWrap.className = 'seg mb-4'
+  tabsWrap.innerHTML = `<button id="tabRingkasan" class="active">Ringkasan Harian</button><button id="tabIndividu">Individu Sarang</button>`
+  wrap.insertBefore(tabsWrap, bodyHolder)
+  tabsWrap.querySelector('#tabRingkasan').onclick = () => { tab='ringkasan'; tabsWrap.querySelector('#tabRingkasan').className='active'; tabsWrap.querySelector('#tabIndividu').className=''; renderTab() }
+  tabsWrap.querySelector('#tabIndividu').onclick = () => { tab='individu'; tabsWrap.querySelector('#tabIndividu').className='active'; tabsWrap.querySelector('#tabRingkasan').className=''; renderTab() }
+
+  function renderRingkasan() {
+    // Combine LPP + SFC together per day into bertag/tak-bertag totals —
+    // matches how the user reads the Excel export at a glance.
+    const byDay = {}
+    function ensureDay(d) {
+      if (!byDay[d]) byDay[d] = { bp_b:0, bp_t:0, td_b:0, td_t:0, tm_b:0, tm_t:0, hasMenetas:false }
+      return byDay[d]
+    }
+    ;(daily||[]).forEach(d => {
+      const b = ensureDay(d.tarikh)
+      b.bp_b += d.bilangan_penyu_bertag; b.bp_t += d.bilangan_penyu_takbertag
+      b.td_b += d.jumlah_telur_diram_bertag; b.td_t += d.jumlah_telur_diram_takbertag
+      if (d.telur_menetas_bertag !== null) { b.tm_b += d.telur_menetas_bertag||0; b.hasMenetas = true }
+      if (d.telur_menetas_takbertag !== null) { b.tm_t += d.telur_menetas_takbertag||0; b.hasMenetas = true }
+    })
+    ;(nests||[]).forEach(n => {
+      const b = ensureDay(n.tarikh_dijumpai)
+      if (n.bertag) { b.bp_b += 1; b.td_b += n.jumlah_telur_diram; if (n.telur_menetas !== null) { b.tm_b += n.telur_menetas||0; b.hasMenetas = true } }
+      else { b.bp_t += 1; b.td_t += n.jumlah_telur_diram; if (n.telur_menetas !== null) { b.tm_t += n.telur_menetas||0; b.hasMenetas = true } }
+    })
+
+    bodyHolder.innerHTML = ''
+    const dayKeys = Object.keys(byDay).sort()
+    if (!dayKeys.length) {
+      bodyHolder.appendChild(card(`<div class="text-center py-8 opacity-80">Tiada data untuk ${monthLabel} ${year} di ${island} lagi.</div>`))
+      return
+    }
+
+    const rows = dayKeys.map(d => {
+      const v = byDay[d]
+      return `
+        <tr class="border-b border-white/10">
+          <td class="py-2 px-2 whitespace-nowrap">${fmtDate(d)}</td>
+          <td class="py-2 px-2 tabular-num">${v.bp_b}</td>
+          <td class="py-2 px-2 tabular-num">${v.bp_t}</td>
+          <td class="py-2 px-2 tabular-num font-semibold">${v.td_b}</td>
+          <td class="py-2 px-2 tabular-num font-semibold">${v.td_t}</td>
+          <td class="py-2 px-2 tabular-num">${v.hasMenetas ? (v.tm_b + v.tm_t) : '-'}</td>
+        </tr>`
+    }).join('')
+
+    const totals = dayKeys.reduce((acc, d) => {
+      const v = byDay[d]
+      acc.bp_b += v.bp_b; acc.bp_t += v.bp_t; acc.td_b += v.td_b; acc.td_t += v.td_t
+      return acc
+    }, { bp_b:0, bp_t:0, td_b:0, td_t:0 })
+
+    bodyHolder.appendChild(flatCard(`
+      <div class="eyebrow mb-3">Jadual Harian — ${dayKeys.length} hari ada data</div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm min-w-[520px]">
+          <thead><tr class="text-left opacity-60 text-xs">
+            <th class="py-1 px-2">Tarikh</th>
+            <th class="py-1 px-2">Penyu<br/>Bertag</th>
+            <th class="py-1 px-2">Penyu<br/>Tak Bertag</th>
+            <th class="py-1 px-2">Telur<br/>Bertag</th>
+            <th class="py-1 px-2">Telur<br/>Tak Bertag</th>
+            <th class="py-1 px-2">Menetas</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+          <tfoot><tr class="border-t-2 border-white/20 font-bold">
+            <td class="py-2 px-2">JUMLAH</td>
+            <td class="py-2 px-2 tabular-num">${totals.bp_b}</td>
+            <td class="py-2 px-2 tabular-num">${totals.bp_t}</td>
+            <td class="py-2 px-2 tabular-num">${totals.td_b}</td>
+            <td class="py-2 px-2 tabular-num">${totals.td_t}</td>
+            <td class="py-2 px-2"></td>
+          </tr></tfoot>
+        </table>
+      </div>
+    `, 'mb-4'))
+
+    bodyHolder.appendChild(flatCard(`
+      <div class="grid grid-cols-2 gap-3 text-sm">
+        <div><span class="opacity-70">Jumlah Bilangan Penyu</span><div class="font-display text-xl tabular-num">${(totals.bp_b+totals.bp_t).toLocaleString()}</div></div>
+        <div><span class="opacity-70">Jumlah Telur</span><div class="font-display text-xl tabular-num">${(totals.td_b+totals.td_t).toLocaleString()}</div></div>
+      </div>
+    `))
   }
-  ;(daily||[]).forEach(d => {
-    const b = ensureDay(d.tarikh)
-    b.bp_b += d.bilangan_penyu_bertag; b.bp_t += d.bilangan_penyu_takbertag
-    b.td_b += d.jumlah_telur_diram_bertag; b.td_t += d.jumlah_telur_diram_takbertag
-    if (d.telur_menetas_bertag !== null) { b.tm_b += d.telur_menetas_bertag||0; b.hasMenetas = true }
-    if (d.telur_menetas_takbertag !== null) { b.tm_t += d.telur_menetas_takbertag||0; b.hasMenetas = true }
-  })
-  ;(nests||[]).forEach(n => {
-    const b = ensureDay(n.tarikh_dijumpai)
-    if (n.bertag) { b.bp_b += 1; b.td_b += n.jumlah_telur_diram; if (n.telur_menetas !== null) { b.tm_b += n.telur_menetas||0; b.hasMenetas = true } }
-    else { b.bp_t += 1; b.td_t += n.jumlah_telur_diram; if (n.telur_menetas !== null) { b.tm_t += n.telur_menetas||0; b.hasMenetas = true } }
-  })
 
-  bodyHolder.innerHTML = ''
-  const dayKeys = Object.keys(byDay).sort()
-  if (!dayKeys.length) {
-    bodyHolder.appendChild(card(`<div class="text-center py-8 opacity-80">Tiada data untuk ${monthLabel} ${year} di ${island} lagi.</div>`))
-    return wrap
+  function renderIndividu() {
+    bodyHolder.innerHTML = ''
+    if (!nests || !nests.length) {
+      bodyHolder.appendChild(card(`<div class="text-center py-8 opacity-80">Tiada entri individu (per-sarang) untuk ${monthLabel} ${year} di ${island}. Data harian agregat mungkin masih ada di tab "Ringkasan Harian".</div>`))
+      return
+    }
+    // Group by date, in the order sarang were keyed in that day
+    const byDate = {}
+    nests.forEach(n => {
+      if (!byDate[n.tarikh_dijumpai]) byDate[n.tarikh_dijumpai] = []
+      byDate[n.tarikh_dijumpai].push(n)
+    })
+    const dates = Object.keys(byDate).sort()
+    dates.forEach(d => {
+      const list = byDate[d]
+      const jumlahSemua = list.reduce((s,n) => s + n.jumlah_telur_diram, 0)
+      const rows = list.map((n, i) => `
+        <tr class="border-b border-white/10">
+          <td class="py-1.5 px-2 opacity-70">${i+1}</td>
+          <td class="py-1.5 px-2 tabular-num font-semibold">${n.jumlah_telur_diram.toLocaleString()}</td>
+          <td class="py-1.5 px-2 text-xs opacity-60">${n.ram} · ${n.bertag ? 'Bertag' : 'Tak Bertag'}</td>
+        </tr>`).join('')
+      bodyHolder.appendChild(flatCard(`
+        <div class="flex items-center justify-between mb-2">
+          <span class="font-semibold">${fmtDate(d)}</span>
+          <span class="text-xs"><span class="opacity-60">Jumlah semua</span> <span class="font-display text-lg tabular-num ml-1">${jumlahSemua.toLocaleString()}</span></span>
+        </div>
+        <table class="w-full text-sm">
+          <thead><tr class="text-left opacity-60 text-xs"><th class="py-1 px-2">Sarang</th><th class="py-1 px-2">Telur</th><th class="py-1 px-2">Ket.</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `, 'mb-3'))
+    })
   }
 
-  const rows = dayKeys.map(d => {
-    const v = byDay[d]
-    return `
-      <tr class="border-b border-white/10">
-        <td class="py-2 px-2 whitespace-nowrap">${fmtDate(d)}</td>
-        <td class="py-2 px-2 tabular-num">${v.bp_b}</td>
-        <td class="py-2 px-2 tabular-num">${v.bp_t}</td>
-        <td class="py-2 px-2 tabular-num font-semibold">${v.td_b}</td>
-        <td class="py-2 px-2 tabular-num font-semibold">${v.td_t}</td>
-        <td class="py-2 px-2 tabular-num">${v.hasMenetas ? (v.tm_b + v.tm_t) : '-'}</td>
-      </tr>`
-  }).join('')
-
-  const totals = dayKeys.reduce((acc, d) => {
-    const v = byDay[d]
-    acc.bp_b += v.bp_b; acc.bp_t += v.bp_t; acc.td_b += v.td_b; acc.td_t += v.td_t
-    return acc
-  }, { bp_b:0, bp_t:0, td_b:0, td_t:0 })
-
-  bodyHolder.appendChild(flatCard(`
-    <div class="eyebrow mb-3">Jadual Harian — ${dayKeys.length} hari ada data</div>
-    <div class="overflow-x-auto">
-      <table class="w-full text-sm min-w-[520px]">
-        <thead><tr class="text-left opacity-60 text-xs">
-          <th class="py-1 px-2">Tarikh</th>
-          <th class="py-1 px-2">Penyu<br/>Bertag</th>
-          <th class="py-1 px-2">Penyu<br/>Tak Bertag</th>
-          <th class="py-1 px-2">Telur<br/>Bertag</th>
-          <th class="py-1 px-2">Telur<br/>Tak Bertag</th>
-          <th class="py-1 px-2">Menetas</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-        <tfoot><tr class="border-t-2 border-white/20 font-bold">
-          <td class="py-2 px-2">JUMLAH</td>
-          <td class="py-2 px-2 tabular-num">${totals.bp_b}</td>
-          <td class="py-2 px-2 tabular-num">${totals.bp_t}</td>
-          <td class="py-2 px-2 tabular-num">${totals.td_b}</td>
-          <td class="py-2 px-2 tabular-num">${totals.td_t}</td>
-          <td class="py-2 px-2"></td>
-        </tr></tfoot>
-      </table>
-    </div>
-  `, 'mb-4'))
-
-  bodyHolder.appendChild(flatCard(`
-    <div class="grid grid-cols-2 gap-3 text-sm">
-      <div><span class="opacity-70">Jumlah Bilangan Penyu</span><div class="font-display text-xl tabular-num">${(totals.bp_b+totals.bp_t).toLocaleString()}</div></div>
-      <div><span class="opacity-70">Jumlah Telur</span><div class="font-display text-xl tabular-num">${(totals.td_b+totals.td_t).toLocaleString()}</div></div>
-    </div>
-  `))
+  function renderTab() {
+    bodyHolder.innerHTML = skeletonBlock(2)
+    requestAnimationFrame(() => { tab === 'ringkasan' ? renderRingkasan() : renderIndividu() })
+  }
+  renderTab()
 
   return wrap
 }
+
 
 async function screenDashboard() {
   const year = new Date().getFullYear()
