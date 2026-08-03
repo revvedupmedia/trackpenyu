@@ -1350,7 +1350,8 @@ async function screenDashboard() {
     try {
       await generatePresentation(viewIsland, year, {
         jumlahTelur, target, pct, hatchRate, jumlahBuruk, jumlahPenyu,
-        monthly: data?.monthly || [], monthlyPenyu: data?.monthly_penyu || []
+        monthly: data?.monthly || [], monthlyPenyu: data?.monthly_penyu || [],
+        monthlyTargetMap
       })
       toast('Pembentangan dimuat turun', 'success')
     } catch (err) {
@@ -1867,23 +1868,35 @@ git push</pre>
 async function generatePresentation(island, year, s) {
   const pptx = new PptxGenJS()
   pptx.layout = 'LAYOUT_16x9'
-  const NAVY = '0A1F2B', TEAL = '1F6F78', GLOW = '6EE7B7', SAND = 'F7F2E7', GOLD = 'E0A458', CORAL = 'E1604C'
+  const NAVY='0A1F2B', PANEL='123244', PANEL2='0F2A38', TEAL='1F6F78', GLOW='6EE7B7',
+        SAND='F7F2E7', GOLD='E0A458', CORAL='E1604C', MUTED='9CA3AF'
 
-  function baseSlide() {
+  let slideNum = 0
+  function baseSlide(title) {
+    slideNum++
     const sl = pptx.addSlide()
     sl.background = { color: NAVY }
+    sl.addText(title, { x:0.5, y:0.32, w:9, h:0.55, fontSize:24, bold:true, color:SAND })
+    sl.addShape(pptx.ShapeType.rect, { x:0.5, y:0.87, w:1.1, h:0.045, fill:{ color:GLOW }, line:{ type:'none' } })
+    sl.addText(`${island} · Penyu Tracker · ${year}`, { x:0.5, y:5.3, w:6, h:0.3, fontSize:9, color:MUTED })
+    sl.addText(String(slideNum), { x:9.1, y:5.3, w:0.4, h:0.3, fontSize:9, color:MUTED, align:'right' })
     return sl
   }
 
   // Slide 1 — Title
-  const s1 = baseSlide()
-  s1.addText('Penyu Tracker', { x:0.6, y:1.7, w:9, h:0.9, fontSize:40, bold:true, color:SAND, fontFace:'Georgia' })
-  s1.addText(`Laporan Prestasi — ${island} · ${year}`, { x:0.6, y:2.5, w:9, h:0.6, fontSize:20, color:GLOW })
-  s1.addText(`Dijana ${new Date().toLocaleDateString('ms-MY')}`, { x:0.6, y:4.9, w:9, h:0.4, fontSize:11, color:'9CA3AF' })
+  const s1 = pptx.addSlide()
+  s1.background = { color: NAVY }
+  s1.addShape(pptx.ShapeType.rect, { x:0, y:0, w:0.14, h:5.63, fill:{ color:GLOW }, line:{ type:'none' } })
+  s1.addText('Penyu Tracker', { x:0.7, y:1.85, w:8.5, h:0.9, fontSize:40, bold:true, color:SAND, fontFace:'Georgia' })
+  s1.addText(`Laporan Prestasi — ${island} · ${year}`, { x:0.7, y:2.65, w:8.5, h:0.6, fontSize:20, color:GLOW })
+  s1.addText(`Dijana ${new Date().toLocaleDateString('ms-MY')}`, { x:0.7, y:4.95, w:8.5, h:0.4, fontSize:11, color:MUTED })
 
   // Slide 2 — Key numbers
-  const s2 = baseSlide()
-  s2.addText('Pencapaian Sasaran', { x:0.5, y:0.35, fontSize:26, bold:true, color:SAND })
+  slideNum++
+  const s2 = pptx.addSlide()
+  s2.background = { color: NAVY }
+  s2.addText('Pencapaian Sasaran', { x:0.5, y:0.32, w:9, h:0.55, fontSize:24, bold:true, color:SAND })
+  s2.addShape(pptx.ShapeType.rect, { x:0.5, y:0.87, w:1.1, h:0.045, fill:{ color:GLOW }, line:{ type:'none' } })
   const kpis = [
     [`${s.jumlahTelur.toLocaleString()}`, 'Jumlah Telur', GLOW],
     [s.target ? `${s.pct}%` : '—', 'Peratus Sasaran', GOLD],
@@ -1894,40 +1907,73 @@ async function generatePresentation(island, year, s) {
   ]
   kpis.forEach((k, i) => {
     const col = i % 3, row = Math.floor(i / 3)
-    const x = 0.5 + col * 3.1, y = 1.3 + row * 1.9
-    s2.addShape(pptx.ShapeType.roundRect, { x, y, w:2.85, h:1.6, fill:{ color:'123244' }, line:{ color:'1F6F78', width:1 }, rectRadius:0.08 })
+    const x = 0.5 + col * 3.1, y = 1.2 + row * 1.9
+    s2.addShape(pptx.ShapeType.roundRect, { x, y, w:2.85, h:1.6, fill:{ color:PANEL }, line:{ color:TEAL, width:1 }, rectRadius:0.08 })
     s2.addText(k[0], { x, y:y+0.15, w:2.85, h:0.8, align:'center', fontSize:28, bold:true, color:k[2] })
-    s2.addText(k[1], { x, y:y+0.95, w:2.85, h:0.4, align:'center', fontSize:12, color:'9CA3AF' })
+    s2.addText(k[1], { x, y:y+0.95, w:2.85, h:0.4, align:'center', fontSize:12, color:MUTED })
+  })
+  s2.addText(`${island} · Penyu Tracker · ${year}`, { x:0.5, y:5.3, w:6, h:0.3, fontSize:9, color:MUTED })
+  s2.addText(String(slideNum), { x:9.1, y:5.3, w:0.4, h:0.3, fontSize:9, color:MUTED, align:'right' })
+
+  // Slide 3 — Monthly breakdown table (penyu, telur, sasaran, % capaian per month)
+  const s3 = baseSlide('Data Bulanan Terperinci')
+  const monthlyTarget = s.monthlyTargetMap || {}
+  let bestIdx = 0
+  s.monthly.forEach((m, i) => { if ((m.telur||0) > (s.monthly[bestIdx]?.telur||0)) bestIdx = i })
+  const headerRow = ['Bulan', 'Penyu', 'Telur', 'Sasaran', '% Capaian'].map(t => ({
+    text: t, options: { bold:true, color:SAND, fill:{ color:TEAL }, align: t==='Bulan' ? 'left' : 'right', fontSize:11 }
+  }))
+  const dataRows = MONTH_LABELS.map((label, i) => {
+    const m = i + 1
+    const telur = s.monthly[i]?.telur || 0
+    const penyu = s.monthlyPenyu[i]?.penyu || 0
+    const mTarget = monthlyTarget[m]
+    const mPct = mTarget ? Math.round((telur / mTarget) * 100) : null
+    const achieved = mTarget && mPct >= 100
+    const rowFill = i % 2 === 0 ? PANEL2 : PANEL
+    const isBest = i === bestIdx && telur > 0
+    return [
+      { text: label + (isBest ? '  🏆' : ''), options: { color:SAND, fill:{ color:rowFill }, fontSize:11 } },
+      { text: String(penyu), options: { color:SAND, fill:{ color:rowFill }, align:'right', fontSize:11 } },
+      { text: telur.toLocaleString(), options: { color: isBest ? GOLD : GLOW, bold:true, fill:{ color:rowFill }, align:'right', fontSize:11 } },
+      { text: mTarget ? mTarget.toLocaleString() : '—', options: { color:MUTED, fill:{ color:rowFill }, align:'right', fontSize:11 } },
+      { text: mTarget ? mPct + '%' : '—', options: { color: achieved ? GOLD : MUTED, bold: achieved, fill:{ color:rowFill }, align:'right', fontSize:11 } },
+    ]
+  })
+  s3.addTable([headerRow, ...dataRows], {
+    x:0.5, y:1.05, w:9, colW:[2.3, 2.15, 2.15, 2.15, 1.25],
+    border: { type:'solid', color:'0A1F2B', pt:0.5 },
+    autoPage: false, valign:'middle', margin:0.04
   })
 
-  // Slide 3 — Monthly eggs bar chart
-  const s3 = baseSlide()
-  s3.addText('Trend Bulanan — Jumlah Telur', { x:0.5, y:0.35, fontSize:24, bold:true, color:SAND })
-  s3.addChart(pptx.ChartType.bar, [{
+  // Slide 4 — Monthly eggs bar chart
+  const s4 = baseSlide('Trend Bulanan — Jumlah Telur')
+  s4.addChart(pptx.ChartType.bar, [{
     name: 'Telur', labels: s.monthly.map(m=>m.month), values: s.monthly.map(m=>m.telur)
   }], {
-    x:0.5, y:1.1, w:9, h:4.2,
+    x:0.5, y:1.1, w:9, h:4.05,
     chartColors:[TEAL], catAxisLabelColor:SAND, valAxisLabelColor:SAND,
     dataLabelColor:SAND, showLegend:false, showTitle:false,
     catAxisLineColor:'444444', valAxisLineColor:'444444'
   })
 
-  // Slide 4 — Monthly turtle count bar chart
-  const s4 = baseSlide()
-  s4.addText('Trend Bulanan — Bilangan Penyu', { x:0.5, y:0.35, fontSize:24, bold:true, color:SAND })
-  s4.addChart(pptx.ChartType.bar, [{
+  // Slide 5 — Monthly turtle count bar chart
+  const s5 = baseSlide('Trend Bulanan — Bilangan Penyu')
+  s5.addChart(pptx.ChartType.bar, [{
     name: 'Penyu', labels: s.monthlyPenyu.map(m=>m.month), values: s.monthlyPenyu.map(m=>m.penyu)
   }], {
-    x:0.5, y:1.1, w:9, h:4.2,
+    x:0.5, y:1.1, w:9, h:4.05,
     chartColors:[GLOW], catAxisLabelColor:SAND, valAxisLabelColor:SAND,
     dataLabelColor:SAND, showLegend:false, showTitle:false,
     catAxisLineColor:'444444', valAxisLineColor:'444444'
   })
 
-  // Slide 5 — Closing
-  const s5 = baseSlide()
-  s5.addText('Terima Kasih', { x:0.6, y:2.2, w:9, h:0.9, fontSize:34, bold:true, color:SAND, fontFace:'Georgia' })
-  s5.addText(`${island} · Penyu Tracker`, { x:0.6, y:2.95, w:9, h:0.5, fontSize:16, color:GLOW })
+  // Slide 6 — Closing
+  const s6 = pptx.addSlide()
+  s6.background = { color: NAVY }
+  s6.addShape(pptx.ShapeType.rect, { x:0, y:0, w:0.14, h:5.63, fill:{ color:GLOW }, line:{ type:'none' } })
+  s6.addText('Terima Kasih', { x:0.7, y:2.15, w:8.5, h:0.9, fontSize:34, bold:true, color:SAND, fontFace:'Georgia' })
+  s6.addText(`${island} · Penyu Tracker`, { x:0.7, y:2.9, w:8.5, h:0.5, fontSize:16, color:GLOW })
 
   pptx.writeFile({ fileName: `Pembentangan-${island}-${year}.pptx` })
 }
