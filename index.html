@@ -156,6 +156,20 @@
   html.light .toast-error { background:rgba(254,226,221,.96); }
   html.light .toast-info { background:rgba(247,242,231,.96); }
 
+  /* ---------- Chart fullscreen expand (double-click / double-tap) ---------- */
+  .chart-expand-btn { width:26px; height:26px; border-radius:.6rem; display:flex; align-items:center; justify-content:center; font-size:.85rem; opacity:.55; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); flex-shrink:0; cursor:pointer; }
+  .chart-expand-btn:hover { opacity:1; }
+  .chart-expand-overlay {
+    position:fixed; inset:0; z-index:200; padding:1rem;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(6,19,25,.75);
+    opacity:0; pointer-events:none; transition:opacity .25s ease;
+  }
+  .chart-expand-overlay.show { opacity:1; pointer-events:auto; }
+  html.light .chart-expand-overlay { background:rgba(237,227,207,.8); }
+  .chart-expand-panel { width:100%; max-width:900px; padding:1.25rem; }
+  .chart-expand-canvas-wrap { position:relative; height:70vh; }
+
   /* ---------- Skeleton shimmer loading ---------- */
   .skel { position:relative; overflow:hidden; border-radius:.75rem; background:rgba(255,255,255,.06); }
   html.light .skel { background:rgba(0,0,0,.07); }
@@ -1059,6 +1073,105 @@ async function screenEditEntry() {
 let chartInstances = []
 function destroyCharts() { chartInstances.forEach(c => c.destroy()); chartInstances = [] }
 
+// Lets hover/touch trigger the tooltip anywhere along a column, not just
+// exactly on top of a point/bar — much easier to hit with a finger.
+const CHART_INTERACTION = { mode: 'index', intersect: false }
+
+// Vertical line that follows the active (hovered/touched) point so the
+// eye has something to track across the chart, mouse or finger alike.
+Chart.register({
+  id: 'crosshairLine',
+  afterDatasetsDraw(chart) {
+    const active = chart.getActiveElements()
+    if (!active.length) return
+    const { ctx, chartArea: { top, bottom } } = chart
+    const x = active[0].element.x
+    ctx.save()
+    ctx.beginPath()
+    ctx.moveTo(x, top); ctx.lineTo(x, bottom)
+    ctx.lineWidth = 1
+    ctx.strokeStyle = 'rgba(110,231,183,.5)'
+    ctx.setLineDash([4, 4])
+    ctx.stroke()
+    ctx.restore()
+  }
+})
+
+// Double-click (desktop) or double-tap (mobile) a chart card to blow it up
+// to fullscreen — small charts are hard to read/aim at on a phone.
+function attachChartExpand(cardEl, titleFn, chartGetter) {
+  function trigger() {
+    const chart = chartGetter()
+    if (!chart) return
+    openChartFullscreen(titleFn(), chart.config.type, chart.data, chart.options)
+  }
+  cardEl.addEventListener('dblclick', (e) => { e.preventDefault(); trigger() })
+  let lastTap = 0
+  cardEl.addEventListener('touchend', () => {
+    const now = Date.now()
+    if (now - lastTap < 350) trigger()
+    lastTap = now
+  })
+  const btn = cardEl.querySelector('.chart-expand-btn')
+  if (btn) btn.onclick = (e) => { e.stopPropagation(); trigger() }
+}
+
+function openChartFullscreen(title, type, data, options) {
+  const overlay = document.createElement('div')
+  overlay.className = 'chart-expand-overlay'
+  overlay.innerHTML = `
+    <div class="chart-expand-panel frosted">
+      <div class="flex items-center justify-between mb-3">
+        <div class="eyebrow">${title}</div>
+        <button class="btn btn-ghost btn-sm" id="chartExpandClose">✕ Tutup</button>
+      </div>
+      <div class="chart-expand-canvas-wrap"><canvas id="chartExpandCanvas"></canvas></div>
+    </div>`
+  document.body.appendChild(overlay)
+  requestAnimationFrame(() => overlay.classList.add('show'))
+  const clonedData = JSON.parse(JSON.stringify(data))
+  const clonedOptions = JSON.parse(JSON.stringify(options))
+  clonedOptions.maintainAspectRatio = false
+  clonedOptions.interaction = CHART_INTERACTION
+  const expandChart = new Chart(overlay.querySelector('#chartExpandCanvas').getContext('2d'), { type, data: clonedData, options: clonedOptions })
+  function close() {
+    expandChart.destroy()
+    overlay.classList.remove('show')
+    document.removeEventListener('keydown', onKey)
+    setTimeout(() => overlay.remove(), 250)
+  }
+  function onKey(e) { if (e.key === 'Escape') close() }
+  document.addEventListener('keydown', onKey)
+  overlay.querySelector('#chartExpandClose').onclick = close
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close() })
+  overlay.addEventListener('dblclick', (e) => { if (e.target === overlay) close() })
+}
+
+// Touch-drag axis lock for horizontally-scrollable strips sitting inside a
+// vertically-scrollable page — without this, a diagonal-ish swipe that
+// starts on the element can get "stuck" scrolling sideways only. Once we
+// see which axis the finger committed to, we get out of the other axis's
+// way for the rest of that gesture.
+function axisLockScroll(el) {
+  if (!el || el.dataset.axisLocked) return
+  el.dataset.axisLocked = '1'
+  let startX = 0, startY = 0, axis = null
+  el.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return
+    startX = e.touches[0].clientX; startY = e.touches[0].clientY; axis = null
+  }, { passive: true })
+  el.addEventListener('touchmove', (e) => {
+    if (e.touches.length !== 1 || axis) return
+    const dx = e.touches[0].clientX - startX, dy = e.touches[0].clientY - startY
+    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+      axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y'
+      el.style.overflowX = axis === 'x' ? 'auto' : 'hidden'
+    }
+  }, { passive: true })
+  el.addEventListener('touchend', () => { axis = null; el.style.overflowX = 'auto' }, { passive: true })
+}
+axisLockScroll(document.querySelector('#navbar .frosted'))
+
 // =========================================================================
 // MONTH DETAIL — opened by tapping a month in "Progress Bulanan" on the
 // Dashboard. Shows a per-day table (only days with data) combining Entri
@@ -1149,7 +1262,7 @@ async function screenMonthDetail() {
       return acc
     }, { bp_b:0, bp_t:0, td_b:0, td_t:0 })
 
-    bodyHolder.appendChild(flatCard(`
+    const tableCard = flatCard(`
       <div class="eyebrow mb-3">Jadual Harian — ${dayKeys.length} hari ada data</div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm min-w-[520px]">
@@ -1172,7 +1285,9 @@ async function screenMonthDetail() {
           </tr></tfoot>
         </table>
       </div>
-    `, 'mb-4'))
+    `, 'mb-4')
+    bodyHolder.appendChild(tableCard)
+    axisLockScroll(tableCard.querySelector('.overflow-x-auto'))
 
     bodyHolder.appendChild(flatCard(`
       <div class="grid grid-cols-2 gap-3 text-sm">
@@ -1228,7 +1343,9 @@ async function screenMonthDetail() {
 
 
 async function screenDashboard() {
-  const year = new Date().getFullYear()
+  const thisYear = new Date().getFullYear()
+  if (!state.viewYear) state.viewYear = thisYear
+  const year = state.viewYear
   destroyCharts()
   // Admin & kerani can flip between islands without re-logging in;
   // staff are locked to their own island.
@@ -1240,7 +1357,14 @@ async function screenDashboard() {
     <div class="seg mb-4" id="islandSwitcher">
       ${ISLANDS.map(i => `<button data-isl="${i.code}" class="${i.code===viewIsland?'active':''}">${i.code}</button>`).join('')}
     </div>` : `<div class="inline-block rounded px-2.5 py-1 text-xs font-semibold mb-4 bg-teal-900/40">${viewIsland}</div>`
-  wrap.innerHTML = `<h1 class="font-display text-2xl mb-2">Dashboard</h1>${switcherHTML}<div id="stats" class="stagger">${skeletonBlock(5)}</div>`
+  const yearOptions = Array.from({length:12}, (_,i) => thisYear + 1 - i)
+  if (!yearOptions.includes(year)) yearOptions.push(year)
+  const yearHTML = `<select id="dashYear" class="!w-auto text-sm !py-1.5 !px-3 font-semibold" aria-label="Pilih tahun">${yearOptions.map(y => `<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join('')}</select>`
+  wrap.innerHTML = `<h1 class="font-display text-2xl mb-2">Dashboard</h1><div class="flex items-center gap-3 flex-wrap mb-4">${switcherHTML.replace(/ mb-4/g,'')}${yearHTML}</div><div id="stats" class="stagger">${skeletonBlock(5)}</div>`
+  wrap.querySelector('#dashYear').onchange = (e) => {
+    state.viewYear = Number(e.target.value)
+    go('dashboard')
+  }
   if (canSwitch) {
     wrap.querySelectorAll('#islandSwitcher button').forEach(b => b.onclick = () => {
       state.viewIsland = b.dataset.isl
@@ -1270,7 +1394,7 @@ async function screenDashboard() {
       <div class="xp-fill" id="heroBar" style="width:0%; background:${progressColor(pct)}; box-shadow:${progressGlow(pct)};"></div>
       ${[25,50,75].map(m => `<div class="milestone" style="left:${m}%"></div>`).join('')}
     </div>
-    <div class="text-xs opacity-70 mt-2">${target ? pct + '% menuju sasaran · Baki ' + (target-jumlahTelur).toLocaleString() + ' telur' : 'Sasaran belum ditetapkan untuk ' + state.island + ' (Admin → Sasaran Tahunan)'}</div>
+    <div class="text-xs opacity-70 mt-2">${target ? pct + '% menuju sasaran · Baki ' + (target-jumlahTelur).toLocaleString() + ' telur' : 'Sasaran ' + year + ' belum ditetapkan untuk ' + viewIsland + ' (Admin → Sasaran Tahunan)'}</div>
   `, 'mb-4'))
 
   if (state.profile?.role !== 'staff') {
@@ -1287,7 +1411,8 @@ async function screenDashboard() {
     try {
       await generatePresentation(viewIsland, year, {
         jumlahTelur, target, pct, hatchRate, jumlahBuruk, jumlahPenyu,
-        monthly: data?.monthly || [], monthlyPenyu: data?.monthly_penyu || []
+        monthly: data?.monthly || [], monthlyPenyu: data?.monthly_penyu || [],
+        monthlyTargetMap
       })
       toast('Pembentangan dimuat turun', 'success')
     } catch (err) {
@@ -1336,31 +1461,43 @@ async function screenDashboard() {
     }
   })
 
-  stats.appendChild(flatCard(`
+  const barCard = flatCard(`
     <div class="flex items-center justify-between mb-3">
       <div class="eyebrow">Trend Bulanan ${year}</div>
-      <select id="metricSelect" class="!w-auto text-xs !py-1 !px-2">
-        <option value="telur">Jumlah Telur</option>
-        <option value="penyu">Bilangan Penyu</option>
-      </select>
+      <div class="flex items-center gap-2">
+        <select id="metricSelect" class="!w-auto text-xs !py-1 !px-2">
+          <option value="telur">Jumlah Telur</option>
+          <option value="penyu">Bilangan Penyu</option>
+        </select>
+        <button class="chart-expand-btn" title="Paparan penuh">⤢</button>
+      </div>
     </div>
     <canvas id="chartBar" height="180"></canvas>
-  `, 'mb-4'))
-  stats.appendChild(flatCard(`
-    <div class="eyebrow mb-3" id="cumulativeLabel">Kumulatif Sepanjang Tahun (Telur)</div>
+  `, 'mb-4')
+  stats.appendChild(barCard)
+  const lineCard = flatCard(`
+    <div class="flex items-center justify-between mb-3">
+      <div class="eyebrow" id="cumulativeLabel">Kumulatif Sepanjang Tahun (Telur)</div>
+      <button class="chart-expand-btn" title="Paparan penuh">⤢</button>
+    </div>
     <canvas id="chartLine" height="180"></canvas>
-  `, 'mb-4'))
-  stats.appendChild(flatCard(`
+  `, 'mb-4')
+  stats.appendChild(lineCard)
+  const compareCard = flatCard(`
     <div class="flex items-center justify-between mb-3">
       <div class="eyebrow">Perbandingan Tahun</div>
-      <select id="compareYears" class="!w-auto text-xs !py-1 !px-2">
-        <option value="2">2 tahun</option>
-        <option value="3">3 tahun</option>
-        <option value="5">5 tahun</option>
-      </select>
+      <div class="flex items-center gap-2">
+        <select id="compareYears" class="!w-auto text-xs !py-1 !px-2">
+          <option value="2">2 tahun</option>
+          <option value="3">3 tahun</option>
+          <option value="5">5 tahun</option>
+        </select>
+        <button class="chart-expand-btn" title="Paparan penuh">⤢</button>
+      </div>
     </div>
     <canvas id="chartCompare" height="200"></canvas>
-  `, 'mb-4'))
+  `, 'mb-4')
+  stats.appendChild(compareCard)
 
   const secondaryRow = document.createElement('div')
   secondaryRow.className = 'grid grid-cols-3 gap-3 stagger'
@@ -1394,9 +1531,10 @@ async function screenDashboard() {
   const barChart = new Chart(barCtx, {
     type: 'bar',
     data: { labels: monthly.map(m=>m.month), datasets: [{ label:'Telur', data: monthly.map(m=>m.telur), backgroundColor:'#2E9099', borderRadius:6 }] },
-    options: { plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af', precision:0} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
+    options: { interaction: CHART_INTERACTION, plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af', precision:0} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
   })
   chartInstances.push(barChart)
+  attachChartExpand(barCard, () => `Trend Bulanan ${year} — ${currentMetric === 'telur' ? 'Jumlah Telur' : 'Bilangan Penyu'}`, () => barChart)
 
   function cumulativeChart(metric) {
     const src = metric === 'telur' ? monthly.map(m=>m.telur) : monthlyPenyu.map(m=>m.penyu)
@@ -1407,9 +1545,10 @@ async function screenDashboard() {
   const lineChart = new Chart(lineCtx, {
     type: 'line',
     data: { labels: monthly.map(m=>m.month), datasets: [{ label:'Kumulatif', data: cumulativeChart('telur'), borderColor:'#6EE7B7', backgroundColor:'rgba(110,231,183,.15)', fill:true, tension:.35 }] },
-    options: { plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af', precision:0} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
+    options: { interaction: CHART_INTERACTION, plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af', precision:0} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
   })
   chartInstances.push(lineChart)
+  attachChartExpand(lineCard, () => stats.querySelector('#cumulativeLabel').textContent, () => lineChart)
 
   stats.querySelector('#metricSelect').onchange = (e) => {
     currentMetric = e.target.value
@@ -1422,6 +1561,7 @@ async function screenDashboard() {
     stats.querySelector('#cumulativeLabel').textContent = isEggs ? 'Kumulatif Sepanjang Tahun (Telur)' : 'Kumulatif Sepanjang Tahun (Penyu)'
   }
 
+  let compareChart = null
   async function renderCompare(nYears) {
     const years = Array.from({length:nYears}, (_,i) => year - i).reverse()
     const { data: multi } = await supabase.rpc('get_multi_year_monthly', { p_years: years, p_island: viewIsland })
@@ -1432,13 +1572,15 @@ async function screenDashboard() {
       borderColor: colors[i % colors.length], backgroundColor:'transparent', tension:.35
     }))
     const compareCtx = stats.querySelector('#chartCompare').getContext('2d')
-    chartInstances.push(new Chart(compareCtx, {
+    compareChart = new Chart(compareCtx, {
       type: 'line',
       data: { labels: MONTH_LABELS, datasets },
-      options: { plugins:{legend:{labels:{color:'#9ca3af'}}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af'} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
-    }))
+      options: { interaction: CHART_INTERACTION, plugins:{legend:{labels:{color:'#9ca3af'}}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af'} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
+    })
+    chartInstances.push(compareChart)
   }
   renderCompare(2)
+  attachChartExpand(compareCard, () => 'Perbandingan Tahun', () => compareChart)
   stats.querySelector('#compareYears').onchange = (e) => {
     chartInstances[chartInstances.length-1]?.destroy()
     chartInstances.pop()
@@ -1786,24 +1928,36 @@ git push</pre>
 // ---------- Presentation generator (PptxGenJS) ----------
 async function generatePresentation(island, year, s) {
   const pptx = new PptxGenJS()
-  pptx.layout = 'LAYOUT_16x9'
-  const NAVY = '0A1F2B', TEAL = '1F6F78', GLOW = '6EE7B7', SAND = 'F7F2E7', GOLD = 'E0A458', CORAL = 'E1604C'
+  pptx.layout = 'LAYOUT_WIDE'
+  const NAVY='0A1F2B', PANEL='123244', PANEL2='0F2A38', TEAL='1F6F78', GLOW='6EE7B7',
+        SAND='F7F2E7', GOLD='E0A458', CORAL='E1604C', MUTED='9CA3AF'
 
-  function baseSlide() {
+  let slideNum = 0
+  function baseSlide(title) {
+    slideNum++
     const sl = pptx.addSlide()
     sl.background = { color: NAVY }
+    sl.addText(title, { x:0.67, y:0.43, w:12, h:0.73, fontSize:24, bold:true, color:SAND })
+    sl.addShape(pptx.ShapeType.rect, { x:0.67, y:1.16, w:1.47, h:0.06, fill:{ color:GLOW }, line:{ type:'none' } })
+    sl.addText(`${island} · Penyu Tracker · ${year}`, { x:0.67, y:7.07, w:8, h:0.4, fontSize:9, color:MUTED })
+    sl.addText(String(slideNum), { x:12.13, y:7.07, w:0.53, h:0.4, fontSize:9, color:MUTED, align:'right' })
     return sl
   }
 
   // Slide 1 — Title
-  const s1 = baseSlide()
-  s1.addText('Penyu Tracker', { x:0.6, y:1.7, w:9, h:0.9, fontSize:40, bold:true, color:SAND, fontFace:'Georgia' })
-  s1.addText(`Laporan Prestasi — ${island} · ${year}`, { x:0.6, y:2.5, w:9, h:0.6, fontSize:20, color:GLOW })
-  s1.addText(`Dijana ${new Date().toLocaleDateString('ms-MY')}`, { x:0.6, y:4.9, w:9, h:0.4, fontSize:11, color:'9CA3AF' })
+  const s1 = pptx.addSlide()
+  s1.background = { color: NAVY }
+  s1.addShape(pptx.ShapeType.rect, { x:0, y:0, w:0.19, h:7.5, fill:{ color:GLOW }, line:{ type:'none' } })
+  s1.addText('Penyu Tracker', { x:0.93, y:2.47, w:11.33, h:1.2, fontSize:40, bold:true, color:SAND, fontFace:'Georgia' })
+  s1.addText(`Laporan Prestasi — ${island} · ${year}`, { x:0.93, y:3.53, w:11.33, h:0.8, fontSize:20, color:GLOW })
+  s1.addText(`Dijana ${new Date().toLocaleDateString('ms-MY')}`, { x:0.93, y:6.6, w:11.33, h:0.53, fontSize:11, color:MUTED })
 
   // Slide 2 — Key numbers
-  const s2 = baseSlide()
-  s2.addText('Pencapaian Sasaran', { x:0.5, y:0.35, fontSize:26, bold:true, color:SAND })
+  slideNum++
+  const s2 = pptx.addSlide()
+  s2.background = { color: NAVY }
+  s2.addText('Pencapaian Sasaran', { x:0.67, y:0.43, w:12, h:0.73, fontSize:24, bold:true, color:SAND })
+  s2.addShape(pptx.ShapeType.rect, { x:0.67, y:1.16, w:1.47, h:0.06, fill:{ color:GLOW }, line:{ type:'none' } })
   const kpis = [
     [`${s.jumlahTelur.toLocaleString()}`, 'Jumlah Telur', GLOW],
     [s.target ? `${s.pct}%` : '—', 'Peratus Sasaran', GOLD],
@@ -1814,40 +1968,73 @@ async function generatePresentation(island, year, s) {
   ]
   kpis.forEach((k, i) => {
     const col = i % 3, row = Math.floor(i / 3)
-    const x = 0.5 + col * 3.1, y = 1.3 + row * 1.9
-    s2.addShape(pptx.ShapeType.roundRect, { x, y, w:2.85, h:1.6, fill:{ color:'123244' }, line:{ color:'1F6F78', width:1 }, rectRadius:0.08 })
-    s2.addText(k[0], { x, y:y+0.15, w:2.85, h:0.8, align:'center', fontSize:28, bold:true, color:k[2] })
-    s2.addText(k[1], { x, y:y+0.95, w:2.85, h:0.4, align:'center', fontSize:12, color:'9CA3AF' })
+    const x = 0.67 + col * 4.13, y = 1.6 + row * 2.53
+    s2.addShape(pptx.ShapeType.roundRect, { x, y, w:3.8, h:2.13, fill:{ color:PANEL }, line:{ color:TEAL, width:1 }, rectRadius:0.08 })
+    s2.addText(k[0], { x, y:y+0.2, w:3.8, h:1.07, align:'center', fontSize:28, bold:true, color:k[2] })
+    s2.addText(k[1], { x, y:y+1.27, w:3.8, h:0.53, align:'center', fontSize:12, color:MUTED })
+  })
+  s2.addText(`${island} · Penyu Tracker · ${year}`, { x:0.67, y:7.07, w:8, h:0.4, fontSize:9, color:MUTED })
+  s2.addText(String(slideNum), { x:12.13, y:7.07, w:0.53, h:0.4, fontSize:9, color:MUTED, align:'right' })
+
+  // Slide 3 — Monthly breakdown table (penyu, telur, sasaran, % capaian per month)
+  const s3 = baseSlide('Data Bulanan Terperinci')
+  const monthlyTarget = s.monthlyTargetMap || {}
+  let bestIdx = 0
+  s.monthly.forEach((m, i) => { if ((m.telur||0) > (s.monthly[bestIdx]?.telur||0)) bestIdx = i })
+  const headerRow = ['Bulan', 'Penyu', 'Telur', 'Sasaran', '% Capaian'].map(t => ({
+    text: t, options: { bold:true, color:SAND, fill:{ color:TEAL }, align: t==='Bulan' ? 'left' : 'right', fontSize:11 }
+  }))
+  const dataRows = MONTH_LABELS.map((label, i) => {
+    const m = i + 1
+    const telur = s.monthly[i]?.telur || 0
+    const penyu = s.monthlyPenyu[i]?.penyu || 0
+    const mTarget = monthlyTarget[m]
+    const mPct = mTarget ? Math.round((telur / mTarget) * 100) : null
+    const achieved = mTarget && mPct >= 100
+    const rowFill = i % 2 === 0 ? PANEL2 : PANEL
+    const isBest = i === bestIdx && telur > 0
+    return [
+      { text: label + (isBest ? '  🏆' : ''), options: { color:SAND, fill:{ color:rowFill }, fontSize:11 } },
+      { text: String(penyu), options: { color:SAND, fill:{ color:rowFill }, align:'right', fontSize:11 } },
+      { text: telur.toLocaleString(), options: { color: isBest ? GOLD : GLOW, bold:true, fill:{ color:rowFill }, align:'right', fontSize:11 } },
+      { text: mTarget ? mTarget.toLocaleString() : '—', options: { color:MUTED, fill:{ color:rowFill }, align:'right', fontSize:11 } },
+      { text: mTarget ? mPct + '%' : '—', options: { color: achieved ? GOLD : MUTED, bold: achieved, fill:{ color:rowFill }, align:'right', fontSize:11 } },
+    ]
+  })
+  s3.addTable([headerRow, ...dataRows], {
+    x:0.67, y:1.4, w:12, colW:[2.76, 2.58, 2.58, 2.58, 1.5],
+    border: { type:'solid', color:'0A1F2B', pt:0.5 },
+    autoPage: false, valign:'middle', margin:0.04
   })
 
-  // Slide 3 — Monthly eggs bar chart
-  const s3 = baseSlide()
-  s3.addText('Trend Bulanan — Jumlah Telur', { x:0.5, y:0.35, fontSize:24, bold:true, color:SAND })
-  s3.addChart(pptx.ChartType.bar, [{
+  // Slide 4 — Monthly eggs bar chart
+  const s4 = baseSlide('Trend Bulanan — Jumlah Telur')
+  s4.addChart(pptx.ChartType.bar, [{
     name: 'Telur', labels: s.monthly.map(m=>m.month), values: s.monthly.map(m=>m.telur)
   }], {
-    x:0.5, y:1.1, w:9, h:4.2,
+    x:0.67, y:1.47, w:12, h:5.4,
     chartColors:[TEAL], catAxisLabelColor:SAND, valAxisLabelColor:SAND,
     dataLabelColor:SAND, showLegend:false, showTitle:false,
     catAxisLineColor:'444444', valAxisLineColor:'444444'
   })
 
-  // Slide 4 — Monthly turtle count bar chart
-  const s4 = baseSlide()
-  s4.addText('Trend Bulanan — Bilangan Penyu', { x:0.5, y:0.35, fontSize:24, bold:true, color:SAND })
-  s4.addChart(pptx.ChartType.bar, [{
+  // Slide 5 — Monthly turtle count bar chart
+  const s5 = baseSlide('Trend Bulanan — Bilangan Penyu')
+  s5.addChart(pptx.ChartType.bar, [{
     name: 'Penyu', labels: s.monthlyPenyu.map(m=>m.month), values: s.monthlyPenyu.map(m=>m.penyu)
   }], {
-    x:0.5, y:1.1, w:9, h:4.2,
+    x:0.67, y:1.47, w:12, h:5.4,
     chartColors:[GLOW], catAxisLabelColor:SAND, valAxisLabelColor:SAND,
     dataLabelColor:SAND, showLegend:false, showTitle:false,
     catAxisLineColor:'444444', valAxisLineColor:'444444'
   })
 
-  // Slide 5 — Closing
-  const s5 = baseSlide()
-  s5.addText('Terima Kasih', { x:0.6, y:2.2, w:9, h:0.9, fontSize:34, bold:true, color:SAND, fontFace:'Georgia' })
-  s5.addText(`${island} · Penyu Tracker`, { x:0.6, y:2.95, w:9, h:0.5, fontSize:16, color:GLOW })
+  // Slide 6 — Closing
+  const s6 = pptx.addSlide()
+  s6.background = { color: NAVY }
+  s6.addShape(pptx.ShapeType.rect, { x:0, y:0, w:0.19, h:7.5, fill:{ color:GLOW }, line:{ type:'none' } })
+  s6.addText('Terima Kasih', { x:0.93, y:2.87, w:11.33, h:1.2, fontSize:34, bold:true, color:SAND, fontFace:'Georgia' })
+  s6.addText(`${island} · Penyu Tracker`, { x:0.93, y:3.87, w:11.33, h:0.67, fontSize:16, color:GLOW })
 
   pptx.writeFile({ fileName: `Pembentangan-${island}-${year}.pptx` })
 }
