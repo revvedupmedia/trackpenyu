@@ -3080,11 +3080,16 @@ async function exportToExcel(island, year) {
   if (zip.file('xl/calcChain.xml')) zip.remove('xl/calcChain.xml')
 
   const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', compression: 'DEFLATE' })
+  // Jangan buang (revoke) link fail terlalu awal — kalau browser tanya "Save as",
+  // dialog tu boleh terbuka lama dan download gagal "Insufficient permissions".
+  // Link lama dibuang hanya bila export seterusnya dibuat.
+  if (window.__lastExportUrl) URL.revokeObjectURL(window.__lastExportUrl)
+  const url = URL.createObjectURL(blob)
+  window.__lastExportUrl = url
   const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
+  a.href = url
   a.download = `Penyu-${island}-${year}.xlsx`
   document.body.appendChild(a); a.click(); a.remove()
-  setTimeout(() => URL.revokeObjectURL(a.href), 4000)
 }
 
 // ---------- Init ----------
