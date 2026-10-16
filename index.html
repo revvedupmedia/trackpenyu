@@ -3053,21 +3053,20 @@ async function exportToExcel(island, year) {
       const notes = [...(lpp?.cat || []), ...(sfc?.cat || [])].join('; ')
       if (notes) up.set(`T${row}`, notes)
     }
+    // Rekod Menetas Bulanan (tiada tarikh) → baris JUMLAH (39) sheet bulan ini.
+    // Sheet JUMLAH tahunan ambil dari sini melalui formula =SUM(FEB!K39) dsb.
+    ;(hatchRows||[]).filter(h => h.month === mi + 1).forEach(h => {
+      const cols = h.ram === 'LPP' ? ['K','L','O','P'] : ['M','N','Q','R']
+      ;[h.menetas_bertag, h.menetas_takbertag, h.buruk_bertag, h.buruk_takbertag].forEach((v, i) => up.set(`${cols[i]}39`, Number(v) || 0))
+    })
     const xml = await zip.file(path).async('string')
     zip.file(path, fixYearTitle(patchSheetXml(xml, up)))
   }
 
-  // Sheet JUMLAH: rekod Menetas Bulanan ganti formula bulan berkenaan (lajur J-Q)
+  // Sheet JUMLAH: formula asal dikekalkan (ia jumlahkan baris 39 setiap sheet bulan)
   const sumName = Object.keys(sheetFile).find(n => /^JUMLAH/i.test(n))
   if (sumName) {
     const up = new Map()
-    ;(hatchRows||[]).forEach(h => {
-      const r = 8 + h.month
-      const cols = h.ram === 'LPP'
-        ? [['J', h.menetas_bertag], ['K', h.menetas_takbertag], ['N', h.buruk_bertag], ['O', h.buruk_takbertag]]
-        : [['L', h.menetas_bertag], ['M', h.menetas_takbertag], ['P', h.buruk_bertag], ['Q', h.buruk_takbertag]]
-      cols.forEach(([c, v]) => up.set(`${c}${r}`, Number(v) || 0))
-    })
     const path = sheetFile[sumName]
     const xml = await zip.file(path).async('string')
     zip.file(path, fixYearTitle(patchSheetXml(xml, up)))
