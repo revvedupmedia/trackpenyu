@@ -271,16 +271,23 @@ function queueWrite(write) {
 async function flushQueue() {
   if (!navigator.onLine) return
   let q = JSON.parse(localStorage.getItem('penyu-queue') || '[]')
+  const failed = JSON.parse(localStorage.getItem('penyu-queue-failed') || '[]')
+  let newFails = 0
   while (q.length) {
     const w = q[0]
     try {
-      if (w.op === 'insert') await supabase.from(w.table).insert(w.payload)
-      else if (w.op === 'upsert') await supabase.from(w.table).upsert(w.payload, { onConflict: w.onConflict })
-      else await supabase.from(w.table).update(w.payload).eq('id', w.id)
+      let res
+      if (w.op === 'insert') res = await supabase.from(w.table).insert(w.payload)
+      else if (w.op === 'upsert') res = await supabase.from(w.table).upsert(w.payload, { onConflict: w.onConflict })
+      else res = await supabase.from(w.table).update(w.payload).eq('id', w.id)
+      // Ditolak server (cth pendua) → simpan untuk disemak, jangan hilang senyap
+      if (res?.error) { failed.push({ ...w, error: res.error.message, code: res.error.code, at: new Date().toISOString() }); newFails++ }
       q.shift()
     } catch (e) { break }
   }
   localStorage.setItem('penyu-queue', JSON.stringify(q))
+  localStorage.setItem('penyu-queue-failed', JSON.stringify(failed))
+  if (newFails) toast(`${newFails} entri offline tidak dapat disimpan (mungkin pendua) — semak di tab Log.`, 'error')
 }
 window.addEventListener('online', flushQueue)
 flushQueue()
@@ -344,6 +351,87 @@ function fmtDate(iso) {
   if (!iso) return '-'
   const [y, m, d] = iso.split('-')
   return `${d}/${m}/${y}`
+}
+
+function fmtDateTime(ts) {
+  if (!ts) return '-'
+  const d = new Date(ts)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+// ---------- Data integrity helpers (anti-pendua, import, undo) ----------
+// [lajur daily_entries, label, pilihan (null = tidak direkod)]
+const DAY_FIELDS = [
+  ['bilangan_penyu_bertag', 'Penyu Bertag', false],
+  ['bilangan_penyu_takbertag', 'Penyu Tak Bertag', false],
+  ['jumlah_telur_diram_bertag', 'Telur Diram Bertag', false],
+  ['jumlah_telur_diram_takbertag', 'Telur Diram Tak Bertag', false],
+  ['telur_menetas_bertag', 'Menetas Bertag', true],
+  ['telur_menetas_takbertag', 'Menetas Tak Bertag', true],
+  ['telur_buruk_bertag', 'Buruk Bertag', true],
+  ['telur_buruk_takbertag', 'Buruk Tak Bertag', true],
+  ['jumlah_telur_dikeluarkan', 'Telur Dikeluarkan', true]
+]
+const DAY_FIELD_LABEL = Object.fromEntries(DAY_FIELDS.map(([f, l]) => [f, l]))
+
+// Jumlahkan semua sumber (Harian + Individu) untuk satu tarikh + RAM ke bentuk lajur daily_entries
+function aggregateDayRam(daily, nests) {
+  const out = {}
+  DAY_FIELDS.forEach(([f, , optional]) => out[f] = optional ? null : 0)
+  const add = (f, v) => { if (v === null || v === undefined) return; out[f] = (out[f] ?? 0) + Number(v) }
+  daily.forEach(d => DAY_FIELDS.forEach(([f]) => add(f, d[f])))
+  nests.forEach(n => {
+    const s = n.bertag ? 'bertag' : 'takbertag'
+    add(`bilangan_penyu_${s}`, 1)
+    add(`jumlah_telur_diram_${s}`, n.jumlah_telur_diram)
+    add(`telur_menetas_${s}`, n.telur_menetas)
+    add(`telur_buruk_${s}`, n.telur_buruk)
+    add('jumlah_telur_dikeluarkan', n.jumlah_dikeluarkan)
+  })
+  return out
+}
+
+// Semua rekod satu pulau + tahun, dikumpul ikut "tarikh|RAM"
+async function loadDayRamIndex(island, yr) {
+  const [dRes, nRes] = await Promise.all([
+    supabase.from('daily_entries').select('*, staff_profiles!created_by(full_name)').eq('island', island).gte('tarikh', `${yr}-01-01`).lte('tarikh', `${yr}-12-31`).order('created_at').limit(10000),
+    supabase.from('nest_records').select('*, staff_profiles!created_by(full_name)').eq('island', island).gte('tarikh_dijumpai', `${yr}-01-01`).lte('tarikh_dijumpai', `${yr}-12-31`).order('created_at').limit(10000)
+  ])
+  if (dRes.error) throw dRes.error
+  if (nRes.error) throw nRes.error
+  const idx = {}
+  const g = (k) => idx[k] ||= { daily: [], nests: [] }
+  ;(dRes.data||[]).forEach(d => g(`${d.tarikh}|${d.ram}`).daily.push(d))
+  ;(nRes.data||[]).forEach(n => g(`${n.tarikh_dijumpai}|${n.ram}`).nests.push(n))
+  return idx
+}
+
+function newBatchId() {
+  return crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random()*16|0; return (c === 'x' ? r : (r&0x3|0x8)).toString(16) })
+}
+
+// Simpan salinan rekod SEBELUM diubah/dipadam, supaya boleh dipulihkan (undo_import)
+async function saveUndo(batch, items) {
+  if (!items.length) return
+  const clean = (row) => { const { staff_profiles, ...rest } = row; return rest }
+  const rows = items.map(it => ({ batch, table_name: it.table, row_id: it.row.id, action: it.action, before: clean(it.row) }))
+  for (let i = 0; i < rows.length; i += 200) {
+    const { error } = await supabase.from('import_undo').insert(rows.slice(i, i+200))
+    if (error) throw new Error('Gagal simpan salinan keselamatan — run migration-anti-pendua.sql dulu. (' + error.message + ')')
+  }
+}
+
+// Padam rekod dengan salinan keselamatan (muncul di Sejarah Import, boleh dipulihkan)
+async function deleteWithBackup(items, island, yr, note) {
+  const batch = newBatchId()
+  const { error: logErr } = await supabase.from('import_log').insert({ batch, island, year: yr, file_name: note, deleted: items.length, created_by: state.profile.id })
+  if (logErr) throw new Error('Jadual import_log tiada — run migration-anti-pendua.sql dulu. (' + logErr.message + ')')
+  await saveUndo(batch, items.map(it => ({ ...it, action: 'delete' })))
+  for (const table of ['daily_entries', 'nest_records']) {
+    const ids = items.filter(it => it.table === table).map(it => it.row.id)
+    if (ids.length) { const { error } = await supabase.from(table).delete().in('id', ids); if (error) throw error }
+  }
 }
 
 // ---------- Router ----------
@@ -543,9 +631,39 @@ function screenEntry() {
       <button id="modeIndividu" class="${mode==='individu'?'active':''}">Individu</button>
       <button id="modeMenetas" class="${mode==='menetas'?'active':''}">Menetas Bulanan</button>
     </div>
+    <div id="failedBox"></div>
     <div id="entryBody"></div>
   `
   const body = wrap.querySelector('#entryBody')
+  function renderFailed() {
+    const box = wrap.querySelector('#failedBox')
+    const failed = JSON.parse(localStorage.getItem('penyu-queue-failed') || '[]')
+    if (!failed.length) { box.innerHTML = ''; return }
+    box.innerHTML = ''
+    const fc = flatCard(`
+      <div class="font-semibold text-sm mb-1">⚠️ ${failed.length} entri offline tidak tersimpan</div>
+      <p class="text-xs opacity-70 mb-2">Biasanya kerana tarikh + RAM itu sudah ada Entri Harian. Masukkan semula ke borang untuk pilih Ganti / Campur, atau buang.</p>
+      ${failed.map((f, i) => `
+        <div class="flex items-center justify-between gap-2 border-t border-white/10 py-2 text-xs">
+          <div class="tabular-num">${f.payload?.tarikh ? fmtDate(f.payload.tarikh) : ''} · ${f.payload?.ram || ''} · ${f.table === 'daily_entries' ? `${(f.payload.jumlah_telur_diram_bertag||0) + (f.payload.jumlah_telur_diram_takbertag||0)} telur` : f.table}<div class="opacity-60">${f.code === '23505' ? 'Sudah ada Entri Harian untuk tarikh + RAM ini' : f.error}</div></div>
+          <div class="flex gap-1 flex-shrink-0">
+            ${f.table === 'daily_entries' && f.op === 'insert' ? `<button class="btn btn-ghost btn-sm" data-retry="${i}">Ke borang</button>` : ''}
+            <button class="btn btn-sm" data-drop="${i}" style="background:rgba(225,96,76,.15); border:1px solid rgba(225,96,76,.4); color:#E1604C;">Buang</button>
+          </div>
+        </div>`).join('')}
+    `, 'mb-4 border border-red-500/40')
+    box.appendChild(fc)
+    const save = (arr) => localStorage.setItem('penyu-queue-failed', JSON.stringify(arr))
+    fc.querySelectorAll('[data-drop]').forEach(b => b.onclick = () => { const arr = failed.filter((_, i) => i !== Number(b.dataset.drop)); save(arr); renderFailed() })
+    fc.querySelectorAll('[data-retry]').forEach(b => b.onclick = () => {
+      const f = failed[Number(b.dataset.retry)], p = f.payload
+      saveDraft('harian', { tarikh: p.tarikh, ram: p.ram, bp_bertag: p.bilangan_penyu_bertag, bp_takbertag: p.bilangan_penyu_takbertag, telur_bertag: p.jumlah_telur_diram_bertag, telur_takbertag: p.jumlah_telur_diram_takbertag, catatan: p.catatan || '' })
+      save(failed.filter((_, i) => i !== Number(b.dataset.retry)))
+      renderFailed(); setMode('harian')
+      toast('Dimasukkan semula ke borang Harian — tekan Semak & Hantar.', 'info')
+    })
+  }
+  renderFailed()
   const builders = { harian: buildHarianForm, individu: buildIndividuForm, menetas: buildMenetasForm }
   if (!builders[mode]) mode = 'harian'
   function setMode(m) {
@@ -631,39 +749,44 @@ function buildHarianForm() {
     holder.innerHTML = ''
     let countdown = 5
 
-    // Duplicate check: same island + date + RAM with identical counts —
-    // warn (showing who keyed the existing one) but allow "Teruskan"
-    // after the usual 5s, since genuine repeats can happen in nature.
-    let dupWarningHTML = ''
-    let isDuplicate = false
+    // Anti-pendua: satu tarikh + RAM hanya SATU Entri Harian. Kalau sudah
+    // ada → pilih Ganti atau Campur (kemaskini rekod sedia ada, bukan tambah baris).
+    // Kalau sudah ada sarang Individu → amaran dikira dua kali.
+    let existing = [], nests = []
     if (navigator.onLine) {
-      const { data: dups } = await supabase.from('daily_entries')
-        .select('*, staff_profiles!daily_entries_created_by_fkey(full_name)')
-        .eq('island', state.island).eq('tarikh', payload.tarikh).eq('ram', payload.ram)
-      const matches = (dups||[]).filter(d =>
-        d.bilangan_penyu_bertag === payload.bilangan_penyu_bertag &&
-        d.bilangan_penyu_takbertag === payload.bilangan_penyu_takbertag &&
-        d.jumlah_telur_diram_bertag === payload.jumlah_telur_diram_bertag &&
-        d.jumlah_telur_diram_takbertag === payload.jumlah_telur_diram_takbertag
-      )
-      if (matches.length) {
-        isDuplicate = true
-        dupWarningHTML = `
-          <div class="text-sm bg-amber-500/10 border border-amber-500/40 rounded-xl px-3 py-3 mb-4">
-            <div class="font-semibold mb-2">⚠️ Data serupa sudah wujud untuk hari ini:</div>
-            ${matches.map(d => `
-              <div class="border-t border-amber-500/20 pt-2 mt-2 text-xs">
-                <div>${fmtDate(d.tarikh)} · ${d.ram} · Penyu ${d.bilangan_penyu_bertag}/${d.bilangan_penyu_takbertag} · Telur ${d.jumlah_telur_diram_bertag}/${d.jumlah_telur_diram_takbertag}</div>
-                <div class="opacity-70">Dimasukkan oleh: ${d.staff_profiles?.full_name || 'Tidak diketahui'}</div>
-              </div>`).join('')}
-            <div class="opacity-80 mt-2 text-xs">Pastikan ini bukan entri berganda sebelum teruskan.</div>
-          </div>`
-      }
+      const [dRes, nRes] = await Promise.all([
+        supabase.from('daily_entries').select('*, staff_profiles!created_by(full_name)').eq('island', state.island).eq('tarikh', payload.tarikh).eq('ram', payload.ram).order('created_at'),
+        supabase.from('nest_records').select('*, staff_profiles!created_by(full_name)').eq('island', state.island).eq('tarikh_dijumpai', payload.tarikh).eq('ram', payload.ram)
+      ])
+      existing = dRes.data || []; nests = nRes.data || []
     }
+    const NUMS = [['bilangan_penyu_bertag','bilangan_penyu_takbertag','Penyu'], ['jumlah_telur_diram_bertag','jumlah_telur_diram_takbertag','Telur']]
+    let mode = existing.length ? null : 'baru'
+    const merged = () => {
+      const base = existing[0]
+      const out = {}
+      NUMS.forEach(([b, t]) => [b, t].forEach(f => out[f] = mode === 'campur' ? (base[f]||0) + payload[f] : payload[f]))
+      return out
+    }
+    const existingHTML = existing.length ? `
+      <div class="text-sm bg-amber-500/10 border border-amber-500/40 rounded-xl px-3 py-3 mb-4">
+        <div class="font-semibold mb-1">⚠️ Sudah ada Entri Harian untuk ${fmtDate(payload.tarikh)} · ${payload.ram}</div>
+        ${existing.map(d => `<div class="text-xs border-t border-amber-500/20 pt-1.5 mt-1.5 tabular-num">Penyu ${d.bilangan_penyu_bertag}/${d.bilangan_penyu_takbertag} · Telur ${d.jumlah_telur_diram_bertag}/${d.jumlah_telur_diram_takbertag}<div class="opacity-70">${d.staff_profiles?.full_name || '?'} · ${fmtDateTime(d.created_at)}</div></div>`).join('')}
+        <div class="text-xs opacity-80 mt-2 mb-2">Satu tarikh + RAM hanya boleh ada SATU Entri Harian. Pilih:</div>
+        <div class="seg"><button type="button" data-mode="ganti">Ganti angka lama</button><button type="button" data-mode="campur">Campur (tambah)</button></div>
+        <div id="mergeResult" class="text-xs mt-2 tabular-num"></div>
+      </div>` : ''
+    const nestHTML = nests.length ? `
+      <div class="text-sm bg-red-500/10 border border-red-500/40 rounded-xl px-3 py-3 mb-4">
+        <div class="font-semibold mb-1">⚠️ Tarikh + RAM ini sudah ada ${nests.length} sarang Entri Individu</div>
+        <div class="text-xs tabular-num">${nests.map(n => `${n.jumlah_telur_diram} telur (${n.bertag ? 'Bertag' : 'Tak Bertag'})`).join(' · ')} = <b>${nests.reduce((s, n) => s + n.jumlah_telur_diram, 0)} telur</b></div>
+        <div class="text-xs opacity-70">Oleh: ${[...new Set(nests.map(n => n.staff_profiles?.full_name || '?'))].join(', ')}</div>
+        <div class="text-xs opacity-90 mt-2">Kalau ini penyu yang SAMA, data akan dikira DUA KALI. Teruskan hanya jika ini penyu lain yang tidak direkod secara Individu.</div>
+      </div>` : ''
 
     const c = card(`
       <h2 class="font-display text-xl mb-4">Sahkan Data Harian</h2>
-      ${dupWarningHTML}
+      ${existingHTML}${nestHTML}
       <div class="space-y-2 text-sm">
         <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Pulau</span><span class="font-semibold">${state.island}</span></div>
         <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Tarikh</span><span class="font-semibold">${fmtDate(payload.tarikh)}</span></div>
@@ -679,21 +802,42 @@ function buildHarianForm() {
     holder.appendChild(c)
     c.querySelector('#backBtn').onclick = renderForm
     const submitBtn = c.querySelector('#submitBtn')
-    const readyLabel = isDuplicate ? 'Teruskan' : 'Hantar Sekarang'
+    let ready = false
+    const readyLabel = () => existing.length ? (mode === 'ganti' ? 'Ganti Sekarang' : mode === 'campur' ? 'Campur Sekarang' : 'Pilih Ganti / Campur') : (nests.length ? 'Teruskan (penyu lain)' : 'Hantar Sekarang')
+    const refreshBtn = () => { if (!ready) return; submitBtn.disabled = !mode; submitBtn.textContent = readyLabel() }
+    c.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => {
+      mode = b.dataset.mode
+      c.querySelectorAll('[data-mode]').forEach(x => x.className = x === b ? 'active' : '')
+      const m = merged()
+      c.querySelector('#mergeResult').innerHTML = `Hasil selepas simpan: Penyu <b>${m.bilangan_penyu_bertag}/${m.bilangan_penyu_takbertag}</b> · Telur <b>${m.jumlah_telur_diram_bertag}/${m.jumlah_telur_diram_takbertag}</b>${existing.length > 1 ? ' <span class="text-red-300">(rekod berganda lain kekal — bersihkan di Admin → Semak Data Bercanggah)</span>' : ''}`
+      refreshBtn()
+    })
     const iv = setInterval(() => {
       countdown--
-      if (countdown <= 0) { clearInterval(iv); submitBtn.disabled = false; submitBtn.textContent = readyLabel }
+      if (countdown <= 0) { clearInterval(iv); ready = true; refreshBtn() }
       else submitBtn.textContent = `Tunggu ${countdown}s...`
     }, 1000)
     submitBtn.onclick = async () => {
+      if (!mode) return
       submitBtn.disabled = true; submitBtn.textContent = 'Menghantar...'
       let err = null
       if (!navigator.onLine) { queueWrite({ table:'daily_entries', op:'insert', payload }) }
-      else { const res = await supabase.from('daily_entries').insert(payload); err = res.error }
-      if (err) { submitBtn.disabled = false; submitBtn.textContent = readyLabel; toast('Gagal menghantar: ' + err.message, 'error'); return }
+      else if (existing.length) {
+        const patch = { ...merged(), updated_by: state.profile.id }
+        if (payload.catatan) patch.catatan = mode === 'campur' && existing[0].catatan ? `${existing[0].catatan}; ${payload.catatan}` : payload.catatan
+        const res = await supabase.from('daily_entries').update(patch).eq('id', existing[0].id); err = res.error
+      } else {
+        const res = await supabase.from('daily_entries').insert(payload); err = res.error
+      }
+      if (err) {
+        submitBtn.disabled = false; submitBtn.textContent = readyLabel()
+        toast(err.code === '23505' ? 'Entri Harian untuk tarikh + RAM ini baru sahaja dimasukkan orang lain. Tekan Betulkan → Semak semula.' : 'Gagal menghantar: ' + err.message, 'error')
+        return
+      }
       clearDraft('harian')
       holder.innerHTML = ''
-      holder.appendChild(card(`<div class="text-center py-10"><div class="text-5xl mb-3">✅</div><p class="font-display text-lg">${navigator.onLine ? 'Data harian dihantar!' : 'Disimpan — akan sync bila online'}</p></div>`))
+      const done = !navigator.onLine ? 'Disimpan — akan sync bila online' : existing.length ? (mode === 'ganti' ? 'Rekod sedia ada diganti!' : 'Dicampur ke rekod sedia ada!') : 'Data harian dihantar!'
+      holder.appendChild(card(`<div class="text-center py-10"><div class="text-5xl mb-3">✅</div><p class="font-display text-lg">${done}</p></div>`))
       setTimeout(() => { draft.telur_bertag=''; draft.telur_takbertag=''; draft.bp_bertag=''; draft.bp_takbertag=''; draft.catatan=''; renderForm() }, 1800)
     }
   }
@@ -788,12 +932,38 @@ function buildIndividuForm() {
     }
   }
 
-  function renderIndividuSummary() {
-    holder.innerHTML = ''
+  async function renderIndividuSummary() {
+    holder.innerHTML = skeletonBlock(3)
     let countdown = 5
     const totalTelur = draft.turtles.reduce((s,t) => s + Number(t.jumlah||0), 0)
+    // Anti-pendua: semak Entri Harian & sarang Individu sedia ada pada tarikh yang sama
+    let warnHTML = ''
+    if (navigator.onLine) {
+      const rams = [...new Set(draft.turtles.map(t => t.ram))]
+      const [dRes, nRes] = await Promise.all([
+        supabase.from('daily_entries').select('*, staff_profiles!created_by(full_name)').eq('island', state.island).eq('tarikh', draft.tarikh),
+        supabase.from('nest_records').select('*, staff_profiles!created_by(full_name)').eq('island', state.island).eq('tarikh_dijumpai', draft.tarikh)
+      ])
+      const harian = (dRes.data||[]).filter(d => rams.includes(d.ram))
+      const oldNests = nRes.data || []
+      if (harian.length) warnHTML += `
+        <div class="text-sm bg-red-500/10 border border-red-500/40 rounded-xl px-3 py-3 mb-3">
+          <div class="font-semibold mb-1">⚠️ Tarikh ini sudah ada Entri Harian</div>
+          ${harian.map(d => `<div class="text-xs tabular-num">${d.ram} · ${d.jumlah_telur_diram_bertag + d.jumlah_telur_diram_takbertag} telur · ${d.bilangan_penyu_bertag + d.bilangan_penyu_takbertag} ekor · ${d.staff_profiles?.full_name || '?'}</div>`).join('')}
+          <div class="text-xs opacity-90 mt-1">Kalau penyu ini sudah termasuk dalam Entri Harian tersebut, data akan dikira DUA KALI.</div>
+        </div>`
+      const matches = draft.turtles.filter(t => oldNests.some(n => n.ram === t.ram && n.bertag === t.bertag && n.jumlah_telur_diram === Number(t.jumlah)))
+      if (oldNests.length) warnHTML += `
+        <div class="text-sm ${matches.length ? 'bg-amber-500/10 border-amber-500/40' : 'bg-white/5 border-white/15'} border rounded-xl px-3 py-3 mb-3">
+          <div class="font-semibold mb-1">${matches.length ? '⚠️' : 'ℹ️'} Sudah ada ${oldNests.length} sarang Individu pada ${fmtDate(draft.tarikh)}</div>
+          <div class="text-xs tabular-num">${oldNests.map(n => `${n.ram} ${n.bertag ? 'B' : 'TB'} ${n.jumlah_telur_diram}`).join(' · ')}</div>
+          ${matches.length ? `<div class="text-xs mt-1">${matches.length} penyu baharu anda mempunyai RAM, tag &amp; bilangan telur yang SAMA dengan rekod sedia ada — mungkin pendua.</div>` : ''}
+        </div>`
+    }
+    holder.innerHTML = ''
     const c = card(`
       <h2 class="font-display text-xl mb-4">Sahkan ${draft.count} Rekod Penyu</h2>
+      ${warnHTML}
       <div class="space-y-1 text-sm max-h-64 overflow-y-auto mb-4">
         ${draft.turtles.map((t,i) => `<div class="flex justify-between border-b border-white/10 py-1.5"><span class="opacity-70">Penyu #${i+1} · ${t.ram} · ${t.bertag?'Bertag':'Tak Bertag'}</span><span class="font-semibold tabular-num">${t.jumlah} telur</span></div>`).join('')}
       </div>
@@ -808,7 +978,7 @@ function buildIndividuForm() {
     const submitBtn = c.querySelector('#submitBtn')
     const iv = setInterval(() => {
       countdown--
-      if (countdown <= 0) { clearInterval(iv); submitBtn.disabled = false; submitBtn.textContent = 'Hantar Sekarang' }
+      if (countdown <= 0) { clearInterval(iv); submitBtn.disabled = false; submitBtn.textContent = warnHTML ? 'Teruskan' : 'Hantar Sekarang' }
       else submitBtn.textContent = `Tunggu ${countdown}s...`
     }, 1000)
     submitBtn.onclick = async () => {
@@ -1127,7 +1297,18 @@ async function screenEntries() {
       ...(nests||[]).map(n => ({ type:'individu', date: n.tarikh_dijumpai, id: n.id, owner: n.created_by, ownerName: n.staff_profiles?.full_name || '?', summary: `${n.ram} · ${n.bertag?'Bertag':'Tak Bertag'} · ${n.jumlah_telur_diram} telur${n.status==='menetas' ? ' · Menetas' : ''}` }))
     ].sort((a,b) => new Date(b.date) - new Date(a.date))
 
+    // Tanda hari bercanggah: >1 Harian, atau Harian + Individu pada tarikh + RAM sama
+    const keyCount = {}
+    ;(daily||[]).forEach(d => { const k = `${d.tarikh}|${d.ram}`; (keyCount[k] ||= { h:0, n:0 }).h++ })
+    ;(nests||[]).forEach(n => { const k = `${n.tarikh_dijumpai}|${n.ram}`; (keyCount[k] ||= { h:0, n:0 }).n++ })
+    const isConflict = (k) => keyCount[k] && (keyCount[k].h > 1 || (keyCount[k].h && keyCount[k].n))
+    combined.forEach(e => {
+      const src = e.type === 'harian' ? (daily||[]).find(d => d.id === e.id) : (nests||[]).find(n => n.id === e.id)
+      e.conflict = src && isConflict(`${e.date}|${src.ram}`)
+    })
     listEl.innerHTML = ''
+    const nConf = combined.filter(e => e.conflict).length
+    if (nConf) listEl.appendChild(flatCard(`<div class="text-xs"><b class="text-red-300">⚠️ ${nConf} entri bercanggah</b> — tarikh + RAM sama dimasukkan lebih dari sekali (data mungkin dikira dua kali).${state.profile?.role === 'admin' ? ' Bersihkan di Admin → Semak Data Bercanggah.' : ' Maklumkan kepada admin.'}</div>`, 'mb-3 border border-red-500/40'))
     if (!combined.length) { listEl.appendChild(card('<div class="text-center py-8 opacity-80">Tiada entri untuk tempoh ini.</div>')); return }
     combined.forEach((e, i) => {
       const canEdit = e.owner === state.profile.id || state.profile.role === 'admin'
@@ -1140,6 +1321,7 @@ async function screenEntries() {
             <div class="flex items-center gap-2">
               <span class="font-semibold text-sm">${fmtDate(e.date)}</span>
               <span class="type-pill ${e.type==='harian'?'type-harian':'type-individu'}">${e.type==='harian'?'Harian':'Individu'}</span>
+              ${e.conflict ? '<span class="type-pill" style="background:rgba(225,96,76,.18); color:#F19A80;">Bercanggah</span>' : ''}
             </div>
             <div class="text-xs opacity-75 tabular-num">${e.summary}</div>
             <div class="text-[11px] opacity-50">${e.ownerName}</div>
@@ -1330,7 +1512,7 @@ async function screenEditEntry() {
         updated_by: state.profile.id
       }
       const { error } = await supabase.from('daily_entries').update(payload).eq('id', target.id)
-      if (error) { toast('Gagal simpan: ' + error.message, 'error'); return }
+      if (error) { toast(error.code === '23505' ? 'Sudah ada Entri Harian lain untuk tarikh + RAM itu. Ubah rekod tersebut, atau padam salah satu.' : 'Gagal simpan: ' + error.message, 'error'); return }
       toast('Disimpan', 'success'); go('entries')
     })
     attachDeleteUI(wrap, 'daily_entries', target.id)
@@ -2147,7 +2329,7 @@ async function screenAdmin() {
   if (!isKerani) {
   const importCard = card(`
     <h2 class="font-display text-lg mb-3">Import Excel</h2>
-    <p class="text-sm opacity-70 mb-3">Auto key-in dari fail Excel sedia ada (format sama dengan eksport/template rasmi). <span class="text-emerald-300">Selamat import berulang kali — hari yang sudah wujud tidak diduplikasi. Telur menetas &amp; buruk (lajur K–R) yang baru diisi dalam fail akan dikemaskini pada hari sedia ada.</span></p>
+    <p class="text-sm opacity-70 mb-3">Auto key-in dari fail Excel (format template rasmi). <span class="text-emerald-300">Tiada apa disimpan sebelum anda sahkan — app tunjuk dulu data baharu, data sama, dan data yang <b>bercanggah</b> dengan app, dan anda pilih mana yang betul.</span></p>
     <div class="grid grid-cols-2 gap-2 mb-3">
       <div><label class="text-xs opacity-70">Pulau</label><select id="im_island">${ISLANDS.map(i=>`<option value="${i.code}" ${i.code===state.island?'selected':''}>${i.code}</option>`).join('')}</select></div>
       <div><label class="text-xs opacity-70">Tahun</label><select id="im_year">${Array.from({length:8},(_,i)=>year-5+i).map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join('')}</select></div>
@@ -2157,178 +2339,401 @@ async function screenAdmin() {
     <div id="im_msg" class="hidden text-sm mt-2 text-emerald-300"></div>
   `)
   body.appendChild(importCard)
+  const previewHolder = document.createElement('div')
+  body.appendChild(previewHolder)
   const imFile = importCard.querySelector('#im_file')
   const imGo = importCard.querySelector('#im_go')
-  imFile.onchange = () => { imGo.disabled = !imFile.files.length; imGo.textContent = imFile.files.length ? 'Import Sekarang' : 'Pilih fail dahulu' }
+  const resetImGo = () => { imGo.disabled = !imFile.files.length; imGo.textContent = imFile.files.length ? 'Semak Fail →' : 'Pilih fail dahulu' }
+  imFile.onchange = () => { previewHolder.innerHTML = ''; importCard.querySelector('#im_msg').classList.add('hidden'); resetImGo() }
+
+  function parseImportFile(wb, island, yr) {
+    const rows = []
+    MONTH_SHEET_NAMES.forEach((sheetName, mi) => {
+      const ws = wb.Sheets[sheetName]
+      if (!ws) return
+      const daysInMonth = new Date(yr, mi+1, 0).getDate()
+      const num = (ref) => { const c = ws[ref]; const v = c ? Number(c.v) : 0; return isNaN(v) ? 0 : v }
+      const txt = (ref) => { const c = ws[ref]; return c && c.v != null && String(c.v).trim() !== '' ? String(c.v) : null }
+      // Buruk (O-R): formula template (diram − menetas) diabaikan; hanya angka ditaip terus diambil
+      const bur = (ref) => { const c = ws[ref]; if (!c || c.f || c.v === '' || c.v == null) return null; const v = Number(c.v); return isNaN(v) ? null : Math.max(0, v) }
+      for (let day = 1; day <= daysInMonth; day++) {
+        const r = 7 + day
+        const dateStr = `${yr}-${String(mi+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
+        const lpp = { bp_b:num(`C${r}`), bp_t:num(`D${r}`), td_b:num(`G${r}`), td_t:num(`H${r}`), tm_b:num(`K${r}`), tm_t:num(`L${r}`), tb_b:bur(`O${r}`), tb_t:bur(`P${r}`), dk:num(`S${r}`) }
+        const sfc = { bp_b:num(`E${r}`), bp_t:num(`F${r}`), td_b:num(`I${r}`), td_t:num(`J${r}`), tm_b:num(`M${r}`), tm_t:num(`N${r}`), tb_b:bur(`Q${r}`), tb_t:bur(`R${r}`), dk:0 }
+        const cat = txt(`T${r}`)
+        const build = (ram, v) => {
+          const hasMenetas = !!(v.tm_b || v.tm_t)
+          const hasBuruk = !!(v.tb_b || v.tb_t) || (hasMenetas && (v.tb_b !== null || v.tb_t !== null))
+          if (!(v.bp_b || v.bp_t || v.td_b || v.td_t || hasMenetas || hasBuruk || v.dk)) return null
+          return {
+            island, tarikh: dateStr, ram,
+            bilangan_penyu_bertag: v.bp_b, bilangan_penyu_takbertag: v.bp_t,
+            jumlah_telur_diram_bertag: v.td_b, jumlah_telur_diram_takbertag: v.td_t,
+            telur_menetas_bertag: hasMenetas ? v.tm_b : null, telur_menetas_takbertag: hasMenetas ? v.tm_t : null,
+            telur_buruk_bertag: hasBuruk ? (v.tb_b ?? 0) : null, telur_buruk_takbertag: hasBuruk ? (v.tb_t ?? 0) : null,
+            jumlah_telur_dikeluarkan: v.dk || null,
+            catatan: cat, created_by: state.profile.id
+          }
+        }
+        const a = build('LPP', lpp); if (a) rows.push(a)
+        const b = build('SFC', sfc); if (b) rows.push(b)
+      }
+    })
+    return rows
+  }
+
   imGo.onclick = async () => {
     const file = imFile.files[0]
     if (!file) return
     imGo.disabled = true; imGo.textContent = 'Membaca fail...'
+    previewHolder.innerHTML = ''
     try {
       const island = importCard.querySelector('#im_island').value
       const yr = Number(importCard.querySelector('#im_year').value)
-      const buf = await file.arrayBuffer()
-      const wb = XLSX.read(buf, { type: 'array' })
-      const batchId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-      const rows = []
-      MONTH_SHEET_NAMES.forEach((sheetName, mi) => {
-        const ws = wb.Sheets[sheetName]
-        if (!ws) return
-        const daysInMonth = new Date(yr, mi+1, 0).getDate()
-        const num = (ref) => { const c = ws[ref]; const v = c ? Number(c.v) : 0; return isNaN(v) ? 0 : v }
-        const txt = (ref) => { const c = ws[ref]; return c && c.v != null ? String(c.v) : null }
-        // Buruk (O-R): template guna formula diram − menetas. Formula = biar app kira
-        // sendiri (null); hanya angka yang ditaip terus diambil sebagai buruk sebenar.
-        const bur = (ref) => { const c = ws[ref]; if (!c || c.f || c.v === '' || c.v == null) return null; const v = Number(c.v); return isNaN(v) ? null : Math.max(0, v) }
-        for (let day = 1; day <= daysInMonth; day++) {
-          const r = 7 + day
-          const dateStr = `${yr}-${String(mi+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
-          // LPP: C,D (penyu) G,H (telur) K,L (menetas) S (dikeluarkan)
-          const lpp = { bp_b:num(`C${r}`), bp_t:num(`D${r}`), td_b:num(`G${r}`), td_t:num(`H${r}`), tm_b:num(`K${r}`), tm_t:num(`L${r}`), tb_b:bur(`O${r}`), tb_t:bur(`P${r}`), dk:num(`S${r}`) }
-          // SFC: E,F / I,J / M,N / Q,R
-          const sfc = { bp_b:num(`E${r}`), bp_t:num(`F${r}`), td_b:num(`I${r}`), td_t:num(`J${r}`), tm_b:num(`M${r}`), tm_t:num(`N${r}`), tb_b:bur(`Q${r}`), tb_t:bur(`R${r}`), dk:0 }
-          const cat = txt(`T${r}`)
-          const build = (ram, v) => {
-            const hasMenetas = !!(v.tm_b || v.tm_t)
-            const hasBuruk = !!(v.tb_b || v.tb_t) || (hasMenetas && (v.tb_b !== null || v.tb_t !== null))
-            const hasData = v.bp_b || v.bp_t || v.td_b || v.td_t || hasMenetas || hasBuruk || v.dk
-            if (!hasData) return null
-            return {
-              island, tarikh: dateStr, ram,
-              bilangan_penyu_bertag: v.bp_b, bilangan_penyu_takbertag: v.bp_t,
-              jumlah_telur_diram_bertag: v.td_b, jumlah_telur_diram_takbertag: v.td_t,
-              telur_menetas_bertag: (v.tm_b || v.tm_t) ? v.tm_b : null,
-              telur_menetas_takbertag: (v.tm_b || v.tm_t) ? v.tm_t : null,
-              telur_buruk_bertag: hasBuruk ? (v.tb_b ?? 0) : null,
-              telur_buruk_takbertag: hasBuruk ? (v.tb_t ?? 0) : null,
-              jumlah_telur_dikeluarkan: v.dk || null,
-              catatan: cat, created_by: state.profile.id, import_batch: batchId
-            }
-          }
-          const lppRow = build('LPP', lpp); if (lppRow) rows.push(lppRow)
-          const sfcRow = build('SFC', sfc); if (sfcRow) rows.push(sfcRow)
-        }
-      })
-      if (!rows.length) { toast('Tiada data dijumpai dalam fail. Pastikan format ikut template rasmi.', 'error'); imGo.disabled = false; imGo.textContent = 'Import Sekarang'; return }
-
-      // Dedupe: fetch existing (tarikh|ram) pairs for this island+year and
-      // skip any import row that already exists — so re-importing an
-      // updated file only adds the genuinely new days.
-      imGo.textContent = 'Menyemak data sedia ada...'
-      const [{ data: existing, error: exErr }, { data: existingNests }] = await Promise.all([
-        supabase.from('daily_entries')
-          .select('id, tarikh, ram, created_at, telur_menetas_bertag, telur_menetas_takbertag, telur_buruk_bertag, telur_buruk_takbertag')
-          .eq('island', island).gte('tarikh', `${yr}-01-01`).lte('tarikh', `${yr}-12-31`)
-          .order('created_at').limit(5000),
-        supabase.from('nest_records').select('tarikh_dijumpai, ram')
-          .eq('island', island).gte('tarikh_dijumpai', `${yr}-01-01`).lte('tarikh_dijumpai', `${yr}-12-31`).limit(10000)
-      ])
-      if (exErr) throw exErr
-      const byKey = {}
-      ;(existing||[]).forEach(e => { (byKey[`${e.tarikh}|${e.ram}`] ||= []).push(e) })
-      // Hari yang dikunci sebagai Entri Individu — jangan duplikasi diram, menetas diurus per sarang
-      const nestKeys = new Set((existingNests||[]).map(n => `${n.tarikh_dijumpai}|${n.ram}`))
-      const newRows = []
-      const updates = [] // { id, patch }
-      let skipped = 0
-      const HF = ['telur_menetas_bertag','telur_menetas_takbertag','telur_buruk_bertag','telur_buruk_takbertag']
-      rows.forEach(r => {
-        const key = `${r.tarikh}|${r.ram}`
-        const ex = byKey[key]
-        if (!ex && !nestKeys.has(key)) { newRows.push(r); return }
-        skipped++
-        if (!ex) return
-        // Hari sudah wujud: kemaskini menetas/buruk sahaja kalau fail ada data hatch yang berbeza.
-        // Jumlah hari disimpan pada rekod pertama; rekod lain hari sama dikosongkan (elak kira dua kali).
-        const fileHasHatch = HF.some(f => r[f] !== null)
-        if (!fileHasHatch) return
-        const first = ex[0]
-        const patch = {}
-        HF.forEach(f => { if ((first[f] ?? null) !== (r[f] ?? null)) patch[f] = r[f] })
-        if (Object.keys(patch).length) updates.push({ id: first.id, patch: { ...patch, updated_by: state.profile.id } })
-        ex.slice(1).forEach(o => { if (HF.some(f => o[f] !== null)) updates.push({ id: o.id, patch: { telur_menetas_bertag:null, telur_menetas_takbertag:null, telur_buruk_bertag:null, telur_buruk_takbertag:null, updated_by: state.profile.id } }) })
-      })
-
-      if (!newRows.length && !updates.length) {
-        toast(`Semua ${rows.length} rekod sudah wujud dan sama — tiada perubahan.`, 'info')
-        imGo.disabled = false; imGo.textContent = 'Import Sekarang'
-        return
-      }
-
-      if (newRows.length) {
-        imGo.textContent = `Memasukkan ${newRows.length} rekod baharu...`
-        for (let i = 0; i < newRows.length; i += 100) {
-          const { error } = await supabase.from('daily_entries').insert(newRows.slice(i, i+100))
-          if (error) throw error
-        }
-      }
-      let updated = 0
-      for (const u of updates) {
-        imGo.textContent = `Mengemaskini menetas/buruk... ${++updated}/${updates.length}`
-        const { error } = await supabase.from('daily_entries').update(u.patch).eq('id', u.id)
-        if (error) throw error
-      }
-      const hatchDays = updates.filter(u => u.patch.telur_menetas_bertag !== null || u.patch.telur_buruk_bertag !== null).length
-      const m = importCard.querySelector('#im_msg')
-      m.textContent = `${newRows.length} rekod baharu diimport ✓` + (hatchDays ? ` · ${hatchDays} hari dikemaskini menetas/buruk` : '') + (skipped - hatchDays > 0 ? ` · ${skipped - hatchDays} dilangkau (sudah wujud)` : '')
-      m.classList.remove('hidden')
-      toast(m.textContent, 'success')
-      imFile.value = ''
-      imGo.textContent = 'Pilih fail dahulu'
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' })
+      const rows = parseImportFile(wb, island, yr)
+      if (!rows.length) { toast('Tiada data dijumpai dalam fail. Pastikan format ikut template rasmi dan tahun betul.', 'error'); resetImGo(); return }
+      imGo.textContent = 'Membanding dengan data app...'
+      const app = await loadDayRamIndex(island, yr)
+      const plan = buildImportPlan(rows, app)
+      renderImportPreview(plan, { island, yr, fileName: file.name })
+      resetImGo()
     } catch (err) {
-      toast('Gagal import: ' + err.message, 'error')
-      imGo.disabled = false; imGo.textContent = 'Import Sekarang'
+      toast('Gagal baca fail: ' + err.message, 'error')
+      resetImGo()
     }
+  }
+
+  function buildImportPlan(rows, app) {
+    const plan = { baru: [], sama: [], lengkap: [], canggah: [], appOnly: 0 }
+    const fileKeys = new Set()
+    rows.forEach(fr => {
+      const key = `${fr.tarikh}|${fr.ram}`
+      fileKeys.add(key)
+      const g = app[key]
+      if (!g) { plan.baru.push({ key, file: fr }); return }
+      const agg = aggregateDayRam(g.daily, g.nests)
+      const nestOnly = !g.daily.length
+      const fills = {}, diffs = []
+      DAY_FIELDS.forEach(([f, , optional]) => {
+        const fv = fr[f] ?? (optional ? null : 0)
+        const av = agg[f] ?? (optional ? null : 0)
+        if (optional) {
+          if (fv === null) return
+          if (nestOnly) return // menetas/buruk sarang individu diurus per sarang
+          if (av === null) { fills[f] = fv; return }
+        }
+        if (fv !== av) diffs.push(f)
+      })
+      const item = { key, file: fr, agg, daily: g.daily, nests: g.nests, fills, diffs, appDup: g.daily.length > 1 || (g.daily.length && g.nests.length) }
+      if (diffs.length) plan.canggah.push(item)
+      else if (Object.keys(fills).length) plan.lengkap.push(item)
+      else plan.sama.push(item)
+    })
+    plan.appOnly = Object.keys(app).filter(k => !fileKeys.has(k)).length
+    return plan
+  }
+
+  function renderImportPreview(plan, ctx) {
+    previewHolder.innerHTML = ''
+    const decisions = {}
+    plan.canggah.forEach(p => decisions[p.key] = 'app')
+    const chip = (n, label, cls) => `<div class="frosted-flat p-2 text-center"><div class="font-display text-xl tabular-num ${cls}">${n}</div><div class="text-[11px] opacity-70">${label}</div></div>`
+    const valCell = (v) => v === null || v === undefined ? '<span class="opacity-40">—</span>' : Number(v).toLocaleString()
+    const sourceHTML = (p) => {
+      const parts = []
+      p.daily.forEach(d => parts.push(`<div>• <span class="type-pill type-harian">Harian</span> ${d.jumlah_telur_diram_bertag + d.jumlah_telur_diram_takbertag} telur · ${d.staff_profiles?.full_name || '?'} · ${fmtDateTime(d.created_at)}${d.import_batch ? ' · dari import' : ''}</div>`))
+      if (p.nests.length) parts.push(`<div>• <span class="type-pill type-individu">Individu</span> ${p.nests.length} sarang (${p.nests.map(n => n.jumlah_telur_diram).join(', ')} telur) · ${[...new Set(p.nests.map(n => n.staff_profiles?.full_name || '?'))].join(', ')}</div>`)
+      return `<div class="text-[11px] opacity-80 space-y-0.5 mb-2">${parts.join('')}</div>`
+    }
+    const consequence = (p, d) => {
+      if (d === 'app') return 'Data app dikekalkan. Angka fail untuk hari ini diabaikan.'
+      const bits = []
+      if (p.daily.length) bits.push('Entri Harian dikemaskini ikut fail')
+      else bits.push('1 Entri Harian baharu dicipta ikut fail')
+      if (p.daily.length > 1) bits.push(`${p.daily.length - 1} Entri Harian berganda dipadam`)
+      if (p.nests.length) bits.push(`${p.nests.length} sarang Individu dipadam`)
+      return bits.join(' · ') + '. Boleh dipulihkan di Sejarah Import.'
+    }
+
+    const canggahHTML = plan.canggah.map((p, i) => {
+      const [tarikh, ram] = p.key.split('|')
+      const shown = DAY_FIELDS.filter(([f]) => p.diffs.includes(f) || (p.agg[f] ?? 0) !== 0 || (p.file[f] ?? 0) !== 0)
+      return `
+        <div class="border border-amber-500/40 rounded-xl p-3 mb-3" data-key="${p.key}">
+          <div class="flex items-center justify-between mb-1"><b>${fmtDate(tarikh)} · ${ram}</b><span class="text-[11px] text-amber-300">${p.diffs.length} medan berbeza</span></div>
+          ${p.appDup ? '<div class="text-[11px] text-red-300 mb-1">⚠️ App sendiri ada pendua untuk hari ini (lebih dari satu sumber).</div>' : ''}
+          <div class="text-[11px] opacity-60 mb-1">Dalam app sekarang:</div>
+          ${sourceHTML(p)}
+          <table class="w-full text-xs mb-2">
+            <thead><tr class="opacity-60 text-left"><th class="py-1">Medan</th><th class="py-1 text-right">Dalam App</th><th class="py-1 text-right">Dalam Fail</th></tr></thead>
+            <tbody>${shown.map(([f, label]) => {
+              const diff = p.diffs.includes(f)
+              return `<tr class="border-t border-white/10 ${diff ? 'text-amber-200 font-semibold' : 'opacity-70'}"><td class="py-1">${diff ? '⚠️ ' : ''}${label}</td><td class="py-1 text-right tabular-num">${valCell(p.agg[f])}</td><td class="py-1 text-right tabular-num">${valCell(p.file[f])}</td></tr>`
+            }).join('')}</tbody>
+          </table>
+          <div class="seg"><button type="button" data-d="app" class="active">Kekal App</button><button type="button" data-d="fail">Guna Fail</button></div>
+          <div class="text-[11px] opacity-70 mt-1" data-note>${consequence(p, 'app')}</div>
+        </div>`
+    }).join('')
+
+    const listDetails = (items, title, fmtItem) => items.length ? `
+      <details class="mb-2"><summary class="text-sm cursor-pointer">${title} (${items.length})</summary>
+        <div class="text-xs opacity-80 mt-2 max-h-48 overflow-y-auto space-y-0.5">${items.map(fmtItem).join('')}</div>
+      </details>` : ''
+
+    const pc = card(`
+      <h2 class="font-display text-lg mb-1">Semakan Import</h2>
+      <p class="text-xs opacity-70 mb-3">${ctx.fileName} · ${ctx.island} · ${ctx.yr}</p>
+      <div class="grid grid-cols-4 gap-2 mb-3">
+        ${chip(plan.baru.length, 'Baharu', 'text-emerald-300')}
+        ${chip(plan.sama.length, 'Sama', '')}
+        ${chip(plan.lengkap.length, 'Lengkapkan', 'text-sky-300')}
+        ${chip(plan.canggah.length, 'Bercanggah', plan.canggah.length ? 'text-amber-300' : '')}
+      </div>
+      ${plan.appOnly ? `<p class="text-[11px] opacity-60 mb-2">${plan.appOnly} hari ada dalam app tetapi tiada dalam fail — tidak disentuh.</p>` : ''}
+      ${listDetails(plan.baru, '🟢 Baharu — akan dimasukkan', p => `<div>${fmtDate(p.file.tarikh)} · ${p.file.ram} · ${p.file.jumlah_telur_diram_bertag + p.file.jumlah_telur_diram_takbertag} telur</div>`)}
+      ${listDetails(plan.lengkap, '🔵 Lengkapkan — app kosong, fail ada nilai (diisi)', p => `<div>${fmtDate(p.file.tarikh)} · ${p.file.ram} · ${Object.keys(p.fills).map(f => DAY_FIELD_LABEL[f] + ' ' + p.fills[f]).join(', ')}</div>`)}
+      ${listDetails(plan.sama, '⚪ Sama — dilangkau', p => `<div>${fmtDate(p.file.tarikh)} · ${p.file.ram}</div>`)}
+      ${plan.canggah.length ? `
+        <div class="flex items-center justify-between mt-4 mb-2 gap-2 flex-wrap">
+          <div class="eyebrow text-amber-300">⚠️ Bercanggah — pilih yang betul</div>
+          <div class="flex gap-2"><button type="button" id="allApp" class="btn btn-ghost btn-sm">Semua: Kekal App</button><button type="button" id="allFail" class="btn btn-ghost btn-sm">Semua: Guna Fail</button></div>
+        </div>
+        <div id="canggahList">${canggahHTML}</div>` : ''}
+      <div class="flex gap-2 mt-4">
+        <button id="im_cancel" data-esc class="btn btn-ghost flex-1">Batal</button>
+        <button id="im_confirm" class="btn btn-primary flex-1" disabled>Tunggu 5s...</button>
+      </div>
+    `)
+    previewHolder.appendChild(pc)
+    pc.scrollIntoView({ behavior: 'smooth', block: 'start' })
+
+    const confirmBtn = pc.querySelector('#im_confirm')
+    let armed = false
+    function label() {
+      const timpa = plan.canggah.filter(p => decisions[p.key] === 'fail').length
+      const n = plan.baru.length + plan.lengkap.length + timpa
+      return n ? `Sahkan: ${plan.baru.length} baharu · ${plan.lengkap.length} lengkapkan · ${timpa} timpa` : 'Tiada perubahan untuk disimpan'
+    }
+    function refreshConfirm() {
+      if (!armed) return
+      const timpa = plan.canggah.filter(p => decisions[p.key] === 'fail').length
+      const n = plan.baru.length + plan.lengkap.length + timpa
+      confirmBtn.disabled = !n
+      confirmBtn.textContent = label()
+    }
+    function setDecision(key, d) {
+      decisions[key] = d
+      const el = pc.querySelector(`[data-key="${CSS.escape(key)}"]`)
+      el.querySelectorAll('[data-d]').forEach(b => b.className = b.dataset.d === d ? 'active' : '')
+      el.querySelector('[data-note]').textContent = consequence(plan.canggah.find(p => p.key === key), d)
+      refreshConfirm()
+    }
+    pc.querySelectorAll('[data-key]').forEach(el => el.querySelectorAll('[data-d]').forEach(b => b.onclick = () => setDecision(el.dataset.key, b.dataset.d)))
+    pc.querySelector('#allApp')?.addEventListener('click', () => plan.canggah.forEach(p => setDecision(p.key, 'app')))
+    pc.querySelector('#allFail')?.addEventListener('click', () => plan.canggah.forEach(p => setDecision(p.key, 'fail')))
+    pc.querySelector('#im_cancel').onclick = () => { previewHolder.innerHTML = ''; toast('Import dibatalkan — tiada apa disimpan.', 'info') }
+    let cd = 5
+    const iv = setInterval(() => {
+      cd--
+      if (cd <= 0) { clearInterval(iv); armed = true; refreshConfirm() }
+      else confirmBtn.textContent = `Tunggu ${cd}s...`
+    }, 1000)
+    confirmBtn.onclick = async () => {
+      confirmBtn.disabled = true; confirmBtn.textContent = 'Menyimpan...'
+      try {
+        const res = await applyImportPlan(plan, decisions, ctx)
+        previewHolder.innerHTML = ''
+        const m = importCard.querySelector('#im_msg')
+        m.textContent = `Import selesai ✓ ${res.inserted} baharu · ${res.updated} dikemaskini · ${res.deleted} dipadam · ${plan.sama.length} sama dilangkau` + (res.keptApp ? ` · ${res.keptApp} canggah kekal app` : '')
+        m.classList.remove('hidden')
+        toast(m.textContent, 'success')
+        imFile.value = ''; resetImGo()
+        window.__reloadImportHistory?.()
+      } catch (err) {
+        toast('Gagal import: ' + err.message, 'error')
+        confirmBtn.disabled = false; confirmBtn.textContent = label()
+      }
+    }
+  }
+
+  async function applyImportPlan(plan, decisions, ctx) {
+    const batch = newBatchId()
+    const { error: logErr } = await supabase.from('import_log').insert({ batch, island: ctx.island, year: ctx.yr, file_name: ctx.fileName, created_by: state.profile.id })
+    if (logErr) throw new Error('Jadual import_log tiada — run migration-anti-pendua.sql dalam Supabase dulu. (' + logErr.message + ')')
+    const inserts = plan.baru.map(p => ({ ...p.file, import_batch: batch }))
+    const updates = [], delDaily = [], delNests = []
+    plan.lengkap.forEach(p => updates.push({ row: p.daily[0], patch: { ...p.fills, updated_by: state.profile.id } }))
+    let keptApp = 0
+    plan.canggah.forEach(p => {
+      if (decisions[p.key] !== 'fail') { keptApp++; return }
+      if (p.daily.length) {
+        const patch = { updated_by: state.profile.id }
+        DAY_FIELDS.forEach(([f, , optional]) => { const v = p.file[f]; if (!optional || v !== null) patch[f] = optional ? v : (v ?? 0) })
+        if (p.file.catatan && !p.daily[0].catatan) patch.catatan = p.file.catatan
+        updates.push({ row: p.daily[0], patch })
+        p.daily.slice(1).forEach(d => delDaily.push(d))
+      } else {
+        inserts.push({ ...p.file, import_batch: batch })
+      }
+      p.nests.forEach(n => delNests.push(n))
+    })
+    // 1) salinan sebelum ubah/padam (untuk undo)
+    await saveUndo(batch, [
+      ...updates.map(u => ({ table: 'daily_entries', row: u.row, action: 'update' })),
+      ...delDaily.map(r => ({ table: 'daily_entries', row: r, action: 'delete' })),
+      ...delNests.map(r => ({ table: 'nest_records', row: r, action: 'delete' }))
+    ])
+    // 2) padam pendua dulu (elak langgar kunci satu-harian-satu-RAM), kemudian kemaskini, kemudian masuk baharu
+    if (delDaily.length) { const { error } = await supabase.from('daily_entries').delete().in('id', delDaily.map(r => r.id)); if (error) throw error }
+    if (delNests.length) { const { error } = await supabase.from('nest_records').delete().in('id', delNests.map(r => r.id)); if (error) throw error }
+    for (const u of updates) { const { error } = await supabase.from('daily_entries').update(u.patch).eq('id', u.row.id); if (error) throw error }
+    for (let i = 0; i < inserts.length; i += 100) { const { error } = await supabase.from('daily_entries').insert(inserts.slice(i, i+100)); if (error) throw error }
+    const res = { inserted: inserts.length, updated: updates.length, deleted: delDaily.length + delNests.length, keptApp }
+    await supabase.from('import_log').update({ inserted: res.inserted, updated: res.updated, deleted: res.deleted }).eq('batch', batch)
+    return res
   }
   } // end !isKerani (import)
 
   // --- Sejarah Import + Undo (admin only) ---
   if (!isKerani) {
   const histCard = card(`
-    <h2 class="font-display text-lg mb-3">Sejarah Import</h2>
-    <p class="text-sm opacity-70 mb-3">Kalau tersilap import (cth: fail sama dua kali), buang seluruh batch di sini — data lain tidak terjejas.</p>
+    <h2 class="font-display text-lg mb-3">Sejarah Import &amp; Pembersihan</h2>
+    <p class="text-sm opacity-70 mb-3">Tersilap? "Buang" memulihkan keadaan sebelum import/pembersihan itu — rekod baharu dipadam, rekod yang diubah atau dipadam dikembalikan.</p>
     <div id="importHist">${skeletonBlock(2)}</div>
   `)
   body.appendChild(histCard)
   async function loadImportHistory() {
     const el = histCard.querySelector('#importHist')
-    const { data: imported } = await supabase.from('daily_entries')
-      .select('import_batch, island, tarikh, created_at')
-      .not('import_batch', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(1000)
-    const batches = {}
+    const [{ data: logs }, { data: imported }] = await Promise.all([
+      supabase.from('import_log').select('*').order('created_at', { ascending: false }).limit(40),
+      supabase.from('daily_entries').select('import_batch, island, tarikh, created_at').not('import_batch', 'is', null).order('created_at', { ascending: false }).limit(2000)
+    ])
+    const logged = new Set((logs||[]).map(l => l.batch))
+    const legacy = {}
     ;(imported||[]).forEach(r => {
-      if (!batches[r.import_batch]) batches[r.import_batch] = { count:0, island:r.island, minD:r.tarikh, maxD:r.tarikh, when:r.created_at }
-      const b = batches[r.import_batch]
+      if (logged.has(r.import_batch)) return
+      const b = legacy[r.import_batch] ||= { count:0, island:r.island, minD:r.tarikh, maxD:r.tarikh, when:r.created_at }
       b.count++
       if (r.tarikh < b.minD) b.minD = r.tarikh
       if (r.tarikh > b.maxD) b.maxD = r.tarikh
     })
-    const entries = Object.entries(batches)
-    if (!entries.length) { el.innerHTML = '<div class="text-sm opacity-70">Belum ada import.</div>'; return }
+    const items = [
+      ...(logs||[]).map(l => ({ id: l.batch, logged: true, when: l.created_at, undone: l.undone_at,
+        title: `${l.island} · ${l.file_name || 'Import'}`,
+        sub: [[l.inserted, 'baharu'], [l.updated, 'dikemaskini'], [l.deleted, 'dipadam']].filter(([n]) => n).map(([n, t]) => `${n} ${t}`).join(' · ') || 'tiada perubahan' })),
+      ...Object.entries(legacy).map(([id, b]) => ({ id, logged: false, when: b.when,
+        title: `${b.island} · ${b.count} rekod`, sub: `${fmtDate(b.minD)} → ${fmtDate(b.maxD)} (import lama)` }))
+    ].sort((a, b) => new Date(b.when) - new Date(a.when))
+    if (!items.length) { el.innerHTML = '<div class="text-sm opacity-70">Belum ada import.</div>'; return }
     el.innerHTML = ''
-    entries.forEach(([id, b]) => {
+    items.forEach(it => {
       const row = document.createElement('div')
       row.className = 'flex items-center justify-between gap-2 border-b border-white/10 pb-2 mb-2 text-sm'
       row.innerHTML = `
-        <div>
-          <div class="font-semibold">${b.island} · ${b.count} rekod</div>
-          <div class="text-xs opacity-70">${fmtDate(b.minD)} → ${fmtDate(b.maxD)} · diimport ${new Date(b.when).toLocaleString('ms-MY')}</div>
+        <div class="${it.undone ? 'opacity-50' : ''}">
+          <div class="font-semibold">${it.title}</div>
+          <div class="text-xs opacity-70">${it.sub} · ${fmtDateTime(it.when)}${it.undone ? ` · <b>dibuang ${fmtDateTime(it.undone)}</b>` : ''}</div>
         </div>
-        <button class="btn btn-sm" style="background:rgba(225,96,76,.15); border:1px solid rgba(225,96,76,.4); color:#E1604C;">Buang</button>
+        ${it.undone ? '' : '<button class="btn btn-sm" style="background:rgba(225,96,76,.15); border:1px solid rgba(225,96,76,.4); color:#E1604C;">Buang</button>'}
       `
-      row.querySelector('button').onclick = async () => {
-        if (!confirm(`Buang import ini (${b.count} rekod, ${b.island})? Tindakan ini kekal.`)) return
-        const { error } = await supabase.from('daily_entries').delete().eq('import_batch', id)
-        if (error) { toast('Gagal buang: ' + error.message, 'error'); return }
-        toast(`${b.count} rekod import dibuang`, 'success')
+      const btn = row.querySelector('button')
+      if (btn) btn.onclick = async () => {
+        if (!confirm(`Buang "${it.title}" dan pulihkan keadaan sebelum itu?`)) return
+        btn.disabled = true
+        if (it.logged) {
+          const { data, error } = await supabase.rpc('undo_import', { p_batch: it.id })
+          if (error) { toast('Gagal buang: ' + error.message, 'error'); btn.disabled = false; return }
+          toast(`Dipulihkan: ${data?.removed ?? 0} rekod baharu dibuang, ${data?.restored ?? 0} rekod dikembalikan`, 'success')
+        } else {
+          const { error } = await supabase.from('daily_entries').delete().eq('import_batch', it.id)
+          if (error) { toast('Gagal buang: ' + error.message, 'error'); btn.disabled = false; return }
+          toast('Rekod import lama dibuang', 'success')
+        }
         loadImportHistory()
       }
       el.appendChild(row)
     })
   }
   loadImportHistory()
+  window.__reloadImportHistory = loadImportHistory
+
+  // --- Semak Data Bercanggah (admin only) ---
+  const dupCard = card(`
+    <h2 class="font-display text-lg mb-1">Semak Data Bercanggah</h2>
+    <p class="text-sm opacity-70 mb-3">Cari hari yang dimasukkan dua kali: Entri Harian berganda, atau Harian <b>dan</b> Individu pada tarikh + RAM yang sama (data dikira dua kali).</p>
+    <div class="grid grid-cols-2 gap-2 mb-3">
+      <div><label class="text-xs opacity-70">Pulau</label><select id="dup_island">${ISLANDS.map(i=>`<option value="${i.code}" ${i.code===state.island?'selected':''}>${i.code}</option>`).join('')}</select></div>
+      <div><label class="text-xs opacity-70">Tahun</label><select id="dup_year">${Array.from({length:8},(_,i)=>year+1-i).map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join('')}</select></div>
+    </div>
+    <button id="dup_go" class="btn btn-primary w-full">Semak Sekarang</button>
+    <div id="dup_out" class="mt-3"></div>
+  `)
+  body.appendChild(dupCard)
+  async function runDupCheck() {
+    const out = dupCard.querySelector('#dup_out')
+    const island = dupCard.querySelector('#dup_island').value
+    const yr = Number(dupCard.querySelector('#dup_year').value)
+    out.innerHTML = skeletonBlock(2)
+    const app = await loadDayRamIndex(island, yr)
+    const conflicts = Object.entries(app).filter(([, g]) => g.daily.length > 1 || (g.daily.length && g.nests.length)).sort(([a], [b]) => a.localeCompare(b))
+    if (!conflicts.length) { out.innerHTML = `<div class="text-sm text-emerald-300">✅ Tiada percanggahan untuk ${island} ${yr}.</div>`; return }
+    const telur = (rows, isNest) => rows.reduce((s, r) => s + (isNest ? r.jumlah_telur_diram : r.jumlah_telur_diram_bertag + r.jumlah_telur_diram_takbertag), 0)
+    const delBtn = (label, attrs) => `<button ${attrs} class="btn btn-sm dup-del" style="background:rgba(225,96,76,.15); border:1px solid rgba(225,96,76,.4); color:#E1604C;" disabled>${label}</button>`
+    out.innerHTML = `<div class="text-sm text-amber-300 mb-2">⚠️ ${conflicts.length} hari bercanggah ditemui untuk ${island} ${yr}</div>` + conflicts.map(([key, g]) => {
+      const [tarikh, ram] = key.split('|')
+      const th = telur(g.daily, false), tn = telur(g.nests, true)
+      let advice = '', quick = ''
+      if (g.daily.length && g.nests.length) {
+        if (th === tn) { advice = `Jumlah Harian (${th}) = jumlah Individu (${tn}) → hampir pasti pendua. <b>Cadangan:</b> simpan Individu (lebih terperinci), padam Harian.`; quick = delBtn('Ikut cadangan: padam Harian', `data-quick="harian" data-key="${key}"`) }
+        else advice = `Jumlah Harian (${th}) ≠ Individu (${tn}). Mungkin sebahagian penyu direkod Individu dan selebihnya Harian — semak dengan staf sebelum padam.`
+      } else {
+        const same = g.daily.every(d => DAY_FIELDS.every(([f]) => (d[f] ?? null) === (g.daily[0][f] ?? null)))
+        if (same) { advice = `${g.daily.length} Entri Harian dengan angka sama → pendua. <b>Cadangan:</b> simpan yang paling awal, padam selebihnya.`; quick = delBtn('Ikut cadangan: padam pendua', `data-quick="dup" data-key="${key}"`) }
+        else advice = `${g.daily.length} Entri Harian dengan angka berbeza (jumlah ${th} telur). Semak mana yang betul, atau gabungkan secara manual.`
+      }
+      const rowsHTML = [
+        ...g.daily.map(d => `<tr class="border-t border-white/10"><td class="py-1"><span class="type-pill type-harian">Harian</span></td><td class="py-1 tabular-num">${d.bilangan_penyu_bertag}/${d.bilangan_penyu_takbertag}</td><td class="py-1 tabular-num font-semibold">${d.jumlah_telur_diram_bertag}/${d.jumlah_telur_diram_takbertag}</td><td class="py-1">${d.staff_profiles?.full_name || '?'}<div class="opacity-60">${fmtDateTime(d.created_at)}${d.import_batch ? ' · import' : ''}</div></td><td class="py-1 text-right">${delBtn('Padam', `data-del="daily_entries" data-id="${d.id}"`)}</td></tr>`),
+        ...g.nests.map(n => `<tr class="border-t border-white/10"><td class="py-1"><span class="type-pill type-individu">Individu</span></td><td class="py-1">${n.bertag ? 'Bertag' : 'Tak Bertag'}</td><td class="py-1 tabular-num font-semibold">${n.jumlah_telur_diram}</td><td class="py-1">${n.staff_profiles?.full_name || '?'}<div class="opacity-60">${fmtDateTime(n.created_at)}</div></td><td class="py-1 text-right">${delBtn('Padam', `data-del="nest_records" data-id="${n.id}"`)}</td></tr>`)
+      ].join('')
+      return `
+        <div class="border border-amber-500/40 rounded-xl p-3 mb-3">
+          <div class="flex justify-between mb-1"><b>${fmtDate(tarikh)} · ${ram}</b><span class="text-[11px] opacity-70">${g.daily.length} Harian · ${g.nests.length} Individu</span></div>
+          <div class="overflow-x-auto"><table class="w-full text-xs min-w-[420px]"><thead><tr class="opacity-60 text-left"><th>Jenis</th><th>Penyu (B/TB)</th><th>Telur (B/TB)</th><th>Oleh</th><th></th></tr></thead><tbody>${rowsHTML}</tbody></table></div>
+          <div class="text-[11px] mt-2 opacity-90">${advice}</div>
+          ${quick ? `<div class="mt-2">${quick}</div>` : ''}
+        </div>`
+    }).join('') + '<p class="text-[11px] opacity-60">Butang padam aktif selepas 5 saat. Setiap padam disimpan dalam Sejarah Import &amp; Pembersihan — boleh dipulihkan.</p>'
+    let cd = 5
+    const btns = out.querySelectorAll('.dup-del')
+    const labels = [...btns].map(b => b.textContent)
+    btns.forEach(b => b.textContent = `Tunggu ${cd}s`)
+    const iv = setInterval(() => {
+      cd--
+      if (cd <= 0) { clearInterval(iv); btns.forEach((b, i) => { b.disabled = false; b.textContent = labels[i] }) }
+      else btns.forEach(b => b.textContent = `Tunggu ${cd}s`)
+    }, 1000)
+    const doDelete = async (items, note) => {
+      try {
+        await deleteWithBackup(items, island, yr, note)
+        toast(`${items.length} rekod dipadam — boleh dipulihkan di Sejarah Import`, 'success')
+        loadImportHistory(); runDupCheck()
+      } catch (err) { toast('Gagal padam: ' + err.message, 'error') }
+    }
+    out.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+      const g = Object.values(app).find(g => [...g.daily, ...g.nests].some(r => r.id === b.dataset.id))
+      const row = [...g.daily, ...g.nests].find(r => r.id === b.dataset.id)
+      doDelete([{ table: b.dataset.del, row }], 'Pembersihan pendua')
+    })
+    out.querySelectorAll('[data-quick]').forEach(b => b.onclick = () => {
+      const g = app[b.dataset.key]
+      const rows = b.dataset.quick === 'harian' ? g.daily : g.daily.slice().sort((a, c) => new Date(a.created_at) - new Date(c.created_at)).slice(1)
+      doDelete(rows.map(row => ({ table: 'daily_entries', row })), 'Pembersihan pendua')
+    })
+  }
+  dupCard.querySelector('#dup_go').onclick = runDupCheck
 
   // --- Data Lama Bulanan (admin only) — untuk tahun tanpa perincian harian (cth 2025 ke bawah) ---
   const legacyCard = card(`
