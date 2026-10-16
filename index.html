@@ -1016,10 +1016,10 @@ const HATCH_COLORS = { menetas: '#2FA4B8', buruk: '#DC6A40', belum: 'rgba(148,16
 async function fetchDiramMonth(island, year, month, ram) {
   const start = `${year}-${String(month).padStart(2,'0')}-01`
   const end = `${year}-${String(month).padStart(2,'0')}-${String(new Date(year, month, 0).getDate()).padStart(2,'0')}`
-  const [dRes, nRes] = await Promise.all([
-    supabase.from('daily_entries').select('jumlah_telur_diram_bertag, jumlah_telur_diram_takbertag').eq('island', island).eq('ram', ram).gte('tarikh', start).lte('tarikh', end),
-    supabase.from('nest_records').select('bertag, jumlah_telur_diram').eq('island', island).eq('ram', ram).gte('tarikh_dijumpai', start).lte('tarikh_dijumpai', end)
-  ])
+  let dq = supabase.from('daily_entries').select('jumlah_telur_diram_bertag, jumlah_telur_diram_takbertag').eq('island', island).gte('tarikh', start).lte('tarikh', end)
+  let nq = supabase.from('nest_records').select('bertag, jumlah_telur_diram').eq('island', island).gte('tarikh_dijumpai', start).lte('tarikh_dijumpai', end)
+  if (ram !== 'ALL') { dq = dq.eq('ram', ram); nq = nq.eq('ram', ram) } // ALL = gabung LPP + SFC
+  const [dRes, nRes] = await Promise.all([dq, nq])
   let b = 0, t = 0
   ;(dRes.data||[]).forEach(d => { b += d.jumlah_telur_diram_bertag||0; t += d.jumlah_telur_diram_takbertag||0 })
   ;(nRes.data||[]).forEach(n => { if (n.bertag) b += n.jumlah_telur_diram||0; else t += n.jumlah_telur_diram||0 })
@@ -1044,11 +1044,13 @@ function buildMenetasForm() {
   const draft = loadDraft('menetas') || {}
   let year = Number(draft.year) || def.getFullYear()
   let month = Number(draft.month) || (def.getMonth() + 1)
-  let ram = draft.ram || 'LPP'
+  let ram = ['LPP','SFC','ALL'].includes(draft.ram) ? draft.ram : 'ALL'
   const island = state.island
   const holder = document.createElement('div')
   let diram = { b: 0, t: 0 }
   let existing = null
+  let monthRows = [] // semua rekod menetas bulan ini (LPP / SFC / ALL)
+  const ramLabel = (r) => r === 'ALL' ? 'Gabung LPP + SFC' : r
 
   const yearOpts = Array.from({length:6}, (_,i) => now.getFullYear() - i)
   if (!yearOpts.includes(year)) yearOpts.push(year)
@@ -1057,7 +1059,7 @@ function buildMenetasForm() {
     holder.innerHTML = ''
     const c = card(`
       <form id="menetasForm" class="space-y-4">
-        <p class="text-xs opacity-70">Rekod ikut <b>bulan telur itu DIRAM</b> (bukan bulan ia menetas) — sama macam template Excel.</p>
+        <p class="text-xs opacity-70">Rekod ikut <b>bulan telur itu DIRAM</b> (bukan bulan ia menetas).</p>
         <div class="grid grid-cols-2 gap-3">
           <div><label class="text-sm opacity-80">Bulan Telur Diram</label><select id="m_month">${MONTH_LABELS.map((ml,i)=>`<option value="${i+1}" ${i+1===month?'selected':''}>${ml}</option>`).join('')}</select></div>
           <div><label class="text-sm opacity-80">Tahun</label><select id="m_year">${yearOpts.map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join('')}</select></div>
@@ -1065,21 +1067,30 @@ function buildMenetasForm() {
         <div>
           <label class="text-sm opacity-80">RAM</label>
           <div class="seg mt-1">
+            <button type="button" data-ram="ALL" class="${ram==='ALL'?'active':''}">Gabung LPP + SFC</button>
             <button type="button" data-ram="LPP" class="${ram==='LPP'?'active':''}">LPP</button>
             <button type="button" data-ram="SFC" class="${ram==='SFC'?'active':''}">SFC</button>
           </div>
         </div>
         <div id="m_diramBox" class="frosted-flat p-3 text-sm">${skeletonBlock(1)}</div>
-        <div class="grid grid-cols-2 gap-3">
-          <div><label class="text-xs opacity-70">Telur Menetas (Bertag)</label><input type="number" inputmode="numeric" min="0" id="m_tm_b" class="text-lg" /></div>
-          <div><label class="text-xs opacity-70">Telur Menetas (Tak Bertag)</label><input type="number" inputmode="numeric" min="0" id="m_tm_t" class="text-lg" /></div>
-          <div><label class="text-xs opacity-70">Telur Buruk (Bertag)</label><input type="number" inputmode="numeric" min="0" id="m_tb_b" class="text-lg" /></div>
-          <div><label class="text-xs opacity-70">Telur Buruk (Tak Bertag)</label><input type="number" inputmode="numeric" min="0" id="m_tb_t" class="text-lg" /></div>
+        <div id="m_simple" class="${ram==='ALL'?'':'hidden'}">
+          <label class="text-sm opacity-80">Jumlah Telur Menetas</label>
+          <input type="number" inputmode="numeric" min="0" id="m_total" class="text-lg" />
+          <p class="text-[11px] opacity-60 mt-1">Telur buruk dikira automatik: jumlah telur diram − telur menetas.</p>
         </div>
-        <button type="button" id="m_fillBuruk" class="btn btn-ghost btn-sm w-full">Isi baki sebagai telur buruk (diram − menetas)</button>
+        <div id="m_detail" class="${ram==='ALL'?'hidden':''} space-y-3">
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="text-xs opacity-70">Telur Menetas (Bertag)</label><input type="number" inputmode="numeric" min="0" id="m_tm_b" class="text-lg" /></div>
+            <div><label class="text-xs opacity-70">Telur Menetas (Tak Bertag)</label><input type="number" inputmode="numeric" min="0" id="m_tm_t" class="text-lg" /></div>
+            <div><label class="text-xs opacity-70">Telur Buruk (Bertag)</label><input type="number" inputmode="numeric" min="0" id="m_tb_b" class="text-lg" /></div>
+            <div><label class="text-xs opacity-70">Telur Buruk (Tak Bertag)</label><input type="number" inputmode="numeric" min="0" id="m_tb_t" class="text-lg" /></div>
+          </div>
+          <button type="button" id="m_fillBuruk" class="btn btn-ghost btn-sm w-full">Isi baki sebagai telur buruk (diram − menetas)</button>
+        </div>
         <div id="m_live"></div>
         <div><label class="text-sm opacity-80">Catatan (pilihan)</label><textarea id="m_cat" rows="2"></textarea></div>
         <button type="submit" class="btn btn-primary w-full">Semak &amp; Hantar →</button>
+        ${state.profile?.role === 'admin' ? '<button type="button" id="m_delete" class="btn btn-ghost btn-sm w-full hidden" style="color:#E1604C;">Padam rekod ini</button>' : ''}
       </form>
     `)
     holder.appendChild(c)
@@ -1090,54 +1101,88 @@ function buildMenetasForm() {
     const val = (id) => { const v = c.querySelector(id).value; return v === '' ? 0 : Math.max(0, Number(v)) }
     function persist() {
       saveDraft('menetas', { year, month, ram,
+        total: c.querySelector('#m_total').value,
         tm_b: c.querySelector('#m_tm_b').value, tm_t: c.querySelector('#m_tm_t').value,
         tb_b: c.querySelector('#m_tb_b').value, tb_t: c.querySelector('#m_tb_t').value,
         cat: c.querySelector('#m_cat').value })
     }
-    function updateLive() {
+    // Angka semasa borang → { menetas, buruk, rows untuk amaran }
+    function current() {
+      const totalD = diram.b + diram.t
+      if (ram === 'ALL') {
+        const m = val('#m_total')
+        return { menetas: m, buruk: Math.max(0, totalD - m), warnRows: [{ label: 'Gabung LPP + SFC', diram: totalD, menetas: m, buruk: 0 }] }
+      }
       const tm_b = val('#m_tm_b'), tm_t = val('#m_tm_t'), tb_b = val('#m_tb_b'), tb_t = val('#m_tb_t')
-      const totalD = diram.b + diram.t, totalM = tm_b + tm_t, totalB = tb_b + tb_t
-      const baki = totalD - totalM - totalB
-      const rate = (totalM + totalB) ? Math.round(totalM / (totalM + totalB) * 100) : null
-      c.querySelector('#m_live').innerHTML = `
-        <div class="grid grid-cols-3 gap-2 text-center text-xs mb-2">
-          <div class="frosted-flat p-2"><div class="opacity-70">Menetas</div><div class="font-display text-lg tabular-num">${totalM.toLocaleString()}</div></div>
-          <div class="frosted-flat p-2"><div class="opacity-70">Buruk</div><div class="font-display text-lg tabular-num">${totalB.toLocaleString()}</div></div>
-          <div class="frosted-flat p-2"><div class="opacity-70">Kadar Menetas</div><div class="font-display text-lg tabular-num">${rate === null ? '—' : rate + '%'}</div></div>
-        </div>
-        ${baki >= 0 && totalD ? `<div class="text-xs opacity-70 text-center mb-2">Baki belum direkod: <b class="tabular-num">${baki.toLocaleString()}</b> telur</div>` : ''}
-        ${overDiramWarning([
-          { label: 'Bertag', diram: diram.b, menetas: tm_b, buruk: tb_b },
-          { label: 'Tak Bertag', diram: diram.t, menetas: tm_t, buruk: tb_t }
-        ])}`
+      return { menetas: tm_b + tm_t, buruk: tb_b + tb_t, tm_b, tm_t, tb_b, tb_t,
+        warnRows: [{ label: 'Bertag', diram: diram.b, menetas: tm_b, buruk: tb_b }, { label: 'Tak Bertag', diram: diram.t, menetas: tm_t, buruk: tb_t }] }
+    }
+    function updateLive() {
+      const totalD = diram.b + diram.t
+      const cur = current()
+      let rateHTML
+      if (ram === 'ALL') {
+        const pct = totalD ? Math.round(cur.menetas / totalD * 1000) / 10 : null
+        rateHTML = `
+          <div class="grid grid-cols-3 gap-2 text-center text-xs mb-2">
+            <div class="frosted-flat p-2"><div class="opacity-70">Telur Diram</div><div class="font-display text-lg tabular-num">${totalD.toLocaleString()}</div></div>
+            <div class="frosted-flat p-2"><div class="opacity-70">Buruk (auto)</div><div class="font-display text-lg tabular-num">${cur.buruk.toLocaleString()}</div></div>
+            <div class="frosted-flat p-2"><div class="opacity-70">% Menetas</div><div class="font-display text-lg tabular-num">${pct === null ? '—' : pct + '%'}</div></div>
+          </div>`
+      } else {
+        const baki = totalD - cur.menetas - cur.buruk
+        const rate = (cur.menetas + cur.buruk) ? Math.round(cur.menetas / (cur.menetas + cur.buruk) * 100) : null
+        rateHTML = `
+          <div class="grid grid-cols-3 gap-2 text-center text-xs mb-2">
+            <div class="frosted-flat p-2"><div class="opacity-70">Menetas</div><div class="font-display text-lg tabular-num">${cur.menetas.toLocaleString()}</div></div>
+            <div class="frosted-flat p-2"><div class="opacity-70">Buruk</div><div class="font-display text-lg tabular-num">${cur.buruk.toLocaleString()}</div></div>
+            <div class="frosted-flat p-2"><div class="opacity-70">Kadar Menetas</div><div class="font-display text-lg tabular-num">${rate === null ? '—' : rate + '%'}</div></div>
+          </div>
+          ${baki >= 0 && totalD ? `<div class="text-xs opacity-70 text-center mb-2">Baki belum direkod: <b class="tabular-num">${baki.toLocaleString()}</b> telur</div>` : ''}`
+      }
+      c.querySelector('#m_live').innerHTML = rateHTML + overDiramWarning(cur.warnRows)
+    }
+    function setRamUI() {
+      c.querySelectorAll('[data-ram]').forEach(x => x.className = x.dataset.ram === ram ? 'active' : '')
+      c.querySelector('#m_simple').classList.toggle('hidden', ram !== 'ALL')
+      c.querySelector('#m_detail').classList.toggle('hidden', ram === 'ALL')
     }
     async function loadContext() {
       c.querySelector('#m_diramBox').innerHTML = skeletonBlock(1)
       const [d, ex] = await Promise.all([
         fetchDiramMonth(island, year, month, ram),
-        supabase.from('monthly_hatch').select('*').eq('island', island).eq('year', year).eq('month', month).eq('ram', ram).maybeSingle()
+        supabase.from('monthly_hatch').select('*').eq('island', island).eq('year', year).eq('month', month)
       ])
       diram = d
-      existing = ex.data || null
       if (ex.error && /monthly_hatch/.test(ex.error.message)) toast('Jadual monthly_hatch belum wujud — run migration-menetas-buruk.sql dalam Supabase dulu.', 'error')
+      monthRows = ex.data || []
+      existing = monthRows.find(r => r.ram === ram) || null
+      const others = monthRows.filter(r => r.ram !== ram)
+      let note = ''
+      if (ram === 'ALL' && others.length) note = `<div class="text-xs text-amber-300 mt-1">ℹ️ Bulan ini sudah ada rekod ${others.map(r => r.ram).join(' & ')}. Bila rekod Gabung disimpan, rekod Gabung yang dikira (rekod ${others.map(r => r.ram).join(' & ')} diabaikan).</div>`
+      if (ram !== 'ALL' && others.some(r => r.ram === 'ALL')) note = `<div class="text-xs text-amber-300 mt-1">ℹ️ Bulan ini sudah ada rekod <b>Gabung LPP + SFC</b> — rekod itu yang dikira. ${state.profile?.role === 'admin' ? 'Padam rekod Gabung dulu kalau mahu guna per-RAM.' : 'Minta admin padam rekod Gabung kalau mahu guna per-RAM.'}</div>`
       c.querySelector('#m_diramBox').innerHTML = `
-        <div class="flex justify-between"><span class="opacity-70">Telur diram ${MONTH_LABELS[month-1]} ${year} · ${ram}</span><span class="font-display text-lg tabular-num">${(d.b+d.t).toLocaleString()}</span></div>
-        <div class="flex justify-between text-xs opacity-70 tabular-num"><span>Bertag ${d.b.toLocaleString()}</span><span>Tak Bertag ${d.t.toLocaleString()}</span></div>
-        ${existing ? '<div class="text-xs text-amber-300 mt-1">✏️ Rekod bulan ini sudah wujud — hantar semula akan mengemaskini.</div>' : ''}`
+        <div class="flex justify-between"><span class="opacity-70">Telur diram ${MONTH_LABELS[month-1]} ${year} · ${ramLabel(ram)}</span><span class="font-display text-lg tabular-num">${(d.b+d.t).toLocaleString()}</span></div>
+        ${ram === 'ALL' ? '' : `<div class="flex justify-between text-xs opacity-70 tabular-num"><span>Bertag ${d.b.toLocaleString()}</span><span>Tak Bertag ${d.t.toLocaleString()}</span></div>`}
+        ${existing ? '<div class="text-xs text-amber-300 mt-1">✏️ Rekod ini sudah wujud — hantar semula akan mengemaskini.</div>' : ''}
+        ${note}`
       const dr = loadDraft('menetas') || {}
       const sameKey = dr.year == year && dr.month == month && dr.ram === ram
       const pick = (draftVal, exVal) => (sameKey && draftVal !== undefined && draftVal !== '') ? draftVal : (existing ? exVal : '')
+      c.querySelector('#m_total').value = pick(dr.total, existing ? existing.menetas_bertag + existing.menetas_takbertag : '')
       c.querySelector('#m_tm_b').value = pick(dr.tm_b, existing?.menetas_bertag)
       c.querySelector('#m_tm_t').value = pick(dr.tm_t, existing?.menetas_takbertag)
       c.querySelector('#m_tb_b').value = pick(dr.tb_b, existing?.buruk_bertag)
       c.querySelector('#m_tb_t').value = pick(dr.tb_t, existing?.buruk_takbertag)
       c.querySelector('#m_cat').value = (sameKey && dr.cat) ? dr.cat : (existing?.catatan || '')
+      const delBtn = c.querySelector('#m_delete')
+      if (delBtn) delBtn.classList.toggle('hidden', !existing)
       updateLive()
     }
     async function loadYearList() {
       const { data } = await supabase.from('monthly_hatch').select('*').eq('island', island).eq('year', year).order('month').order('ram')
-      if (!data || !data.length) { listHolder.innerHTML = ''; listHolder.appendChild(flatCard(`<div class="text-sm opacity-70">Belum ada rekod menetas bulanan untuk ${island} ${year}.</div>`)); return }
       listHolder.innerHTML = ''
+      if (!data || !data.length) { listHolder.appendChild(flatCard(`<div class="text-sm opacity-70">Belum ada rekod menetas bulanan untuk ${island} ${year}.</div>`)); return }
       const lc = flatCard(`
         <div class="eyebrow mb-2">Rekod Menetas ${island} ${year}</div>
         <p class="text-xs opacity-50 mb-2">Tekan baris untuk ubah</p>
@@ -1145,14 +1190,14 @@ function buildMenetasForm() {
           const m = r.menetas_bertag + r.menetas_takbertag, b = r.buruk_bertag + r.buruk_takbertag
           const rate = (m+b) ? Math.round(m/(m+b)*100) + '%' : '—'
           return `<button type="button" data-m="${r.month}" data-r="${r.ram}" class="w-full flex justify-between text-sm border-b border-white/10 py-1.5 text-left">
-            <span><b>${MONTH_LABELS[r.month-1]}</b> <span class="opacity-60">· ${r.ram}</span></span>
+            <span><b>${MONTH_LABELS[r.month-1]}</b> <span class="opacity-60">· ${r.ram === 'ALL' ? 'Gabung' : r.ram}</span></span>
             <span class="tabular-num"><span class="opacity-70">Menetas</span> ${m.toLocaleString()} · <span class="opacity-70">Buruk</span> ${b.toLocaleString()} · <b>${rate}</b></span>
           </button>`}).join('')}</div>`)
       listHolder.appendChild(lc)
       lc.querySelectorAll('button[data-m]').forEach(btn => btn.onclick = () => {
         month = Number(btn.dataset.m); ram = btn.dataset.r
         c.querySelector('#m_month').value = month
-        c.querySelectorAll('[data-ram]').forEach(x => x.className = x.dataset.ram === ram ? 'active' : '')
+        setRamUI()
         saveDraft('menetas', { year, month, ram }); loadContext(); window.scrollTo({ top: 0, behavior: 'smooth' })
       })
     }
@@ -1160,11 +1205,7 @@ function buildMenetasForm() {
     const resetKey = () => saveDraft('menetas', { year, month, ram })
     c.querySelector('#m_month').onchange = (e) => { month = Number(e.target.value); resetKey(); loadContext() }
     c.querySelector('#m_year').onchange = (e) => { year = Number(e.target.value); resetKey(); loadContext(); loadYearList() }
-    c.querySelectorAll('[data-ram]').forEach(btn => btn.onclick = () => {
-      ram = btn.dataset.ram
-      c.querySelectorAll('[data-ram]').forEach(x => x.className = x === btn ? 'active' : '')
-      resetKey(); loadContext()
-    })
+    c.querySelectorAll('[data-ram]').forEach(btn => btn.onclick = () => { ram = btn.dataset.ram; setRamUI(); resetKey(); loadContext() })
     c.querySelectorAll('input, textarea').forEach(el => el.addEventListener('input', () => { persist(); updateLive() }))
     c.querySelector('#m_fillBuruk').onclick = () => {
       const tm_b = val('#m_tm_b'), tm_t = val('#m_tm_t')
@@ -1173,44 +1214,60 @@ function buildMenetasForm() {
       c.querySelector('#m_tb_t').value = Math.max(0, diram.t - tm_t)
       persist(); updateLive()
     }
+    const delBtn = c.querySelector('#m_delete')
+    if (delBtn) delBtn.onclick = async () => {
+      if (!existing) return
+      if (!confirm(`Padam rekod menetas ${MONTH_LABELS[month-1]} ${year} · ${ramLabel(ram)}?`)) return
+      const { error } = await supabase.from('monthly_hatch').delete().eq('island', island).eq('year', year).eq('month', month).eq('ram', ram)
+      if (error) { toast('Gagal padam: ' + error.message, 'error'); return }
+      toast('Rekod menetas dipadam', 'success'); resetKey(); loadContext(); loadYearList()
+    }
     c.querySelector('#menetasForm').onsubmit = (e) => {
       e.preventDefault()
+      const cur = current()
       const payload = {
         island, year, month, ram,
-        menetas_bertag: val('#m_tm_b'), menetas_takbertag: val('#m_tm_t'),
-        buruk_bertag: val('#m_tb_b'), buruk_takbertag: val('#m_tb_t'),
+        menetas_bertag: ram === 'ALL' ? cur.menetas : cur.tm_b,
+        menetas_takbertag: ram === 'ALL' ? 0 : cur.tm_t,
+        buruk_bertag: ram === 'ALL' ? cur.buruk : cur.tb_b,
+        buruk_takbertag: ram === 'ALL' ? 0 : cur.tb_t,
         catatan: c.querySelector('#m_cat').value || null,
         updated_by: state.profile.id, updated_at: new Date().toISOString()
       }
       if (!existing) payload.created_by = state.profile.id
-      if (!payload.menetas_bertag && !payload.menetas_takbertag && !payload.buruk_bertag && !payload.buruk_takbertag) { toast('Isi sekurang-kurangnya satu angka.', 'error'); return }
-      renderSummary(payload)
+      if (ram === 'ALL' ? !cur.menetas : !(cur.menetas || cur.buruk)) { toast('Isi telur menetas dahulu.', 'error'); return }
+      renderSummary(payload, cur)
     }
     loadContext()
     loadYearList()
   }
 
-  function renderSummary(p) {
+  function renderSummary(p, cur) {
     holder.innerHTML = ''
-    const warn = overDiramWarning([
-      { label: 'Bertag', diram: diram.b, menetas: p.menetas_bertag, buruk: p.buruk_bertag },
-      { label: 'Tak Bertag', diram: diram.t, menetas: p.menetas_takbertag, buruk: p.buruk_takbertag }
-    ])
-    const m = p.menetas_bertag + p.menetas_takbertag, b = p.buruk_bertag + p.buruk_takbertag
+    const warn = overDiramWarning(cur.warnRows)
+    const totalD = diram.b + diram.t
     const row = (k, v) => `<div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">${k}</span><span class="font-semibold tabular-num">${v}</span></div>`
+    const rows = p.ram === 'ALL' ? [
+      row('Jumlah Telur Diram', totalD.toLocaleString()),
+      row('Telur Menetas', cur.menetas.toLocaleString()),
+      row('Telur Buruk (diram − menetas)', cur.buruk.toLocaleString()),
+      row('% Menetas', totalD ? (Math.round(cur.menetas / totalD * 1000) / 10) + '%' : '—')
+    ] : [
+      row('Telur Diram (Bertag / Tak Bertag)', `${diram.b.toLocaleString()} / ${diram.t.toLocaleString()}`),
+      row('Menetas (Bertag / Tak Bertag)', `${p.menetas_bertag.toLocaleString()} / ${p.menetas_takbertag.toLocaleString()}`),
+      row('Buruk (Bertag / Tak Bertag)', `${p.buruk_bertag.toLocaleString()} / ${p.buruk_takbertag.toLocaleString()}`),
+      row('Kadar Menetas', (cur.menetas + cur.buruk) ? Math.round(cur.menetas / (cur.menetas + cur.buruk) * 100) + '%' : '—')
+    ]
     const c = card(`
       <h2 class="font-display text-xl mb-4">Sahkan Menetas Bulanan</h2>
       ${warn ? `<div class="mb-4">${warn}</div>` : ''}
       <div class="space-y-2 text-sm">
         ${row('Pulau', p.island)}
         ${row('Bulan Telur Diram', `${MONTH_LABELS[p.month-1]} ${p.year}`)}
-        ${row('RAM', p.ram)}
-        ${row('Telur Diram (Bertag / Tak Bertag)', `${diram.b.toLocaleString()} / ${diram.t.toLocaleString()}`)}
-        ${row('Menetas (Bertag / Tak Bertag)', `${p.menetas_bertag.toLocaleString()} / ${p.menetas_takbertag.toLocaleString()}`)}
-        ${row('Buruk (Bertag / Tak Bertag)', `${p.buruk_bertag.toLocaleString()} / ${p.buruk_takbertag.toLocaleString()}`)}
-        ${row('Kadar Menetas', (m+b) ? Math.round(m/(m+b)*100) + '%' : '—')}
+        ${row('RAM', ramLabel(p.ram))}
+        ${rows.join('')}
       </div>
-      ${existing ? '<p class="text-xs text-amber-300 mt-3">Ini akan menggantikan rekod sedia ada untuk bulan + RAM ini.</p>' : ''}
+      ${existing ? '<p class="text-xs text-amber-300 mt-3">Ini akan menggantikan rekod sedia ada.</p>' : ''}
       <div class="flex gap-2 mt-6">
         <button id="backBtn" data-esc class="btn btn-ghost flex-1">← Betulkan</button>
         <button id="submitBtn" class="btn btn-primary flex-1" disabled>Tunggu 5s...</button>
@@ -1231,7 +1288,11 @@ function buildMenetasForm() {
       let err = null
       if (!navigator.onLine) queueWrite({ table:'monthly_hatch', op:'upsert', payload: p, onConflict: 'island,year,month,ram' })
       else { const res = await supabase.from('monthly_hatch').upsert(p, { onConflict: 'island,year,month,ram' }); err = res.error }
-      if (err) { submitBtn.disabled = false; submitBtn.textContent = readyLabel; toast('Gagal menghantar: ' + err.message, 'error'); return }
+      if (err) {
+        submitBtn.disabled = false; submitBtn.textContent = readyLabel
+        toast(/check constraint/i.test(err.message) ? 'Pilihan "Gabung" perlukan SQL baharu — run migration-menetas-gabung.sql dalam Supabase dulu.' : 'Gagal menghantar: ' + err.message, 'error')
+        return
+      }
       clearDraft('menetas')
       saveDraft('menetas', { year: p.year, month: p.month, ram: p.ram })
       holder.innerHTML = ''
@@ -1720,9 +1781,17 @@ async function screenMonthDetail() {
   })
   ;(nests||[]).forEach(n => { const h = hatchByRam[n.ram]; if (!h) return; h.m += n.telur_menetas||0; h.b += burukOf(n.telur_buruk, n.telur_menetas, n.jumlah_telur_diram) })
   const monthlyOverride = []
-  ;(hatchRows||[]).forEach(r => { hatchByRam[r.ram] = { m: r.menetas_bertag + r.menetas_takbertag, b: r.buruk_bertag + r.buruk_takbertag }; monthlyOverride.push(r.ram) })
-  const monthMenetas = hatchByRam.LPP.m + hatchByRam.SFC.m
-  const monthBuruk = hatchByRam.LPP.b + hatchByRam.SFC.b
+  ;(hatchRows||[]).filter(r => r.ram !== 'ALL').forEach(r => { hatchByRam[r.ram] = { m: r.menetas_bertag + r.menetas_takbertag, b: r.buruk_bertag + r.buruk_takbertag }; monthlyOverride.push(r.ram) })
+  let monthMenetas = hatchByRam.LPP.m + hatchByRam.SFC.m
+  let monthBuruk = hatchByRam.LPP.b + hatchByRam.SFC.b
+  // Rekod Gabung LPP + SFC: buruk = jumlah diram bulan − menetas
+  const allRow = (hatchRows||[]).find(r => r.ram === 'ALL')
+  if (allRow) {
+    const monthDiram = (daily||[]).reduce((s, d) => s + d.jumlah_telur_diram_bertag + d.jumlah_telur_diram_takbertag, 0) + (nests||[]).reduce((s, n) => s + n.jumlah_telur_diram, 0)
+    monthMenetas = allRow.menetas_bertag + allRow.menetas_takbertag
+    monthBuruk = Math.max(0, monthDiram - monthMenetas)
+    monthlyOverride.length = 0; monthlyOverride.push('LPP + SFC (gabung)')
+  }
 
   let tab = 'ringkasan'
   const tabsWrap = document.createElement('div')
@@ -3026,6 +3095,7 @@ async function exportToExcel(island, year) {
   })
   const fixYearTitle = (xml) => xml.replace(/(<c r="A[12]"[^>]*><is><t[^>]*>)([^<]*)/g, (m, a, t) => a + xmlEsc(t.replace(/&amp;/g, '&').replace(/20\d\d/, String(year))))
 
+  const gabungNotes = {}
   for (let mi = 0; mi < 12; mi++) {
     const path = sheetFile[MONTH_SHEET_NAMES[mi]]
     if (!path || !zip.file(path)) continue
@@ -3055,10 +3125,22 @@ async function exportToExcel(island, year) {
     }
     // Rekod Menetas Bulanan (tiada tarikh) → baris JUMLAH (39) sheet bulan ini.
     // Sheet JUMLAH tahunan ambil dari sini melalui formula =SUM(FEB!K39) dsb.
-    ;(hatchRows||[]).filter(h => h.month === mi + 1).forEach(h => {
-      const cols = h.ram === 'LPP' ? ['K','L','O','P'] : ['M','N','Q','R']
-      ;[h.menetas_bertag, h.menetas_takbertag, h.buruk_bertag, h.buruk_takbertag].forEach((v, i) => up.set(`${cols[i]}39`, Number(v) || 0))
-    })
+    const monthHatch = (hatchRows||[]).filter(h => h.month === mi + 1)
+    const allRow = monthHatch.find(h => h.ram === 'ALL')
+    if (allRow) {
+      // Gabung LPP + SFC: tiada pecahan RAM → isi baris JUMLAH gabungan (41)
+      let monthDiram = 0
+      Object.entries(buckets).forEach(([k, b]) => { if (k.startsWith(`${year}-${String(mi+1).padStart(2,'0')}-`)) monthDiram += b.td_b + b.td_t })
+      const m = allRow.menetas_bertag + allRow.menetas_takbertag
+      up.set('K41', m); up.set('O41', Math.max(0, monthDiram - m))
+      ;['K','L','M','N','O','P','Q','R'].forEach(col => up.set(`${col}40`, null))
+      gabungNotes[mi] = { m, b: Math.max(0, monthDiram - m), pct: monthDiram ? Math.round(m / monthDiram * 1000) / 10 : 0 }
+    } else {
+      monthHatch.forEach(h => {
+        const cols = h.ram === 'LPP' ? ['K','L','O','P'] : ['M','N','Q','R']
+        ;[h.menetas_bertag, h.menetas_takbertag, h.buruk_bertag, h.buruk_takbertag].forEach((v, i) => up.set(`${cols[i]}39`, Number(v) || 0))
+      })
+    }
     const xml = await zip.file(path).async('string')
     zip.file(path, fixYearTitle(patchSheetXml(xml, up)))
   }
@@ -3067,6 +3149,8 @@ async function exportToExcel(island, year) {
   const sumName = Object.keys(sheetFile).find(n => /^JUMLAH/i.test(n))
   if (sumName) {
     const up = new Map()
+    // Bulan dengan rekod Gabung: tiada pecahan RAM, jadi jumlah ditulis dalam Catatan (lajur S)
+    Object.entries(gabungNotes).forEach(([mi, g]) => up.set(`S${9 + Number(mi)}`, `Menetas (gabung LPP+SFC): ${g.m.toLocaleString()} · Buruk: ${g.b.toLocaleString()} · ${g.pct}%`))
     const path = sheetFile[sumName]
     const xml = await zip.file(path).async('string')
     zip.file(path, fixYearTitle(patchSheetXml(xml, up)))
