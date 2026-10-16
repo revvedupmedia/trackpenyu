@@ -275,6 +275,7 @@ async function flushQueue() {
     const w = q[0]
     try {
       if (w.op === 'insert') await supabase.from(w.table).insert(w.payload)
+      else if (w.op === 'upsert') await supabase.from(w.table).upsert(w.payload, { onConflict: w.onConflict })
       else await supabase.from(w.table).update(w.payload).eq('id', w.id)
       q.shift()
     } catch (e) { break }
@@ -353,7 +354,38 @@ function go(route) {
 window.go = go
 window.addEventListener('hashchange', () => render(location.hash.slice(1) || 'island'))
 
+// ---------- Back (Esc on PC) ----------
+// Screens inside the app, in the order visited. Going to the screen just
+// before the current one counts as "back" (pop), so Esc and the browser /
+// Android back button stay in sync.
+const IN_APP_ROUTES = ['entry','entries','editentry','monthdetail','dashboard','admin']
+const routeTrail = []
+function trackRoute(route) {
+  if (!IN_APP_ROUTES.includes(route)) { routeTrail.length = 0; return }
+  if (routeTrail[routeTrail.length - 1] === route) return
+  if (routeTrail[routeTrail.length - 2] === route) routeTrail.pop()
+  else routeTrail.push(route)
+  if (routeTrail.length > 30) routeTrail.shift()
+}
+function goBack() {
+  // 1) a back button on the current screen (e.g. "← Betulkan", "← Balik ke Dashboard")
+  const btn = app.querySelector('[data-esc]') || app.querySelector('.btn-back')
+  if (btn && btn.offsetParent !== null) { btn.click(); return true }
+  // 2) previous in-app screen
+  if (routeTrail.length >= 2) { go(routeTrail[routeTrail.length - 2]); return true }
+  return false
+}
+window.goBack = goBack
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return
+  if (document.querySelector('.chart-expand-overlay')) return // chart fullscreen closes itself
+  const a = document.activeElement
+  if (a && ['INPUT','TEXTAREA','SELECT'].includes(a.tagName)) { a.blur(); return } // 1st Esc: leave the field
+  if (goBack()) e.preventDefault()
+})
+
 async function render(route) {
+  trackRoute(route)
   document.getElementById('navbar').classList.toggle('hidden', !['entry','entries','dashboard','admin'].includes(route))
   if (['entry','entries','monthdetail','dashboard','admin'].includes(route) && !state.profile) {
     const { data } = await supabase.auth.getUser()
@@ -507,22 +539,27 @@ function screenEntry() {
       <span class="rounded px-2.5 py-1 text-xs font-semibold bg-teal-900/40">${state.island}</span>
     </div>
     <div class="seg mb-6">
-      <button id="modeHarian" class="${mode==='harian'?'active':''}">Entri Harian</button>
-      <button id="modeIndividu" class="${mode==='individu'?'active':''}">Entri Individu</button>
+      <button id="modeHarian" class="${mode==='harian'?'active':''}">Harian</button>
+      <button id="modeIndividu" class="${mode==='individu'?'active':''}">Individu</button>
+      <button id="modeMenetas" class="${mode==='menetas'?'active':''}">Menetas Bulanan</button>
     </div>
     <div id="entryBody"></div>
   `
   const body = wrap.querySelector('#entryBody')
+  const builders = { harian: buildHarianForm, individu: buildIndividuForm, menetas: buildMenetasForm }
+  if (!builders[mode]) mode = 'harian'
   function setMode(m) {
     mode = m; localStorage.setItem('penyu-lastmode', m)
     wrap.querySelector('#modeHarian').className = mode==='harian' ? 'active' : ''
     wrap.querySelector('#modeIndividu').className = mode==='individu' ? 'active' : ''
+    wrap.querySelector('#modeMenetas').className = mode==='menetas' ? 'active' : ''
     body.innerHTML = ''
-    body.appendChild(mode === 'harian' ? buildHarianForm() : buildIndividuForm())
+    body.appendChild(builders[mode]())
   }
   wrap.querySelector('#modeHarian').onclick = () => setMode('harian')
   wrap.querySelector('#modeIndividu').onclick = () => setMode('individu')
-  body.appendChild(mode === 'harian' ? buildHarianForm() : buildIndividuForm())
+  wrap.querySelector('#modeMenetas').onclick = () => setMode('menetas')
+  body.appendChild(builders[mode]())
   return wrap
 }
 
@@ -635,7 +672,7 @@ function buildHarianForm() {
         <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Jumlah Telur (Bertag/Tak)</span><span class="font-semibold tabular-num">${payload.jumlah_telur_diram_bertag} / ${payload.jumlah_telur_diram_takbertag}</span></div>
       </div>
       <div class="flex gap-2 mt-6">
-        <button id="backBtn" class="btn btn-ghost flex-1">← Betulkan</button>
+        <button id="backBtn" data-esc class="btn btn-ghost flex-1">← Betulkan</button>
         <button id="submitBtn" class="btn btn-primary flex-1" disabled>Tunggu 5s...</button>
       </div>
     `)
@@ -762,7 +799,7 @@ function buildIndividuForm() {
       </div>
       <div class="flex justify-between text-sm mb-4 pt-2 border-t border-white/20"><span class="opacity-80 font-semibold">Jumlah Keseluruhan</span><span class="font-display text-lg tabular-num">${totalTelur} telur</span></div>
       <div class="flex gap-2">
-        <button id="backBtn" class="btn btn-ghost flex-1">← Betulkan</button>
+        <button id="backBtn" data-esc class="btn btn-ghost flex-1">← Betulkan</button>
         <button id="submitBtn" class="btn btn-primary flex-1" disabled>Tunggu 5s...</button>
       </div>
     `)
@@ -793,6 +830,247 @@ function buildIndividuForm() {
   }
 
   renderSetup()
+  return holder
+}
+
+
+// =========================================================================
+// MENETAS BULANAN — rekod menetas + buruk ikut BULAN TELUR DIRAM, per RAM.
+// Sama logik dengan template Excel (buruk = diram - menetas pada baris
+// tarikh diram). Kalau rekod bulanan wujud, ia menggantikan jumlah
+// menetas/buruk harian untuk bulan + RAM tersebut.
+// =========================================================================
+const HATCH_COLORS = { menetas: '#2FA4B8', buruk: '#DC6A40', belum: 'rgba(148,163,184,.35)' }
+
+// Jumlah telur diram (bertag / tak bertag) untuk satu pulau + bulan + RAM
+async function fetchDiramMonth(island, year, month, ram) {
+  const start = `${year}-${String(month).padStart(2,'0')}-01`
+  const end = `${year}-${String(month).padStart(2,'0')}-${String(new Date(year, month, 0).getDate()).padStart(2,'0')}`
+  const [dRes, nRes] = await Promise.all([
+    supabase.from('daily_entries').select('jumlah_telur_diram_bertag, jumlah_telur_diram_takbertag').eq('island', island).eq('ram', ram).gte('tarikh', start).lte('tarikh', end),
+    supabase.from('nest_records').select('bertag, jumlah_telur_diram').eq('island', island).eq('ram', ram).gte('tarikh_dijumpai', start).lte('tarikh_dijumpai', end)
+  ])
+  let b = 0, t = 0
+  ;(dRes.data||[]).forEach(d => { b += d.jumlah_telur_diram_bertag||0; t += d.jumlah_telur_diram_takbertag||0 })
+  ;(nRes.data||[]).forEach(n => { if (n.bertag) b += n.jumlah_telur_diram||0; else t += n.jumlah_telur_diram||0 })
+  return { b, t }
+}
+
+// Amaran bila menetas + buruk melebihi telur diram. Pulangkan '' kalau OK.
+function overDiramWarning(rows) {
+  const over = rows.filter(r => r.diram !== null && (r.menetas + r.buruk) > r.diram)
+  if (!over.length) return ''
+  return `
+    <div class="text-sm bg-red-500/10 border border-red-500/40 rounded-xl px-3 py-3">
+      <div class="font-semibold mb-1">⚠️ Melebihi jumlah telur diram</div>
+      ${over.map(r => `<div class="text-xs tabular-num">${r.label}: menetas ${r.menetas.toLocaleString()} + buruk ${r.buruk.toLocaleString()} = <b>${(r.menetas+r.buruk).toLocaleString()}</b>, tetapi diram hanya ${r.diram.toLocaleString()} (lebih ${(r.menetas+r.buruk-r.diram).toLocaleString()})</div>`).join('')}
+      <div class="text-xs opacity-80 mt-1">Semak semula angka. Kalau memang betul, anda masih boleh teruskan.</div>
+    </div>`
+}
+
+function buildMenetasForm() {
+  const now = new Date()
+  const def = new Date(now.getFullYear(), now.getMonth() - 2, 1) // telur menetas ~45-60 hari selepas diram
+  const draft = loadDraft('menetas') || {}
+  let year = Number(draft.year) || def.getFullYear()
+  let month = Number(draft.month) || (def.getMonth() + 1)
+  let ram = draft.ram || 'LPP'
+  const island = state.island
+  const holder = document.createElement('div')
+  let diram = { b: 0, t: 0 }
+  let existing = null
+
+  const yearOpts = Array.from({length:6}, (_,i) => now.getFullYear() - i)
+  if (!yearOpts.includes(year)) yearOpts.push(year)
+
+  async function renderForm() {
+    holder.innerHTML = ''
+    const c = card(`
+      <form id="menetasForm" class="space-y-4">
+        <p class="text-xs opacity-70">Rekod ikut <b>bulan telur itu DIRAM</b> (bukan bulan ia menetas) — sama macam template Excel.</p>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-sm opacity-80">Bulan Telur Diram</label><select id="m_month">${MONTH_LABELS.map((ml,i)=>`<option value="${i+1}" ${i+1===month?'selected':''}>${ml}</option>`).join('')}</select></div>
+          <div><label class="text-sm opacity-80">Tahun</label><select id="m_year">${yearOpts.map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join('')}</select></div>
+        </div>
+        <div>
+          <label class="text-sm opacity-80">RAM</label>
+          <div class="seg mt-1">
+            <button type="button" data-ram="LPP" class="${ram==='LPP'?'active':''}">LPP</button>
+            <button type="button" data-ram="SFC" class="${ram==='SFC'?'active':''}">SFC</button>
+          </div>
+        </div>
+        <div id="m_diramBox" class="frosted-flat p-3 text-sm">${skeletonBlock(1)}</div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-xs opacity-70">Telur Menetas (Bertag)</label><input type="number" inputmode="numeric" min="0" id="m_tm_b" class="text-lg" /></div>
+          <div><label class="text-xs opacity-70">Telur Menetas (Tak Bertag)</label><input type="number" inputmode="numeric" min="0" id="m_tm_t" class="text-lg" /></div>
+          <div><label class="text-xs opacity-70">Telur Buruk (Bertag)</label><input type="number" inputmode="numeric" min="0" id="m_tb_b" class="text-lg" /></div>
+          <div><label class="text-xs opacity-70">Telur Buruk (Tak Bertag)</label><input type="number" inputmode="numeric" min="0" id="m_tb_t" class="text-lg" /></div>
+        </div>
+        <button type="button" id="m_fillBuruk" class="btn btn-ghost btn-sm w-full">Isi baki sebagai telur buruk (diram − menetas)</button>
+        <div id="m_live"></div>
+        <div><label class="text-sm opacity-80">Catatan (pilihan)</label><textarea id="m_cat" rows="2"></textarea></div>
+        <button type="submit" class="btn btn-primary w-full">Semak &amp; Hantar →</button>
+      </form>
+    `)
+    holder.appendChild(c)
+    const listHolder = document.createElement('div')
+    listHolder.className = 'mt-4'
+    holder.appendChild(listHolder)
+
+    const val = (id) => { const v = c.querySelector(id).value; return v === '' ? 0 : Math.max(0, Number(v)) }
+    function persist() {
+      saveDraft('menetas', { year, month, ram,
+        tm_b: c.querySelector('#m_tm_b').value, tm_t: c.querySelector('#m_tm_t').value,
+        tb_b: c.querySelector('#m_tb_b').value, tb_t: c.querySelector('#m_tb_t').value,
+        cat: c.querySelector('#m_cat').value })
+    }
+    function updateLive() {
+      const tm_b = val('#m_tm_b'), tm_t = val('#m_tm_t'), tb_b = val('#m_tb_b'), tb_t = val('#m_tb_t')
+      const totalD = diram.b + diram.t, totalM = tm_b + tm_t, totalB = tb_b + tb_t
+      const baki = totalD - totalM - totalB
+      const rate = (totalM + totalB) ? Math.round(totalM / (totalM + totalB) * 100) : null
+      c.querySelector('#m_live').innerHTML = `
+        <div class="grid grid-cols-3 gap-2 text-center text-xs mb-2">
+          <div class="frosted-flat p-2"><div class="opacity-70">Menetas</div><div class="font-display text-lg tabular-num">${totalM.toLocaleString()}</div></div>
+          <div class="frosted-flat p-2"><div class="opacity-70">Buruk</div><div class="font-display text-lg tabular-num">${totalB.toLocaleString()}</div></div>
+          <div class="frosted-flat p-2"><div class="opacity-70">Kadar Menetas</div><div class="font-display text-lg tabular-num">${rate === null ? '—' : rate + '%'}</div></div>
+        </div>
+        ${baki >= 0 && totalD ? `<div class="text-xs opacity-70 text-center mb-2">Baki belum direkod: <b class="tabular-num">${baki.toLocaleString()}</b> telur</div>` : ''}
+        ${overDiramWarning([
+          { label: 'Bertag', diram: diram.b, menetas: tm_b, buruk: tb_b },
+          { label: 'Tak Bertag', diram: diram.t, menetas: tm_t, buruk: tb_t }
+        ])}`
+    }
+    async function loadContext() {
+      c.querySelector('#m_diramBox').innerHTML = skeletonBlock(1)
+      const [d, ex] = await Promise.all([
+        fetchDiramMonth(island, year, month, ram),
+        supabase.from('monthly_hatch').select('*').eq('island', island).eq('year', year).eq('month', month).eq('ram', ram).maybeSingle()
+      ])
+      diram = d
+      existing = ex.data || null
+      if (ex.error && /monthly_hatch/.test(ex.error.message)) toast('Jadual monthly_hatch belum wujud — run migration-menetas-buruk.sql dalam Supabase dulu.', 'error')
+      c.querySelector('#m_diramBox').innerHTML = `
+        <div class="flex justify-between"><span class="opacity-70">Telur diram ${MONTH_LABELS[month-1]} ${year} · ${ram}</span><span class="font-display text-lg tabular-num">${(d.b+d.t).toLocaleString()}</span></div>
+        <div class="flex justify-between text-xs opacity-70 tabular-num"><span>Bertag ${d.b.toLocaleString()}</span><span>Tak Bertag ${d.t.toLocaleString()}</span></div>
+        ${existing ? '<div class="text-xs text-amber-300 mt-1">✏️ Rekod bulan ini sudah wujud — hantar semula akan mengemaskini.</div>' : ''}`
+      const dr = loadDraft('menetas') || {}
+      const sameKey = dr.year == year && dr.month == month && dr.ram === ram
+      const pick = (draftVal, exVal) => (sameKey && draftVal !== undefined && draftVal !== '') ? draftVal : (existing ? exVal : '')
+      c.querySelector('#m_tm_b').value = pick(dr.tm_b, existing?.menetas_bertag)
+      c.querySelector('#m_tm_t').value = pick(dr.tm_t, existing?.menetas_takbertag)
+      c.querySelector('#m_tb_b').value = pick(dr.tb_b, existing?.buruk_bertag)
+      c.querySelector('#m_tb_t').value = pick(dr.tb_t, existing?.buruk_takbertag)
+      c.querySelector('#m_cat').value = (sameKey && dr.cat) ? dr.cat : (existing?.catatan || '')
+      updateLive()
+    }
+    async function loadYearList() {
+      const { data } = await supabase.from('monthly_hatch').select('*').eq('island', island).eq('year', year).order('month').order('ram')
+      if (!data || !data.length) { listHolder.innerHTML = ''; listHolder.appendChild(flatCard(`<div class="text-sm opacity-70">Belum ada rekod menetas bulanan untuk ${island} ${year}.</div>`)); return }
+      listHolder.innerHTML = ''
+      const lc = flatCard(`
+        <div class="eyebrow mb-2">Rekod Menetas ${island} ${year}</div>
+        <p class="text-xs opacity-50 mb-2">Tekan baris untuk ubah</p>
+        <div class="space-y-1">${data.map(r => {
+          const m = r.menetas_bertag + r.menetas_takbertag, b = r.buruk_bertag + r.buruk_takbertag
+          const rate = (m+b) ? Math.round(m/(m+b)*100) + '%' : '—'
+          return `<button type="button" data-m="${r.month}" data-r="${r.ram}" class="w-full flex justify-between text-sm border-b border-white/10 py-1.5 text-left">
+            <span><b>${MONTH_LABELS[r.month-1]}</b> <span class="opacity-60">· ${r.ram}</span></span>
+            <span class="tabular-num"><span class="opacity-70">Menetas</span> ${m.toLocaleString()} · <span class="opacity-70">Buruk</span> ${b.toLocaleString()} · <b>${rate}</b></span>
+          </button>`}).join('')}</div>`)
+      listHolder.appendChild(lc)
+      lc.querySelectorAll('button[data-m]').forEach(btn => btn.onclick = () => {
+        month = Number(btn.dataset.m); ram = btn.dataset.r
+        c.querySelector('#m_month').value = month
+        c.querySelectorAll('[data-ram]').forEach(x => x.className = x.dataset.ram === ram ? 'active' : '')
+        saveDraft('menetas', { year, month, ram }); loadContext(); window.scrollTo({ top: 0, behavior: 'smooth' })
+      })
+    }
+
+    const resetKey = () => saveDraft('menetas', { year, month, ram })
+    c.querySelector('#m_month').onchange = (e) => { month = Number(e.target.value); resetKey(); loadContext() }
+    c.querySelector('#m_year').onchange = (e) => { year = Number(e.target.value); resetKey(); loadContext(); loadYearList() }
+    c.querySelectorAll('[data-ram]').forEach(btn => btn.onclick = () => {
+      ram = btn.dataset.ram
+      c.querySelectorAll('[data-ram]').forEach(x => x.className = x === btn ? 'active' : '')
+      resetKey(); loadContext()
+    })
+    c.querySelectorAll('input, textarea').forEach(el => el.addEventListener('input', () => { persist(); updateLive() }))
+    c.querySelector('#m_fillBuruk').onclick = () => {
+      const tm_b = val('#m_tm_b'), tm_t = val('#m_tm_t')
+      if (!tm_b && !tm_t) { toast('Isi telur menetas dahulu.', 'info'); return }
+      c.querySelector('#m_tb_b').value = Math.max(0, diram.b - tm_b)
+      c.querySelector('#m_tb_t').value = Math.max(0, diram.t - tm_t)
+      persist(); updateLive()
+    }
+    c.querySelector('#menetasForm').onsubmit = (e) => {
+      e.preventDefault()
+      const payload = {
+        island, year, month, ram,
+        menetas_bertag: val('#m_tm_b'), menetas_takbertag: val('#m_tm_t'),
+        buruk_bertag: val('#m_tb_b'), buruk_takbertag: val('#m_tb_t'),
+        catatan: c.querySelector('#m_cat').value || null,
+        updated_by: state.profile.id, updated_at: new Date().toISOString()
+      }
+      if (!existing) payload.created_by = state.profile.id
+      if (!payload.menetas_bertag && !payload.menetas_takbertag && !payload.buruk_bertag && !payload.buruk_takbertag) { toast('Isi sekurang-kurangnya satu angka.', 'error'); return }
+      renderSummary(payload)
+    }
+    loadContext()
+    loadYearList()
+  }
+
+  function renderSummary(p) {
+    holder.innerHTML = ''
+    const warn = overDiramWarning([
+      { label: 'Bertag', diram: diram.b, menetas: p.menetas_bertag, buruk: p.buruk_bertag },
+      { label: 'Tak Bertag', diram: diram.t, menetas: p.menetas_takbertag, buruk: p.buruk_takbertag }
+    ])
+    const m = p.menetas_bertag + p.menetas_takbertag, b = p.buruk_bertag + p.buruk_takbertag
+    const row = (k, v) => `<div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">${k}</span><span class="font-semibold tabular-num">${v}</span></div>`
+    const c = card(`
+      <h2 class="font-display text-xl mb-4">Sahkan Menetas Bulanan</h2>
+      ${warn ? `<div class="mb-4">${warn}</div>` : ''}
+      <div class="space-y-2 text-sm">
+        ${row('Pulau', p.island)}
+        ${row('Bulan Telur Diram', `${MONTH_LABELS[p.month-1]} ${p.year}`)}
+        ${row('RAM', p.ram)}
+        ${row('Telur Diram (Bertag / Tak Bertag)', `${diram.b.toLocaleString()} / ${diram.t.toLocaleString()}`)}
+        ${row('Menetas (Bertag / Tak Bertag)', `${p.menetas_bertag.toLocaleString()} / ${p.menetas_takbertag.toLocaleString()}`)}
+        ${row('Buruk (Bertag / Tak Bertag)', `${p.buruk_bertag.toLocaleString()} / ${p.buruk_takbertag.toLocaleString()}`)}
+        ${row('Kadar Menetas', (m+b) ? Math.round(m/(m+b)*100) + '%' : '—')}
+      </div>
+      ${existing ? '<p class="text-xs text-amber-300 mt-3">Ini akan menggantikan rekod sedia ada untuk bulan + RAM ini.</p>' : ''}
+      <div class="flex gap-2 mt-6">
+        <button id="backBtn" data-esc class="btn btn-ghost flex-1">← Betulkan</button>
+        <button id="submitBtn" class="btn btn-primary flex-1" disabled>Tunggu 5s...</button>
+      </div>
+    `)
+    holder.appendChild(c)
+    c.querySelector('#backBtn').onclick = renderForm
+    const submitBtn = c.querySelector('#submitBtn')
+    const readyLabel = warn ? 'Teruskan' : 'Hantar Sekarang'
+    let countdown = 5
+    const iv = setInterval(() => {
+      countdown--
+      if (countdown <= 0) { clearInterval(iv); submitBtn.disabled = false; submitBtn.textContent = readyLabel }
+      else submitBtn.textContent = `Tunggu ${countdown}s...`
+    }, 1000)
+    submitBtn.onclick = async () => {
+      submitBtn.disabled = true; submitBtn.textContent = 'Menghantar...'
+      let err = null
+      if (!navigator.onLine) queueWrite({ table:'monthly_hatch', op:'upsert', payload: p, onConflict: 'island,year,month,ram' })
+      else { const res = await supabase.from('monthly_hatch').upsert(p, { onConflict: 'island,year,month,ram' }); err = res.error }
+      if (err) { submitBtn.disabled = false; submitBtn.textContent = readyLabel; toast('Gagal menghantar: ' + err.message, 'error'); return }
+      clearDraft('menetas')
+      saveDraft('menetas', { year: p.year, month: p.month, ram: p.ram })
+      holder.innerHTML = ''
+      holder.appendChild(card(`<div class="text-center py-10"><div class="text-5xl mb-3">✅</div><p class="font-display text-lg">${navigator.onLine ? 'Data menetas disimpan!' : 'Disimpan — akan sync bila online'}</p></div>`))
+      setTimeout(renderForm, 1500)
+    }
+  }
+
+  renderForm()
   return holder
 }
 
@@ -939,6 +1217,37 @@ async function screenEntries() {
 }
 
 // ---------- Edit entry (fixes old bug: now always targets a specific id) ----------
+// Live warning + "Teruskan" after 5s when menetas + buruk > diram.
+function attachHatchGuard(c, getRows, saveBtn, doSave) {
+  const box = c.querySelector('#e_warn')
+  const label = saveBtn.textContent
+  let armed = false, iv = null
+  function refresh() {
+    const html = overDiramWarning(getRows())
+    box.innerHTML = html
+    if (!html) { armed = false; clearInterval(iv); saveBtn.disabled = false; saveBtn.textContent = label }
+    return html
+  }
+  c.querySelectorAll('input').forEach(i => i.addEventListener('input', refresh))
+  refresh()
+  saveBtn.onclick = async () => {
+    if (refresh() && !armed) {
+      armed = true
+      let cd = 5
+      saveBtn.disabled = true; saveBtn.textContent = `Semak amaran... ${cd}s`
+      clearInterval(iv)
+      iv = setInterval(() => {
+        cd--
+        if (cd <= 0) { clearInterval(iv); saveBtn.disabled = false; saveBtn.textContent = 'Teruskan Simpan' }
+        else saveBtn.textContent = `Semak amaran... ${cd}s`
+      }, 1000)
+      box.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return
+    }
+    await doSave()
+  }
+}
+
 function attachDeleteUI(wrap, table, id) {
   const delCard = card(`
     <h2 class="font-display text-lg mb-2 text-red-400">Zon Bahaya</h2>
@@ -987,18 +1296,25 @@ async function screenEditEntry() {
           <div><label class="text-xs opacity-70">Telur Diram Bertag</label><input type="number" id="e_td_b" value="${d.jumlah_telur_diram_bertag}" /></div>
           <div><label class="text-xs opacity-70">Telur Diram Tak Bertag</label><input type="number" id="e_td_t" value="${d.jumlah_telur_diram_takbertag}" /></div>
         </div>
-        <div class="eyebrow mt-2">Hatch (isi bila dah menetas, ~45-60 hari)</div>
+        <div class="eyebrow mt-2">Penetasan (isi bila dah menetas, 45–60 hari)</div>
         <div class="grid grid-cols-2 gap-3">
           <div><label class="text-xs opacity-70">Menetas Bertag</label><input type="number" id="e_tm_b" value="${d.telur_menetas_bertag ?? ''}" /></div>
           <div><label class="text-xs opacity-70">Menetas Tak Bertag</label><input type="number" id="e_tm_t" value="${d.telur_menetas_takbertag ?? ''}" /></div>
+          <div><label class="text-xs opacity-70">Buruk Bertag</label><input type="number" id="e_tb_b" value="${d.telur_buruk_bertag ?? ''}" placeholder="auto" /></div>
+          <div><label class="text-xs opacity-70">Buruk Tak Bertag</label><input type="number" id="e_tb_t" value="${d.telur_buruk_takbertag ?? ''}" placeholder="auto" /></div>
         </div>
+        <div id="e_warn"></div>
         <div><label class="text-xs opacity-70">Jumlah Telur Dikeluarkan</label><input type="number" id="e_dk" value="${d.jumlah_telur_dikeluarkan ?? ''}" /></div>
         <div><label class="text-xs opacity-70">Catatan</label><textarea id="e_cat" rows="2">${d.catatan||''}</textarea></div>
         <button id="e_save" class="btn btn-primary w-full mt-2">Simpan Perubahan</button>
       </div>
     `)
     wrap.appendChild(c)
-    c.querySelector('#e_save').onclick = async () => {
+    const nv = (id) => { const v = c.querySelector(id).value; return v === '' ? null : Number(v) }
+    attachHatchGuard(c, () => [
+      { label: 'Bertag', diram: nv('#e_td_b') || 0, menetas: nv('#e_tm_b') || 0, buruk: nv('#e_tb_b') || 0 },
+      { label: 'Tak Bertag', diram: nv('#e_td_t') || 0, menetas: nv('#e_tm_t') || 0, buruk: nv('#e_tb_t') || 0 }
+    ], c.querySelector('#e_save'), async () => {
       const payload = {
         tarikh: c.querySelector('#e_tarikh').value,
         bilangan_penyu_bertag: Number(c.querySelector('#e_bp_b').value||0),
@@ -1007,6 +1323,8 @@ async function screenEditEntry() {
         jumlah_telur_diram_takbertag: Number(c.querySelector('#e_td_t').value||0),
         telur_menetas_bertag: c.querySelector('#e_tm_b').value === '' ? null : Number(c.querySelector('#e_tm_b').value),
         telur_menetas_takbertag: c.querySelector('#e_tm_t').value === '' ? null : Number(c.querySelector('#e_tm_t').value),
+        telur_buruk_bertag: nv('#e_tb_b'),
+        telur_buruk_takbertag: nv('#e_tb_t'),
         jumlah_telur_dikeluarkan: c.querySelector('#e_dk').value === '' ? null : Number(c.querySelector('#e_dk').value),
         catatan: c.querySelector('#e_cat').value || null,
         updated_by: state.profile.id
@@ -1014,7 +1332,7 @@ async function screenEditEntry() {
       const { error } = await supabase.from('daily_entries').update(payload).eq('id', target.id)
       if (error) { toast('Gagal simpan: ' + error.message, 'error'); return }
       toast('Disimpan', 'success'); go('entries')
-    }
+    })
     attachDeleteUI(wrap, 'daily_entries', target.id)
   } else {
     const { data: n } = await supabase.from('nest_records').select('*').eq('id', target.id).single()
@@ -1032,11 +1350,12 @@ async function screenEditEntry() {
           </div>
         </div>
         <div><label class="text-xs opacity-70">Jumlah Telur Diram</label><input type="number" id="e_td" value="${n.jumlah_telur_diram}" /></div>
-        <div class="eyebrow mt-2">Hatch (isi bila dah menetas)</div>
+        <div class="eyebrow mt-2">Penetasan (isi bila dah menetas)</div>
         <div class="grid grid-cols-2 gap-3">
           <div><label class="text-xs opacity-70">Telur Menetas</label><input type="number" id="e_tm" value="${n.telur_menetas ?? ''}" /></div>
           <div><label class="text-xs opacity-70">Telur Buruk</label><input type="number" id="e_tb" value="${n.telur_buruk ?? ''}" /></div>
         </div>
+        <div id="e_warn"></div>
         <div><label class="text-xs opacity-70">Catatan</label><textarea id="e_cat" rows="2">${n.catatan||''}</textarea></div>
         <button id="e_save" class="btn btn-primary w-full mt-2">Simpan Perubahan</button>
       </div>
@@ -1047,7 +1366,8 @@ async function screenEditEntry() {
     c.querySelector('#e_b_no').onclick = () => { bertag=false; c.querySelector('#e_b_no').className='active'; c.querySelector('#e_b_yes').className='' }
     c.querySelector('#e_r_lpp').onclick = () => { ram='LPP'; c.querySelector('#e_r_lpp').className='active'; c.querySelector('#e_r_sfc').className='' }
     c.querySelector('#e_r_sfc').onclick = () => { ram='SFC'; c.querySelector('#e_r_sfc').className='active'; c.querySelector('#e_r_lpp').className='' }
-    c.querySelector('#e_save').onclick = async () => {
+    attachHatchGuard(c, () => [{ label: 'Sarang ini', diram: Number(c.querySelector('#e_td').value||0), menetas: Number(c.querySelector('#e_tm').value||0), buruk: Number(c.querySelector('#e_tb').value||0) }],
+      c.querySelector('#e_save'), async () => {
       const menetas = c.querySelector('#e_tm').value === '' ? null : Number(c.querySelector('#e_tm').value)
       const payload = {
         tarikh_dijumpai: c.querySelector('#e_tarikh').value, bertag, ram,
@@ -1061,7 +1381,7 @@ async function screenEditEntry() {
       const { error } = await supabase.from('nest_records').update(payload).eq('id', target.id)
       if (error) { toast('Gagal simpan: ' + error.message, 'error'); return }
       toast('Disimpan', 'success'); go('entries')
-    }
+    })
     attachDeleteUI(wrap, 'nest_records', target.id)
   }
   return wrap
@@ -1202,10 +1522,25 @@ async function screenMonthDetail() {
   const daysInMonth = new Date(year, month, 0).getDate()
   const monthEnd = `${year}-${String(month).padStart(2,'0')}-${String(daysInMonth).padStart(2,'0')}`
 
-  const [{ data: daily }, { data: nests }] = await Promise.all([
+  const [{ data: daily }, { data: nests }, { data: hatchRows }] = await Promise.all([
     supabase.from('daily_entries').select('*').eq('island', island).gte('tarikh', monthStart).lte('tarikh', monthEnd),
-    supabase.from('nest_records').select('*').eq('island', island).gte('tarikh_dijumpai', monthStart).lte('tarikh_dijumpai', monthEnd).order('created_at')
+    supabase.from('nest_records').select('*').eq('island', island).gte('tarikh_dijumpai', monthStart).lte('tarikh_dijumpai', monthEnd).order('created_at'),
+    supabase.from('monthly_hatch').select('*').eq('island', island).eq('year', year).eq('month', month)
   ])
+  // Buruk per baris: nilai sebenar kalau diisi, kalau tidak (dan menetas ada) = diram − menetas
+  const burukOf = (buruk, menetas, diram) => buruk !== null && buruk !== undefined ? buruk : (menetas !== null && menetas !== undefined ? Math.max(0, diram - menetas) : 0)
+  // Menetas/buruk sebulan per RAM — rekod Menetas Bulanan menggantikan jumlah harian
+  const hatchByRam = { LPP: { m:0, b:0 }, SFC: { m:0, b:0 } }
+  ;(daily||[]).forEach(d => {
+    const h = hatchByRam[d.ram]; if (!h) return
+    h.m += (d.telur_menetas_bertag||0) + (d.telur_menetas_takbertag||0)
+    h.b += burukOf(d.telur_buruk_bertag, d.telur_menetas_bertag, d.jumlah_telur_diram_bertag) + burukOf(d.telur_buruk_takbertag, d.telur_menetas_takbertag, d.jumlah_telur_diram_takbertag)
+  })
+  ;(nests||[]).forEach(n => { const h = hatchByRam[n.ram]; if (!h) return; h.m += n.telur_menetas||0; h.b += burukOf(n.telur_buruk, n.telur_menetas, n.jumlah_telur_diram) })
+  const monthlyOverride = []
+  ;(hatchRows||[]).forEach(r => { hatchByRam[r.ram] = { m: r.menetas_bertag + r.menetas_takbertag, b: r.buruk_bertag + r.buruk_takbertag }; monthlyOverride.push(r.ram) })
+  const monthMenetas = hatchByRam.LPP.m + hatchByRam.SFC.m
+  const monthBuruk = hatchByRam.LPP.b + hatchByRam.SFC.b
 
   let tab = 'ringkasan'
   const tabsWrap = document.createElement('div')
@@ -1220,7 +1555,7 @@ async function screenMonthDetail() {
     // matches how the user reads the Excel export at a glance.
     const byDay = {}
     function ensureDay(d) {
-      if (!byDay[d]) byDay[d] = { bp_b:0, bp_t:0, td_b:0, td_t:0, tm_b:0, tm_t:0, hasMenetas:false }
+      if (!byDay[d]) byDay[d] = { bp_b:0, bp_t:0, td_b:0, td_t:0, tm_b:0, tm_t:0, tb:0, hasMenetas:false }
       return byDay[d]
     }
     ;(daily||[]).forEach(d => {
@@ -1229,11 +1564,14 @@ async function screenMonthDetail() {
       b.td_b += d.jumlah_telur_diram_bertag; b.td_t += d.jumlah_telur_diram_takbertag
       if (d.telur_menetas_bertag !== null) { b.tm_b += d.telur_menetas_bertag||0; b.hasMenetas = true }
       if (d.telur_menetas_takbertag !== null) { b.tm_t += d.telur_menetas_takbertag||0; b.hasMenetas = true }
+      const tb = burukOf(d.telur_buruk_bertag, d.telur_menetas_bertag, d.jumlah_telur_diram_bertag) + burukOf(d.telur_buruk_takbertag, d.telur_menetas_takbertag, d.jumlah_telur_diram_takbertag)
+      if (tb || d.telur_buruk_bertag !== null || d.telur_buruk_takbertag !== null) { b.tb += tb; b.hasMenetas = true }
     })
     ;(nests||[]).forEach(n => {
       const b = ensureDay(n.tarikh_dijumpai)
       if (n.bertag) { b.bp_b += 1; b.td_b += n.jumlah_telur_diram; if (n.telur_menetas !== null) { b.tm_b += n.telur_menetas||0; b.hasMenetas = true } }
       else { b.bp_t += 1; b.td_t += n.jumlah_telur_diram; if (n.telur_menetas !== null) { b.tm_t += n.telur_menetas||0; b.hasMenetas = true } }
+      if (n.telur_menetas !== null || n.telur_buruk !== null) { b.tb += burukOf(n.telur_buruk, n.telur_menetas, n.jumlah_telur_diram); b.hasMenetas = true }
     })
 
     bodyHolder.innerHTML = ''
@@ -1253,6 +1591,7 @@ async function screenMonthDetail() {
           <td class="py-2 px-2 tabular-num font-semibold">${v.td_b}</td>
           <td class="py-2 px-2 tabular-num font-semibold">${v.td_t}</td>
           <td class="py-2 px-2 tabular-num">${v.hasMenetas ? (v.tm_b + v.tm_t) : '-'}</td>
+          <td class="py-2 px-2 tabular-num">${v.hasMenetas ? v.tb : '-'}</td>
         </tr>`
     }).join('')
 
@@ -1265,7 +1604,7 @@ async function screenMonthDetail() {
     const tableCard = flatCard(`
       <div class="eyebrow mb-3">Jadual Harian — ${dayKeys.length} hari ada data</div>
       <div class="overflow-x-auto">
-        <table class="w-full text-sm min-w-[520px]">
+        <table class="w-full text-sm min-w-[580px]">
           <thead><tr class="text-left opacity-60 text-xs">
             <th class="py-1 px-2">Tarikh</th>
             <th class="py-1 px-2">Penyu<br/>Bertag</th>
@@ -1273,6 +1612,7 @@ async function screenMonthDetail() {
             <th class="py-1 px-2">Telur<br/>Bertag</th>
             <th class="py-1 px-2">Telur<br/>Tak Bertag</th>
             <th class="py-1 px-2">Menetas</th>
+            <th class="py-1 px-2">Buruk</th>
           </tr></thead>
           <tbody>${rows}</tbody>
           <tfoot><tr class="border-t-2 border-white/20 font-bold">
@@ -1281,6 +1621,7 @@ async function screenMonthDetail() {
             <td class="py-2 px-2 tabular-num">${totals.bp_t}</td>
             <td class="py-2 px-2 tabular-num">${totals.td_b}</td>
             <td class="py-2 px-2 tabular-num">${totals.td_t}</td>
+            <td class="py-2 px-2"></td>
             <td class="py-2 px-2"></td>
           </tr></tfoot>
         </table>
@@ -1293,7 +1634,11 @@ async function screenMonthDetail() {
       <div class="grid grid-cols-2 gap-3 text-sm">
         <div><span class="opacity-70">Jumlah Bilangan Penyu</span><div class="font-display text-xl tabular-num">${(totals.bp_b+totals.bp_t).toLocaleString()}</div></div>
         <div><span class="opacity-70">Jumlah Telur</span><div class="font-display text-xl tabular-num">${(totals.td_b+totals.td_t).toLocaleString()}</div></div>
+        <div><span class="opacity-70">Telur Menetas</span><div class="font-display text-xl tabular-num">${monthMenetas.toLocaleString()}</div></div>
+        <div><span class="opacity-70">Telur Buruk</span><div class="font-display text-xl tabular-num">${monthBuruk.toLocaleString()}</div></div>
+        <div class="col-span-2"><span class="opacity-70">Kadar Menetas</span><div class="font-display text-xl tabular-num">${(monthMenetas+monthBuruk) ? Math.round(monthMenetas/(monthMenetas+monthBuruk)*100) + '%' : '—'}</div></div>
       </div>
+      ${monthlyOverride.length ? `<p class="text-[11px] opacity-60 mt-2">Menetas/buruk ${monthlyOverride.join(' & ')} ikut rekod Menetas Bulanan (menggantikan angka harian).</p>` : ''}
     `))
   }
 
@@ -1394,6 +1739,7 @@ async function screenDashboard() {
       <div class="xp-fill" id="heroBar" style="width:0%; background:${progressColor(pct)}; box-shadow:${progressGlow(pct)};"></div>
       ${[25,50,75].map(m => `<div class="milestone" style="left:${m}%"></div>`).join('')}
     </div>
+    <div class="text-sm mt-3 flex items-center gap-2"><span>🐢</span><span><b class="tabular-num" id="cntPenyu">0</b> <span class="opacity-70">penyu mendarat</span></span></div>
     <div class="text-xs opacity-70 mt-2">${target ? pct + '% menuju sasaran · Baki ' + (target-jumlahTelur).toLocaleString() + ' telur' : 'Sasaran ' + year + ' belum ditetapkan untuk ' + viewIsland + ' (Admin → Sasaran Tahunan)'}</div>
   `, 'mb-4'))
 
@@ -1461,6 +1807,33 @@ async function screenDashboard() {
     }
   })
 
+  // ---- Penetasan: menetas vs buruk, dengan pilihan jenis graf ----
+  const hatchCard = flatCard(`
+    <div class="flex items-center justify-between mb-3 gap-2">
+      <div class="eyebrow">Penetasan ${year}</div>
+      <div class="flex items-center gap-2">
+        <select id="hatchView" class="!w-auto text-xs !py-1 !px-2" aria-label="Jenis graf penetasan">
+          <option value="donut">Peratus (Donut)</option>
+          <option value="bulanan">Ikut Bulan (Bar)</option>
+          <option value="kadar">Kadar % vs ${year-1}</option>
+          <option value="bilangan">Bilangan Menetas vs ${year-1}</option>
+        </select>
+        <button class="chart-expand-btn" title="Paparan penuh">⤢</button>
+      </div>
+    </div>
+    <div class="grid grid-cols-3 gap-2 mb-3 text-center">
+      <div class="frosted-flat p-2"><div class="text-[11px] opacity-70">Telur Menetas</div><div class="font-display text-xl tabular-num" id="cntMenetas">0</div><div class="text-[10px] opacity-70" id="dMenetas">&nbsp;</div></div>
+      <div class="frosted-flat p-2"><div class="text-[11px] opacity-70">Telur Buruk</div><div class="font-display text-xl tabular-num" id="cntBuruk">0</div><div class="text-[10px] opacity-70" id="dBuruk">&nbsp;</div></div>
+      <div class="frosted-flat p-2"><div class="text-[11px] opacity-70">Kadar Menetas</div><div class="font-display text-xl tabular-num" id="cntHatch">0%</div><div class="text-[10px] opacity-70" id="dHatch">&nbsp;</div></div>
+    </div>
+    <div class="relative" id="hatchChartWrap">
+      <canvas id="chartHatch" height="210"></canvas>
+      <div id="hatchCenter" class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none" style="padding-bottom:34px"></div>
+    </div>
+    <p class="text-[11px] opacity-60 mt-2" id="hatchNote">Kadar menetas = menetas ÷ (menetas + buruk). Dikira ikut bulan telur diram.</p>
+  `, 'mb-4')
+  stats.appendChild(hatchCard)
+
   const barCard = flatCard(`
     <div class="flex items-center justify-between mb-3">
       <div class="eyebrow">Trend Bulanan ${year}</div>
@@ -1499,12 +1872,6 @@ async function screenDashboard() {
   `, 'mb-4')
   stats.appendChild(compareCard)
 
-  const secondaryRow = document.createElement('div')
-  secondaryRow.className = 'grid grid-cols-3 gap-3 stagger'
-  secondaryRow.appendChild(flatCard(`<div class="text-xs opacity-70">Bilangan Penyu</div><div class="font-display text-2xl tabular-num" id="cntPenyu">0</div>`))
-  secondaryRow.appendChild(flatCard(`<div class="text-xs opacity-70">Kadar Menetas</div><div class="font-display text-2xl tabular-num" id="cntHatch">0%</div>`))
-  secondaryRow.appendChild(flatCard(`<div class="text-xs opacity-70">Telur Buruk</div><div class="font-display text-2xl tabular-num text-red-400" id="cntBuruk">0</div>`))
-  stats.appendChild(secondaryRow)
 
   // Trigger counting animations now that elements are in the DOM
   requestAnimationFrame(() => {
@@ -1513,6 +1880,7 @@ async function screenDashboard() {
     const cp = stats.querySelector('#cntPenyu'); if (cp) animateCount(cp, jumlahPenyu)
     const ch = stats.querySelector('#cntHatch'); if (ch) animateCount(ch, hatchRate, { suffix: '%' })
     const cb = stats.querySelector('#cntBuruk'); if (cb) animateCount(cb, jumlahBuruk)
+    const cm = stats.querySelector('#cntMenetas'); if (cm) animateCount(cm, jumlahMenetas)
     // Bars fill from 0 → actual value (double rAF so the browser paints
     // the 0% state first, letting the CSS width transition actually run)
     requestAnimationFrame(() => {
@@ -1530,7 +1898,7 @@ async function screenDashboard() {
   const barCtx = stats.querySelector('#chartBar').getContext('2d')
   const barChart = new Chart(barCtx, {
     type: 'bar',
-    data: { labels: monthly.map(m=>m.month), datasets: [{ label:'Telur', data: monthly.map(m=>m.telur), backgroundColor:'#2E9099', borderRadius:6 }] },
+    data: { labels: MONTH_LABELS, datasets: [{ label:'Telur', data: monthly.map(m=>m.telur), backgroundColor:'#2E9099', borderRadius:6 }] },
     options: { interaction: CHART_INTERACTION, plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af', precision:0} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
   })
   chartInstances.push(barChart)
@@ -1544,7 +1912,7 @@ async function screenDashboard() {
   const lineCtx = stats.querySelector('#chartLine').getContext('2d')
   const lineChart = new Chart(lineCtx, {
     type: 'line',
-    data: { labels: monthly.map(m=>m.month), datasets: [{ label:'Kumulatif', data: cumulativeChart('telur'), borderColor:'#6EE7B7', backgroundColor:'rgba(110,231,183,.15)', fill:true, tension:.35 }] },
+    data: { labels: MONTH_LABELS, datasets: [{ label:'Kumulatif', data: cumulativeChart('telur'), borderColor:'#6EE7B7', backgroundColor:'rgba(110,231,183,.15)', fill:true, tension:.35 }] },
     options: { interaction: CHART_INTERACTION, plugins:{legend:{display:false}}, scales:{ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af', precision:0} }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'} } } }
   })
   chartInstances.push(lineChart)
@@ -1563,6 +1931,7 @@ async function screenDashboard() {
 
   let compareChart = null
   async function renderCompare(nYears) {
+    if (compareChart) { compareChart.destroy(); chartInstances = chartInstances.filter(c => c !== compareChart); compareChart = null }
     const years = Array.from({length:nYears}, (_,i) => year - i).reverse()
     const { data: multi } = await supabase.rpc('get_multi_year_monthly', { p_years: years, p_island: viewIsland })
     const colors = ['#2E9099','#6EE7B7','#E0A458','#E1604C','#9AB18F']
@@ -1581,11 +1950,93 @@ async function screenDashboard() {
   }
   renderCompare(2)
   attachChartExpand(compareCard, () => 'Perbandingan Tahun', () => compareChart)
-  stats.querySelector('#compareYears').onchange = (e) => {
-    chartInstances[chartInstances.length-1]?.destroy()
-    chartInstances.pop()
-    renderCompare(Number(e.target.value))
+  stats.querySelector('#compareYears').onchange = (e) => renderCompare(Number(e.target.value))
+
+  // ---- Penetasan chart ----
+  const emptyHatch = () => Array.from({length:12}, (_,i) => ({ month: i+1, telur: 0, menetas: 0, buruk: 0 }))
+  const hatchNow = (data?.monthly_hatch && data.monthly_hatch.length === 12) ? data.monthly_hatch : emptyHatch()
+  let hatchPrev = emptyHatch()
+  const rateOf = (m, b) => (m + b) ? Math.round(m / (m + b) * 1000) / 10 : null
+  const sumOf = (arr, k) => arr.reduce((s, r) => s + (Number(r[k]) || 0), 0)
+  const axisOpts = (extra = {}) => ({ y:{ grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af', precision:0}, ...(extra.y||{}) }, x:{ grid:{display:false}, ticks:{color:'#9ca3af'}, ...(extra.x||{}) } })
+  let hatchChart = null
+  let hatchView = localStorage.getItem('penyu-hatchview') || 'donut'
+  const hatchSel = stats.querySelector('#hatchView')
+  if (![...hatchSel.options].some(o => o.value === hatchView)) hatchView = 'donut'
+  hatchSel.value = hatchView
+
+  function renderHatchDeltas() {
+    const pm = sumOf(hatchPrev, 'menetas'), pb = sumOf(hatchPrev, 'buruk')
+    const pr = rateOf(pm, pb), nr = rateOf(jumlahMenetas, jumlahBuruk)
+    const arrow = (d, goodUp = true) => d === 0 ? '＝' : ((d > 0) === goodUp ? '<span class="text-emerald-300">▲</span>' : '<span class="text-orange-300">▼</span>')
+    const set = (id, html) => { const el = stats.querySelector(id); if (el) el.innerHTML = html }
+    if (!pm && !pb) { ['#dMenetas','#dBuruk','#dHatch'].forEach(id => set(id, `tiada data ${year-1}`)); return }
+    set('#dMenetas', `${arrow(jumlahMenetas - pm)} ${pm.toLocaleString()} pada ${year-1}`)
+    set('#dBuruk', `${arrow(jumlahBuruk - pb, false)} ${pb.toLocaleString()} pada ${year-1}`)
+    set('#dHatch', nr === null || pr === null ? `${pr ?? '—'}% pada ${year-1}` : `${arrow(nr - pr)} ${Math.abs(Math.round((nr - pr) * 10) / 10)} mata vs ${year-1}`)
   }
+
+  function renderHatchChart() {
+    if (hatchChart) { hatchChart.destroy(); chartInstances = chartInstances.filter(c => c !== hatchChart); hatchChart = null }
+    const center = stats.querySelector('#hatchCenter')
+    center.innerHTML = ''
+    const ctx = stats.querySelector('#chartHatch').getContext('2d')
+    const legend = { labels: { color:'#9ca3af', usePointStyle: true, pointStyle: 'circle', boxWidth: 8, boxHeight: 8 } }
+    let cfg
+    if (hatchView === 'donut') {
+      const belum = Math.max(0, jumlahTelur - jumlahMenetas - jumlahBuruk)
+      const rate = rateOf(jumlahMenetas, jumlahBuruk)
+      const pctOfTotal = (v) => jumlahTelur ? (Math.round(v / jumlahTelur * 1000) / 10) + '%' : '—'
+      cfg = {
+        type: 'doughnut',
+        data: { labels: ['Menetas', 'Buruk', 'Belum direkod'], datasets: [{ data: [jumlahMenetas, jumlahBuruk, belum], backgroundColor: [HATCH_COLORS.menetas, HATCH_COLORS.buruk, HATCH_COLORS.belum], borderColor: 'rgba(15,42,56,.9)', borderWidth: 2, hoverOffset: 6 }] },
+        options: { cutout: '68%', plugins: { legend: { ...legend, position: 'bottom' }, tooltip: { callbacks: { label: (c) => ` ${c.label}: ${Number(c.raw).toLocaleString()} (${pctOfTotal(c.raw)} daripada ${jumlahTelur.toLocaleString()} telur)` } } } }
+      }
+      center.innerHTML = rate === null
+        ? '<div class="text-xs opacity-60 text-center">Belum ada data<br/>menetas / buruk</div>'
+        : `<div class="font-display text-3xl tabular-num">${rate}%</div><div class="text-[11px] opacity-70">kadar menetas</div>`
+    } else if (hatchView === 'bulanan') {
+      const belum = hatchNow.map(r => Math.max(0, (r.telur||0) - (r.menetas||0) - (r.buruk||0)))
+      cfg = {
+        type: 'bar',
+        data: { labels: MONTH_LABELS, datasets: [
+          { label: 'Menetas', data: hatchNow.map(r => r.menetas||0), backgroundColor: HATCH_COLORS.menetas, borderRadius: 4, stack: 's' },
+          { label: 'Buruk', data: hatchNow.map(r => r.buruk||0), backgroundColor: HATCH_COLORS.buruk, borderRadius: 4, stack: 's' },
+          { label: 'Belum direkod', data: belum, backgroundColor: HATCH_COLORS.belum, borderRadius: 4, stack: 's' }
+        ] },
+        options: { interaction: CHART_INTERACTION, plugins: { legend, tooltip: { callbacks: { footer: (items) => { const r = hatchNow[items[0].dataIndex]; const k = rateOf(r.menetas||0, r.buruk||0); return `Diram ${(r.telur||0).toLocaleString()}${k === null ? '' : ` · Kadar ${k}%`}` } } } }, scales: { ...axisOpts(), x: { stacked: true, grid:{display:false}, ticks:{color:'#9ca3af'} }, y: { stacked: true, grid:{color:'rgba(255,255,255,.06)'}, ticks:{color:'#9ca3af', precision:0} } } }
+      }
+    } else if (hatchView === 'kadar') {
+      cfg = {
+        type: 'line',
+        data: { labels: MONTH_LABELS, datasets: [
+          { label: String(year), data: hatchNow.map(r => rateOf(r.menetas||0, r.buruk||0)), borderColor: HATCH_COLORS.menetas, backgroundColor: HATCH_COLORS.menetas, borderWidth: 2, pointRadius: 4, tension: .3, spanGaps: true },
+          { label: String(year-1), data: hatchPrev.map(r => rateOf(r.menetas||0, r.buruk||0)), borderColor: 'rgba(148,163,184,.8)', backgroundColor: 'rgba(148,163,184,.8)', borderDash: [5,4], borderWidth: 2, pointRadius: 3, tension: .3, spanGaps: true }
+        ] },
+        options: { interaction: CHART_INTERACTION, plugins: { legend, tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${c.raw === null ? 'tiada data' : c.raw + '%'}` } } }, scales: axisOpts({ y: { min: 0, max: 100, ticks: { color:'#9ca3af', callback: (v) => v + '%' } } }) }
+      }
+    } else {
+      cfg = {
+        type: 'bar',
+        data: { labels: MONTH_LABELS, datasets: [
+          { label: String(year), data: hatchNow.map(r => r.menetas||0), backgroundColor: HATCH_COLORS.menetas, borderRadius: 4 },
+          { label: String(year-1), data: hatchPrev.map(r => r.menetas||0), backgroundColor: 'rgba(148,163,184,.55)', borderRadius: 4 }
+        ] },
+        options: { interaction: CHART_INTERACTION, plugins: { legend }, scales: axisOpts() }
+      }
+    }
+    hatchChart = new Chart(ctx, cfg)
+    chartInstances.push(hatchChart)
+  }
+  hatchSel.onchange = (e) => { hatchView = e.target.value; localStorage.setItem('penyu-hatchview', hatchView); renderHatchChart() }
+  attachChartExpand(hatchCard, () => `Penetasan ${year} — ${hatchSel.options[hatchSel.selectedIndex].text}`, () => hatchChart)
+  renderHatchChart()
+  supabase.rpc('get_multi_year_monthly', { p_years: [year-1], p_island: viewIsland }).then(({ data: prev }) => {
+    const arr = prev?.[String(year-1)]
+    if (Array.isArray(arr) && arr.length === 12) hatchPrev = arr.map((r, i) => ({ month: i+1, telur: r.telur||0, menetas: r.menetas||0, buruk: r.buruk||0 }))
+    renderHatchDeltas()
+    if (hatchView === 'kadar' || hatchView === 'bilangan') renderHatchChart()
+  })
 
   return wrap
 }
@@ -1696,7 +2147,7 @@ async function screenAdmin() {
   if (!isKerani) {
   const importCard = card(`
     <h2 class="font-display text-lg mb-3">Import Excel</h2>
-    <p class="text-sm opacity-70 mb-3">Auto key-in dari fail Excel sedia ada (format sama dengan eksport/template rasmi). <span class="text-emerald-300">Selamat import berulang kali — hari yang sudah wujud dalam app akan dilangkau automatik, hanya data baharu dimasukkan.</span></p>
+    <p class="text-sm opacity-70 mb-3">Auto key-in dari fail Excel sedia ada (format sama dengan eksport/template rasmi). <span class="text-emerald-300">Selamat import berulang kali — hari yang sudah wujud tidak diduplikasi. Telur menetas &amp; buruk (lajur K–R) yang baru diisi dalam fail akan dikemaskini pada hari sedia ada.</span></p>
     <div class="grid grid-cols-2 gap-2 mb-3">
       <div><label class="text-xs opacity-70">Pulau</label><select id="im_island">${ISLANDS.map(i=>`<option value="${i.code}" ${i.code===state.island?'selected':''}>${i.code}</option>`).join('')}</select></div>
       <div><label class="text-xs opacity-70">Tahun</label><select id="im_year">${Array.from({length:8},(_,i)=>year-5+i).map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}</option>`).join('')}</select></div>
@@ -1726,16 +2177,21 @@ async function screenAdmin() {
         const daysInMonth = new Date(yr, mi+1, 0).getDate()
         const num = (ref) => { const c = ws[ref]; const v = c ? Number(c.v) : 0; return isNaN(v) ? 0 : v }
         const txt = (ref) => { const c = ws[ref]; return c && c.v != null ? String(c.v) : null }
+        // Buruk (O-R): template guna formula diram − menetas. Formula = biar app kira
+        // sendiri (null); hanya angka yang ditaip terus diambil sebagai buruk sebenar.
+        const bur = (ref) => { const c = ws[ref]; if (!c || c.f || c.v === '' || c.v == null) return null; const v = Number(c.v); return isNaN(v) ? null : Math.max(0, v) }
         for (let day = 1; day <= daysInMonth; day++) {
           const r = 7 + day
           const dateStr = `${yr}-${String(mi+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
           // LPP: C,D (penyu) G,H (telur) K,L (menetas) S (dikeluarkan)
-          const lpp = { bp_b:num(`C${r}`), bp_t:num(`D${r}`), td_b:num(`G${r}`), td_t:num(`H${r}`), tm_b:num(`K${r}`), tm_t:num(`L${r}`), dk:num(`S${r}`) }
-          // SFC: E,F / I,J / M,N
-          const sfc = { bp_b:num(`E${r}`), bp_t:num(`F${r}`), td_b:num(`I${r}`), td_t:num(`J${r}`), tm_b:num(`M${r}`), tm_t:num(`N${r}`), dk:0 }
+          const lpp = { bp_b:num(`C${r}`), bp_t:num(`D${r}`), td_b:num(`G${r}`), td_t:num(`H${r}`), tm_b:num(`K${r}`), tm_t:num(`L${r}`), tb_b:bur(`O${r}`), tb_t:bur(`P${r}`), dk:num(`S${r}`) }
+          // SFC: E,F / I,J / M,N / Q,R
+          const sfc = { bp_b:num(`E${r}`), bp_t:num(`F${r}`), td_b:num(`I${r}`), td_t:num(`J${r}`), tm_b:num(`M${r}`), tm_t:num(`N${r}`), tb_b:bur(`Q${r}`), tb_t:bur(`R${r}`), dk:0 }
           const cat = txt(`T${r}`)
           const build = (ram, v) => {
-            const hasData = v.bp_b || v.bp_t || v.td_b || v.td_t || v.tm_b || v.tm_t || v.dk
+            const hasMenetas = !!(v.tm_b || v.tm_t)
+            const hasBuruk = !!(v.tb_b || v.tb_t) || (hasMenetas && (v.tb_b !== null || v.tb_t !== null))
+            const hasData = v.bp_b || v.bp_t || v.td_b || v.td_t || hasMenetas || hasBuruk || v.dk
             if (!hasData) return null
             return {
               island, tarikh: dateStr, ram,
@@ -1743,6 +2199,8 @@ async function screenAdmin() {
               jumlah_telur_diram_bertag: v.td_b, jumlah_telur_diram_takbertag: v.td_t,
               telur_menetas_bertag: (v.tm_b || v.tm_t) ? v.tm_b : null,
               telur_menetas_takbertag: (v.tm_b || v.tm_t) ? v.tm_t : null,
+              telur_buruk_bertag: hasBuruk ? (v.tb_b ?? 0) : null,
+              telur_buruk_takbertag: hasBuruk ? (v.tb_t ?? 0) : null,
               jumlah_telur_dikeluarkan: v.dk || null,
               catatan: cat, created_by: state.profile.id, import_batch: batchId
             }
@@ -1757,31 +2215,64 @@ async function screenAdmin() {
       // skip any import row that already exists — so re-importing an
       // updated file only adds the genuinely new days.
       imGo.textContent = 'Menyemak data sedia ada...'
-      const { data: existing } = await supabase.from('daily_entries')
-        .select('tarikh, ram')
-        .eq('island', island)
-        .gte('tarikh', `${yr}-01-01`).lte('tarikh', `${yr}-12-31`)
-        .limit(2000)
-      const existingKeys = new Set((existing||[]).map(e => `${e.tarikh}|${e.ram}`))
-      const newRows = rows.filter(r => !existingKeys.has(`${r.tarikh}|${r.ram}`))
-      const skipped = rows.length - newRows.length
+      const [{ data: existing, error: exErr }, { data: existingNests }] = await Promise.all([
+        supabase.from('daily_entries')
+          .select('id, tarikh, ram, created_at, telur_menetas_bertag, telur_menetas_takbertag, telur_buruk_bertag, telur_buruk_takbertag')
+          .eq('island', island).gte('tarikh', `${yr}-01-01`).lte('tarikh', `${yr}-12-31`)
+          .order('created_at').limit(5000),
+        supabase.from('nest_records').select('tarikh_dijumpai, ram')
+          .eq('island', island).gte('tarikh_dijumpai', `${yr}-01-01`).lte('tarikh_dijumpai', `${yr}-12-31`).limit(10000)
+      ])
+      if (exErr) throw exErr
+      const byKey = {}
+      ;(existing||[]).forEach(e => { (byKey[`${e.tarikh}|${e.ram}`] ||= []).push(e) })
+      // Hari yang dikunci sebagai Entri Individu — jangan duplikasi diram, menetas diurus per sarang
+      const nestKeys = new Set((existingNests||[]).map(n => `${n.tarikh_dijumpai}|${n.ram}`))
+      const newRows = []
+      const updates = [] // { id, patch }
+      let skipped = 0
+      const HF = ['telur_menetas_bertag','telur_menetas_takbertag','telur_buruk_bertag','telur_buruk_takbertag']
+      rows.forEach(r => {
+        const key = `${r.tarikh}|${r.ram}`
+        const ex = byKey[key]
+        if (!ex && !nestKeys.has(key)) { newRows.push(r); return }
+        skipped++
+        if (!ex) return
+        // Hari sudah wujud: kemaskini menetas/buruk sahaja kalau fail ada data hatch yang berbeza.
+        // Jumlah hari disimpan pada rekod pertama; rekod lain hari sama dikosongkan (elak kira dua kali).
+        const fileHasHatch = HF.some(f => r[f] !== null)
+        if (!fileHasHatch) return
+        const first = ex[0]
+        const patch = {}
+        HF.forEach(f => { if ((first[f] ?? null) !== (r[f] ?? null)) patch[f] = r[f] })
+        if (Object.keys(patch).length) updates.push({ id: first.id, patch: { ...patch, updated_by: state.profile.id } })
+        ex.slice(1).forEach(o => { if (HF.some(f => o[f] !== null)) updates.push({ id: o.id, patch: { telur_menetas_bertag:null, telur_menetas_takbertag:null, telur_buruk_bertag:null, telur_buruk_takbertag:null, updated_by: state.profile.id } }) })
+      })
 
-      if (!newRows.length) {
-        toast(`Semua ${rows.length} rekod sudah wujud dalam app — tiada yang diimport.`, 'info')
+      if (!newRows.length && !updates.length) {
+        toast(`Semua ${rows.length} rekod sudah wujud dan sama — tiada perubahan.`, 'info')
         imGo.disabled = false; imGo.textContent = 'Import Sekarang'
         return
       }
 
-      imGo.textContent = `Memasukkan ${newRows.length} rekod baharu...`
-      // Chunked insert (avoid huge single request)
-      for (let i = 0; i < newRows.length; i += 100) {
-        const { error } = await supabase.from('daily_entries').insert(newRows.slice(i, i+100))
+      if (newRows.length) {
+        imGo.textContent = `Memasukkan ${newRows.length} rekod baharu...`
+        for (let i = 0; i < newRows.length; i += 100) {
+          const { error } = await supabase.from('daily_entries').insert(newRows.slice(i, i+100))
+          if (error) throw error
+        }
+      }
+      let updated = 0
+      for (const u of updates) {
+        imGo.textContent = `Mengemaskini menetas/buruk... ${++updated}/${updates.length}`
+        const { error } = await supabase.from('daily_entries').update(u.patch).eq('id', u.id)
         if (error) throw error
       }
+      const hatchDays = updates.filter(u => u.patch.telur_menetas_bertag !== null || u.patch.telur_buruk_bertag !== null).length
       const m = importCard.querySelector('#im_msg')
-      m.textContent = `${newRows.length} rekod baharu diimport ✓${skipped ? ` (${skipped} dilangkau — sudah wujud)` : ''}`
+      m.textContent = `${newRows.length} rekod baharu diimport ✓` + (hatchDays ? ` · ${hatchDays} hari dikemaskini menetas/buruk` : '') + (skipped - hatchDays > 0 ? ` · ${skipped - hatchDays} dilangkau (sudah wujud)` : '')
       m.classList.remove('hidden')
-      toast(`${newRows.length} baharu diimport${skipped ? `, ${skipped} dilangkau` : ''}`, 'success')
+      toast(m.textContent, 'success')
       imFile.value = ''
       imGo.textContent = 'Pilih fail dahulu'
     } catch (err) {
@@ -2050,11 +2541,12 @@ async function exportToExcel(island, year) {
   const yearEnd = `${year}-12-31`
   const { data: dailyRows } = await supabase.from('daily_entries').select('*').eq('island', island).gte('tarikh', yearStart).lte('tarikh', yearEnd)
   const { data: nestRows } = await supabase.from('nest_records').select('*').eq('island', island).gte('tarikh_dijumpai', yearStart).lte('tarikh_dijumpai', yearEnd)
+  const { data: hatchRows } = await supabase.from('monthly_hatch').select('*').eq('island', island).eq('year', year)
 
   const buckets = {}
   function ensureBucket(date, ram) {
     const key = `${date}|${ram}`
-    if (!buckets[key]) buckets[key] = { bp_b:0, bp_t:0, td_b:0, td_t:0, tm_b:0, tm_t:0, tm_has:false, dk:0, cat:[] }
+    if (!buckets[key]) buckets[key] = { bp_b:0, bp_t:0, td_b:0, td_t:0, tm_b:0, tm_t:0, tm_has:false, tb_b:0, tb_t:0, tb_has:false, dk:0, cat:[] }
     return buckets[key]
   }
   ;(dailyRows||[]).forEach(d => {
@@ -2063,6 +2555,11 @@ async function exportToExcel(island, year) {
     b.td_b += d.jumlah_telur_diram_bertag; b.td_t += d.jumlah_telur_diram_takbertag
     if (d.telur_menetas_bertag !== null) { b.tm_b += d.telur_menetas_bertag||0; b.tm_has = true }
     if (d.telur_menetas_takbertag !== null) { b.tm_t += d.telur_menetas_takbertag||0; b.tm_has = true }
+    if (d.telur_buruk_bertag != null || d.telur_buruk_takbertag != null) {
+      b.tb_has = true
+      b.tb_b += d.telur_buruk_bertag ?? (d.telur_menetas_bertag != null ? Math.max(0, d.jumlah_telur_diram_bertag - d.telur_menetas_bertag) : 0)
+      b.tb_t += d.telur_buruk_takbertag ?? (d.telur_menetas_takbertag != null ? Math.max(0, d.jumlah_telur_diram_takbertag - d.telur_menetas_takbertag) : 0)
+    }
     if (d.jumlah_telur_dikeluarkan) b.dk += d.jumlah_telur_dikeluarkan
     if (d.catatan) b.cat.push(d.catatan)
   })
@@ -2070,6 +2567,7 @@ async function exportToExcel(island, year) {
     const b = ensureBucket(n.tarikh_dijumpai, n.ram)
     if (n.bertag) { b.bp_b += 1; b.td_b += n.jumlah_telur_diram; if (n.telur_menetas !== null) { b.tm_b += n.telur_menetas||0; b.tm_has = true } }
     else { b.bp_t += 1; b.td_t += n.jumlah_telur_diram; if (n.telur_menetas !== null) { b.tm_t += n.telur_menetas||0; b.tm_has = true } }
+    if (n.telur_buruk != null) { b.tb_has = true; if (n.bertag) b.tb_b += n.telur_buruk; else b.tb_t += n.telur_buruk }
     if (n.jumlah_dikeluarkan) b.dk += n.jumlah_dikeluarkan
     if (n.catatan) b.cat.push(n.catatan)
   })
@@ -2089,12 +2587,30 @@ async function exportToExcel(island, year) {
         const existing = ws[ref] || {}
         ws[ref] = { ...existing, t:'n', v: val }
       }
-      if (lpp) { setCell('C', lpp.bp_b); setCell('D', lpp.bp_t); setCell('G', lpp.td_b); setCell('H', lpp.td_t); if (lpp.tm_has) { setCell('K', lpp.tm_b); setCell('L', lpp.tm_t) } if (lpp.dk) setCell('S', lpp.dk) }
-      if (sfc) { setCell('E', sfc.bp_b); setCell('F', sfc.bp_t); setCell('I', sfc.td_b); setCell('J', sfc.td_t); if (sfc.tm_has) { setCell('M', sfc.tm_b); setCell('N', sfc.tm_t) } if (sfc.dk) setCell('T', sfc.dk) }
+      // Buruk sebenar ditulis atas formula template (O-R) hanya bila ada nilai direkod
+      const setBuruk = (col, val) => { const ref = `${col}${row}`; const { f, F, ...rest } = ws[ref] || {}; ws[ref] = { ...rest, t:'n', v: val } }
+      if (lpp) { setCell('C', lpp.bp_b); setCell('D', lpp.bp_t); setCell('G', lpp.td_b); setCell('H', lpp.td_t); if (lpp.tm_has) { setCell('K', lpp.tm_b); setCell('L', lpp.tm_t) } if (lpp.tb_has) { setBuruk('O', lpp.tb_b); setBuruk('P', lpp.tb_t) } }
+      if (sfc) { setCell('E', sfc.bp_b); setCell('F', sfc.bp_t); setCell('I', sfc.td_b); setCell('J', sfc.td_t); if (sfc.tm_has) { setCell('M', sfc.tm_b); setCell('N', sfc.tm_t) } if (sfc.tb_has) { setBuruk('Q', sfc.tb_b); setBuruk('R', sfc.tb_t) } }
+      const dk = (lpp?.dk || 0) + (sfc?.dk || 0)
+      if (dk) setCell('S', dk)
       const notes = [...(lpp?.cat||[]), ...(sfc?.cat||[])].join('; ')
       if (notes) { const ref = `T${row}`; ws[ref] = { ...(ws[ref]||{}), t:'s', v: notes } }
     }
   })
+
+  // Rekod Menetas Bulanan → sheet JUMLAH (baris bulan, lajur J-Q), menggantikan formula bulan tu
+  const sumSheetName = wb.SheetNames.find(n => /^JUMLAH/i.test(n))
+  const sumWs = sumSheetName && wb.Sheets[sumSheetName]
+  if (sumWs) {
+    if (sumWs.A1 && typeof sumWs.A1.v === 'string') sumWs.A1.v = sumWs.A1.v.replace(/\d{4}/, String(year))
+    ;(hatchRows||[]).forEach(h => {
+      const r = 8 + h.month
+      const cols = h.ram === 'LPP'
+        ? [['J', h.menetas_bertag], ['K', h.menetas_takbertag], ['N', h.buruk_bertag], ['O', h.buruk_takbertag]]
+        : [['L', h.menetas_bertag], ['M', h.menetas_takbertag], ['P', h.buruk_bertag], ['Q', h.buruk_takbertag]]
+      cols.forEach(([c, v]) => { const { f, F, ...rest } = sumWs[`${c}${r}`] || {}; sumWs[`${c}${r}`] = { ...rest, t:'n', v: v || 0 } })
+    })
+  }
 
   XLSX.writeFile(wb, `Penyu-${island}-${year}.xlsx`)
 }
