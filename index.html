@@ -1832,7 +1832,6 @@ async function screenDashboard() {
     </div>
     <p class="text-[11px] opacity-60 mt-2" id="hatchNote">Kadar menetas = menetas ÷ (menetas + buruk). Dikira ikut bulan telur diram.</p>
   `, 'mb-4')
-  stats.appendChild(hatchCard)
 
   const barCard = flatCard(`
     <div class="flex items-center justify-between mb-3">
@@ -1871,6 +1870,7 @@ async function screenDashboard() {
     <canvas id="chartCompare" height="200"></canvas>
   `, 'mb-4')
   stats.appendChild(compareCard)
+  stats.appendChild(hatchCard) // Penetasan paling bawah
 
 
   // Trigger counting animations now that elements are in the DOM
