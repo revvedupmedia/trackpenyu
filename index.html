@@ -2935,89 +2935,157 @@ async function generatePresentation(island, year, s) {
   pptx.writeFile({ fileName: `Pembentangan-${island}-${year}.pptx` })
 }
 
+// Export ditulis TERUS ke dalam XML template (bukan melalui SheetJS) supaya
+// warna, border, lebar lajur & formula JUMLAH template kekal 100%.
+async function loadJSZip() {
+  if (window.JSZip) return window.JSZip
+  await new Promise((resolve, reject) => {
+    const s = document.createElement('script')
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'
+    s.onload = resolve
+    s.onerror = () => reject(new Error('Gagal muat JSZip — semak internet'))
+    document.head.appendChild(s)
+  })
+  return window.JSZip
+}
+
+const xmlEsc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+// Ganti nilai sel dalam satu sheet XML sekali lalu. updates: Map(ref -> number | string | null)
+// null = kosongkan sel (buang formula). Gaya sel (s="..") dikekalkan.
+function patchSheetXml(xml, updates) {
+  return xml.replace(/<c r="([A-Z]+\d+)"([^>]*?)(\/>|>[\s\S]*?<\/c>)/g, (m, ref, attrs) => {
+    if (!updates.has(ref)) return m
+    const v = updates.get(ref)
+    const s = (attrs.match(/\ss="\d+"/) || [''])[0]
+    if (v === null || v === undefined || v === '') return `<c r="${ref}"${s}/>`
+    if (typeof v === 'number') return `<c r="${ref}"${s} t="n"><v>${v}</v></c>`
+    return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${xmlEsc(v)}</t></is></c>`
+  })
+}
+
 async function exportToExcel(island, year) {
   const templateUrl = `assets/template-${island}.xlsx`
   const res = await fetch(templateUrl)
   if (!res.ok) throw new Error(`Template ${templateUrl} tidak dijumpai`)
-  const buf = await res.arrayBuffer()
-  const wb = XLSX.read(buf, { type: 'array', cellFormula: true, cellStyles: true })
+  const JSZip = await loadJSZip()
+  const zip = await JSZip.loadAsync(await res.arrayBuffer())
 
-  const yearStart = `${year}-01-01`
-  const yearEnd = `${year}-12-31`
-  const { data: dailyRows } = await supabase.from('daily_entries').select('*').eq('island', island).gte('tarikh', yearStart).lte('tarikh', yearEnd)
-  const { data: nestRows } = await supabase.from('nest_records').select('*').eq('island', island).gte('tarikh_dijumpai', yearStart).lte('tarikh_dijumpai', yearEnd)
-  const { data: hatchRows } = await supabase.from('monthly_hatch').select('*').eq('island', island).eq('year', year)
+  const yearStart = `${year}-01-01`, yearEnd = `${year}-12-31`
+  const [{ data: dailyRows }, { data: nestRows }, { data: hatchRows }] = await Promise.all([
+    supabase.from('daily_entries').select('*').eq('island', island).gte('tarikh', yearStart).lte('tarikh', yearEnd).limit(10000),
+    supabase.from('nest_records').select('*').eq('island', island).gte('tarikh_dijumpai', yearStart).lte('tarikh_dijumpai', yearEnd).limit(10000),
+    supabase.from('monthly_hatch').select('*').eq('island', island).eq('year', year)
+  ])
 
+  // Kumpul ikut tarikh + RAM
   const buckets = {}
-  function ensureBucket(date, ram) {
-    const key = `${date}|${ram}`
-    if (!buckets[key]) buckets[key] = { bp_b:0, bp_t:0, td_b:0, td_t:0, tm_b:0, tm_t:0, tm_has:false, tb_b:0, tb_t:0, tb_has:false, dk:0, cat:[] }
-    return buckets[key]
-  }
+  const B = (date, ram) => buckets[`${date}|${ram}`] ||= { bp_b:0, bp_t:0, td_b:0, td_t:0, tm_b:0, tm_t:0, tm_has:false, tb_b:null, tb_t:null, dk:0, cat:[] }
+  const addBuruk = (b, side, v) => { if (v === null || v === undefined) return; b[side] = (b[side] ?? 0) + v }
   ;(dailyRows||[]).forEach(d => {
-    const b = ensureBucket(d.tarikh, d.ram)
+    const b = B(d.tarikh, d.ram)
     b.bp_b += d.bilangan_penyu_bertag; b.bp_t += d.bilangan_penyu_takbertag
     b.td_b += d.jumlah_telur_diram_bertag; b.td_t += d.jumlah_telur_diram_takbertag
-    if (d.telur_menetas_bertag !== null) { b.tm_b += d.telur_menetas_bertag||0; b.tm_has = true }
-    if (d.telur_menetas_takbertag !== null) { b.tm_t += d.telur_menetas_takbertag||0; b.tm_has = true }
-    if (d.telur_buruk_bertag != null || d.telur_buruk_takbertag != null) {
-      b.tb_has = true
-      b.tb_b += d.telur_buruk_bertag ?? (d.telur_menetas_bertag != null ? Math.max(0, d.jumlah_telur_diram_bertag - d.telur_menetas_bertag) : 0)
-      b.tb_t += d.telur_buruk_takbertag ?? (d.telur_menetas_takbertag != null ? Math.max(0, d.jumlah_telur_diram_takbertag - d.telur_menetas_takbertag) : 0)
-    }
+    if (d.telur_menetas_bertag != null) { b.tm_b += d.telur_menetas_bertag; b.tm_has = true }
+    if (d.telur_menetas_takbertag != null) { b.tm_t += d.telur_menetas_takbertag; b.tm_has = true }
+    addBuruk(b, 'tb_b', d.telur_buruk_bertag); addBuruk(b, 'tb_t', d.telur_buruk_takbertag)
     if (d.jumlah_telur_dikeluarkan) b.dk += d.jumlah_telur_dikeluarkan
     if (d.catatan) b.cat.push(d.catatan)
   })
   ;(nestRows||[]).forEach(n => {
-    const b = ensureBucket(n.tarikh_dijumpai, n.ram)
-    if (n.bertag) { b.bp_b += 1; b.td_b += n.jumlah_telur_diram; if (n.telur_menetas !== null) { b.tm_b += n.telur_menetas||0; b.tm_has = true } }
-    else { b.bp_t += 1; b.td_t += n.jumlah_telur_diram; if (n.telur_menetas !== null) { b.tm_t += n.telur_menetas||0; b.tm_has = true } }
-    if (n.telur_buruk != null) { b.tb_has = true; if (n.bertag) b.tb_b += n.telur_buruk; else b.tb_t += n.telur_buruk }
+    const b = B(n.tarikh_dijumpai, n.ram)
+    const side = n.bertag ? 'b' : 't'
+    b[`bp_${side}`] += 1; b[`td_${side}`] += n.jumlah_telur_diram
+    if (n.telur_menetas != null) { b[`tm_${side}`] += n.telur_menetas; b.tm_has = true }
+    addBuruk(b, `tb_${side}`, n.telur_buruk)
     if (n.jumlah_dikeluarkan) b.dk += n.jumlah_dikeluarkan
     if (n.catatan) b.cat.push(n.catatan)
   })
+  // Telur buruk = angka sebenar kalau direkod; kalau menetas direkod tanpa buruk → diram − menetas;
+  // kalau menetas belum direkod → 0 (BUKAN semua telur dikira buruk macam formula template)
+  const buruk = (b, side) => {
+    const explicit = b[`tb_${side}`]
+    if (explicit !== null) return explicit
+    return b.tm_has ? Math.max(0, b[`td_${side}`] - b[`tm_${side}`]) : 0
+  }
 
-  MONTH_SHEET_NAMES.forEach((sheetName, mi) => {
-    const ws = wb.Sheets[sheetName]
-    if (!ws) return
-    const daysInMonth = new Date(year, mi+1, 0).getDate()
-    for (let day = 1; day <= daysInMonth; day++) {
-      const dateStr = `${year}-${String(mi+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
-      const row = 7 + day
-      const lpp = buckets[`${dateStr}|LPP`]
-      const sfc = buckets[`${dateStr}|SFC`]
-      const setCell = (col, val) => {
-        if (val === undefined || val === null || val === 0) return
-        const ref = `${col}${row}`
-        const existing = ws[ref] || {}
-        ws[ref] = { ...existing, t:'n', v: val }
-      }
-      // Buruk sebenar ditulis atas formula template (O-R) hanya bila ada nilai direkod
-      const setBuruk = (col, val) => { const ref = `${col}${row}`; const { f, F, ...rest } = ws[ref] || {}; ws[ref] = { ...rest, t:'n', v: val } }
-      if (lpp) { setCell('C', lpp.bp_b); setCell('D', lpp.bp_t); setCell('G', lpp.td_b); setCell('H', lpp.td_t); if (lpp.tm_has) { setCell('K', lpp.tm_b); setCell('L', lpp.tm_t) } if (lpp.tb_has) { setBuruk('O', lpp.tb_b); setBuruk('P', lpp.tb_t) } }
-      if (sfc) { setCell('E', sfc.bp_b); setCell('F', sfc.bp_t); setCell('I', sfc.td_b); setCell('J', sfc.td_t); if (sfc.tm_has) { setCell('M', sfc.tm_b); setCell('N', sfc.tm_t) } if (sfc.tb_has) { setBuruk('Q', sfc.tb_b); setBuruk('R', sfc.tb_t) } }
-      const dk = (lpp?.dk || 0) + (sfc?.dk || 0)
-      if (dk) setCell('S', dk)
-      const notes = [...(lpp?.cat||[]), ...(sfc?.cat||[])].join('; ')
-      if (notes) { const ref = `T${row}`; ws[ref] = { ...(ws[ref]||{}), t:'s', v: notes } }
-    }
+  // Peta nama sheet → fail XML
+  const wbXml = await zip.file('xl/workbook.xml').async('string')
+  const relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string')
+  const relTarget = {}
+  relsXml.replace(/<Relationship\b[^>]*>/g, tag => {
+    const id = (tag.match(/Id="([^"]+)"/) || [])[1], tgt = (tag.match(/Target="([^"]+)"/) || [])[1]
+    if (id && tgt) relTarget[id] = tgt.replace(/^\//, '').replace(/^(?!xl\/)/, 'xl/')
+    return tag
   })
+  const sheetFile = {}
+  wbXml.replace(/<sheet\b[^>]*>/g, tag => {
+    const name = (tag.match(/name="([^"]+)"/) || [])[1], rid = (tag.match(/r:id="([^"]+)"/) || [])[1]
+    if (name && rid) sheetFile[name] = relTarget[rid]
+    return tag
+  })
+  const fixYearTitle = (xml) => xml.replace(/(<c r="A[12]"[^>]*><is><t[^>]*>)([^<]*)/g, (m, a, t) => a + xmlEsc(t.replace(/&amp;/g, '&').replace(/20\d\d/, String(year))))
 
-  // Rekod Menetas Bulanan → sheet JUMLAH (baris bulan, lajur J-Q), menggantikan formula bulan tu
-  const sumSheetName = wb.SheetNames.find(n => /^JUMLAH/i.test(n))
-  const sumWs = sumSheetName && wb.Sheets[sumSheetName]
-  if (sumWs) {
-    if (sumWs.A1 && typeof sumWs.A1.v === 'string') sumWs.A1.v = sumWs.A1.v.replace(/\d{4}/, String(year))
+  for (let mi = 0; mi < 12; mi++) {
+    const path = sheetFile[MONTH_SHEET_NAMES[mi]]
+    if (!path || !zip.file(path)) continue
+    const daysInMonth = new Date(year, mi + 1, 0).getDate()
+    const up = new Map()
+    for (let day = 1; day <= 31; day++) {
+      const row = 7 + day
+      const dateStr = `${year}-${String(mi+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
+      const lpp = day <= daysInMonth ? buckets[`${dateStr}|LPP`] : null
+      const sfc = day <= daysInMonth ? buckets[`${dateStr}|SFC`] : null
+      const nz = (v) => v ? v : null // sel kosong untuk 0, macam borang asal
+      // Lajur buruk O-R: sentiasa nombor (ganti formula diram − menetas)
+      up.set(`O${row}`, lpp ? buruk(lpp, 'b') : 0); up.set(`P${row}`, lpp ? buruk(lpp, 't') : 0)
+      up.set(`Q${row}`, sfc ? buruk(sfc, 'b') : 0); up.set(`R${row}`, sfc ? buruk(sfc, 't') : 0)
+      if (lpp) {
+        up.set(`C${row}`, nz(lpp.bp_b)); up.set(`D${row}`, nz(lpp.bp_t)); up.set(`G${row}`, nz(lpp.td_b)); up.set(`H${row}`, nz(lpp.td_t))
+        if (lpp.tm_has) { up.set(`K${row}`, lpp.tm_b); up.set(`L${row}`, lpp.tm_t) }
+      }
+      if (sfc) {
+        up.set(`E${row}`, nz(sfc.bp_b)); up.set(`F${row}`, nz(sfc.bp_t)); up.set(`I${row}`, nz(sfc.td_b)); up.set(`J${row}`, nz(sfc.td_t))
+        if (sfc.tm_has) { up.set(`M${row}`, sfc.tm_b); up.set(`N${row}`, sfc.tm_t) }
+      }
+      const dk = (lpp?.dk || 0) + (sfc?.dk || 0)
+      if (dk) up.set(`S${row}`, dk)
+      const notes = [...(lpp?.cat || []), ...(sfc?.cat || [])].join('; ')
+      if (notes) up.set(`T${row}`, notes)
+    }
+    const xml = await zip.file(path).async('string')
+    zip.file(path, fixYearTitle(patchSheetXml(xml, up)))
+  }
+
+  // Sheet JUMLAH: rekod Menetas Bulanan ganti formula bulan berkenaan (lajur J-Q)
+  const sumName = Object.keys(sheetFile).find(n => /^JUMLAH/i.test(n))
+  if (sumName) {
+    const up = new Map()
     ;(hatchRows||[]).forEach(h => {
       const r = 8 + h.month
       const cols = h.ram === 'LPP'
         ? [['J', h.menetas_bertag], ['K', h.menetas_takbertag], ['N', h.buruk_bertag], ['O', h.buruk_takbertag]]
         : [['L', h.menetas_bertag], ['M', h.menetas_takbertag], ['P', h.buruk_bertag], ['Q', h.buruk_takbertag]]
-      cols.forEach(([c, v]) => { const { f, F, ...rest } = sumWs[`${c}${r}`] || {}; sumWs[`${c}${r}`] = { ...rest, t:'n', v: v || 0 } })
+      cols.forEach(([c, v]) => up.set(`${c}${r}`, Number(v) || 0))
     })
+    const path = sheetFile[sumName]
+    const xml = await zip.file(path).async('string')
+    zip.file(path, fixYearTitle(patchSheetXml(xml, up)))
+    // Nama sheet ikut tahun
+    zip.file('xl/workbook.xml', wbXml.replace(`name="${sumName}"`, `name="JUMLAH ${year}"`))
   }
+  // Paksa Excel kira semula semua formula bila dibuka
+  let wb2 = await zip.file('xl/workbook.xml').async('string')
+  if (!/fullCalcOnLoad/.test(wb2)) wb2 = /<calcPr\b/.test(wb2) ? wb2.replace(/<calcPr\b/, '<calcPr fullCalcOnLoad="1"') : wb2.replace('</workbook>', '<calcPr fullCalcOnLoad="1"/></workbook>')
+  zip.file('xl/workbook.xml', wb2)
+  if (zip.file('xl/calcChain.xml')) zip.remove('xl/calcChain.xml')
 
-  XLSX.writeFile(wb, `Penyu-${island}-${year}.xlsx`)
+  const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', compression: 'DEFLATE' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `Penyu-${island}-${year}.xlsx`
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000)
 }
 
 // ---------- Init ----------
