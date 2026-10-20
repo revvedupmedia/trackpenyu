@@ -223,8 +223,8 @@ const SUPABASE_ANON_KEY = 'sb_publishable_gQIBBbRniU3ixnV8eCDuYw_LeWpu0jK'
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 const app = document.getElementById('app')
 const ISLANDS = [
-  { code:'PTB', name:'Pulau Talang Besar' },
-  { code:'PTK', name:'Pulau Talang Kechil' },
+  { code:'PTB', name:'Pulau Talang-Talang Besar' },
+  { code:'PTK', name:'Pulau Talang-Talang Kechil' },
   { code:'PSB', name:'Pulau Satang Besar' }
 ]
 const SPECIES = ['Penyu Agar (Green Turtle)','Penyu Karah (Hawksbill)','Lain-lain']
@@ -2058,12 +2058,16 @@ async function screenDashboard() {
 
   if (state.profile?.role !== 'staff') {
   stats.appendChild(flatCard(`
-    <button id="presentBtn" class="btn btn-primary w-full flex items-center justify-center gap-2">
-      <span>🎤</span><span>Jana Pembentangan (PowerPoint)</span>
+    <button id="presModeBtn" class="btn btn-primary w-full flex items-center justify-center gap-2" style="padding-top:.9rem; padding-bottom:.9rem; font-size:1rem">
+      <span>🎬</span><span>Mod Pembentangan</span>
     </button>
-    <p class="text-xs opacity-60 mt-2 text-center">Untuk mesyuarat/bentang dengan pengurusan — boleh dibuka terus di PowerPoint atau diimport ke Google Slides.</p>
+    <p class="text-xs opacity-60 mt-2 mb-3 text-center">Skrin penuh, interaktif — pilih pulau &amp; tahun, banding on-demand. Terbaik di PC / projektor.</p>
+    <button id="presentBtn" class="btn btn-ghost w-full flex items-center justify-center gap-2 text-sm">
+      <span>📄</span><span>Muat turun PowerPoint</span>
+    </button>
     <div id="presentMsg" class="hidden text-xs mt-2 text-emerald-300 text-center"></div>
   `, 'mb-4'))
+  stats.querySelector('#presModeBtn').onclick = () => openPresentation()
   stats.querySelector('#presentBtn').onclick = async (e) => {
     const btn = e.currentTarget
     btn.disabled = true; btn.textContent = 'Menjana pembentangan...'
@@ -2078,7 +2082,7 @@ async function screenDashboard() {
       toast('Gagal jana pembentangan: ' + err.message, 'error')
     }
     btn.disabled = false
-    btn.innerHTML = '<span>🎤</span><span>Jana Pembentangan (PowerPoint)</span>'
+    btn.innerHTML = '<span>📄</span><span>Muat turun PowerPoint</span>'
   }
   }
 
@@ -3499,6 +3503,633 @@ async function exportToExcel(island, year) {
   a.download = `Penyu-${island}-${year}.xlsx`
   document.body.appendChild(a); a.click(); a.remove()
 }
+
+
+// =========================================================================
+// MOD PEMBENTANGAN — interaktif: Pembukaan → Pilih Pulau → Pilih Tahun →
+// Laporan Tahun (7 bahagian). Navigasi: ← → / klik / swipe, Esc = undur,
+// F = skrin penuh. Data: semua tahun 1990–kini (harian + rekod lama).
+// =========================================================================
+const PRES_ISLANDS = [
+  { code: 'PTB', name: 'Pulau Talang-Talang Besar', img: 'assets/pulau-PTB.jpg' },
+  { code: 'PTK', name: 'Pulau Talang-Talang Kechil', img: 'assets/pulau-PTK.jpg' },
+  { code: 'PSB', name: 'Pulau Satang Besar', img: 'assets/pulau-PSB.jpg' },
+  { code: 'ALL', name: 'Ketiga-tiga Pulau', img: null }
+]
+const PRES_SECTIONS = ['Ringkasan', 'Perjalanan 12 Bulan', 'Bulan Terbaik & Terendah', 'Penetasan', 'Perbandingan', 'Dalam Sejarah', 'Rumusan']
+const MONTH_FULL = ['Januari','Februari','Mac','April','Mei','Jun','Julai','Ogos','September','Oktober','November','Disember']
+
+function injectPresStyles() {
+  if (document.getElementById('presStyles')) return
+  const st = document.createElement('style')
+  st.id = 'presStyles'
+  st.textContent = `
+  .pres { position:fixed; inset:0; z-index:200; color:#F1F5F4; background:radial-gradient(1200px 700px at 15% 0%, #12404a 0%, transparent 60%), radial-gradient(900px 600px at 100% 100%, #0c3340 0%, transparent 55%), #061820; overflow:hidden; font-family:'Inter',sans-serif; }
+  .pres-bg { position:absolute; inset:-40px; background-size:cover; background-position:center; filter:blur(18px) brightness(.32) saturate(1.2); opacity:0; transition:opacity 1.2s ease; transform:scale(1.08); }
+  .pres-bg.on { opacity:1; }
+  .pres-top { position:absolute; top:0; left:0; right:0; z-index:5; display:flex; align-items:center; gap:.75rem; padding:14px 22px; background:linear-gradient(180deg, rgba(4,16,22,.85), rgba(4,16,22,0)); }
+  .pres-top img { width:34px; height:34px; border-radius:9px; object-fit:contain; }
+  .pres-crumb { font-size:.85rem; opacity:.85; display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; }
+  .pres-crumb b { font-weight:600; }
+  .pres-btn { border:1px solid rgba(255,255,255,.16); background:rgba(255,255,255,.06); color:inherit; border-radius:999px; padding:.45rem .9rem; font-size:.8rem; font-weight:600; transition:all .2s; white-space:nowrap; }
+  .pres-btn:hover { background:rgba(110,231,183,.16); border-color:rgba(110,231,183,.5); }
+  .pres-stage { position:absolute; inset:64px 0 54px 0; }
+  .pres-screen { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:safe center; padding:10px clamp(16px,4vw,64px); overflow-y:auto; }
+  .pres-screen.enter { animation: presIn .7s cubic-bezier(.16,1,.3,1) both; }
+  .pres-screen.enter.back { animation-name: presInBack; }
+  .pres-screen.leave { animation: presOut .45s cubic-bezier(.7,0,.84,0) both; pointer-events:none; }
+  .pres-screen.leave.back { animation-name: presOutBack; }
+  @keyframes presIn { from { opacity:0; transform:translateX(60px) scale(.98); filter:blur(6px) } to { opacity:1; transform:none; filter:none } }
+  @keyframes presInBack { from { opacity:0; transform:translateX(-60px) scale(.98); filter:blur(6px) } to { opacity:1; transform:none; filter:none } }
+  @keyframes presOut { to { opacity:0; transform:translateX(-50px) scale(.98); filter:blur(4px) } }
+  @keyframes presOutBack { to { opacity:0; transform:translateX(50px) scale(.98); filter:blur(4px) } }
+  .pa { opacity:0; animation: paUp .8s cubic-bezier(.16,1,.3,1) both; }
+  @keyframes paUp { from { opacity:0; transform:translateY(22px) } to { opacity:1; transform:none } }
+  .pres-title { font-family:'Fraunces',serif; font-weight:700; letter-spacing:-.02em; line-height:1.05; }
+  .pres-eyebrow { font-size:.78rem; letter-spacing:.18em; text-transform:uppercase; color:#6EE7B7; font-weight:600; }
+  .pres-num { font-family:'JetBrains Mono',monospace; font-variant-numeric:tabular-nums; font-weight:700; letter-spacing:-.03em; }
+  .pres-card { background:rgba(10,36,46,.62); border:1px solid rgba(255,255,255,.09); border-radius:22px; backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); box-shadow:0 20px 60px -20px rgba(0,0,0,.6); }
+  .pres-logo { width:clamp(110px,16vw,190px); height:auto; border-radius:28px; animation: logoIn 1.6s cubic-bezier(.16,1,.3,1) both, logoGlow 4s ease-in-out 1.6s infinite; }
+  @keyframes logoIn { from { opacity:0; transform:scale(.6) rotate(-6deg); filter:blur(10px) } to { opacity:1; transform:none; filter:none } }
+  @keyframes logoGlow { 0%,100% { box-shadow:0 0 0 0 rgba(110,231,183,0) } 50% { box-shadow:0 0 70px 10px rgba(110,231,183,.25) } }
+  .pres-isl { position:relative; border-radius:24px; overflow:hidden; cursor:pointer; min-height:clamp(180px,34vh,360px); background:#0b2a35; border:1px solid rgba(255,255,255,.1); transition:transform .45s cubic-bezier(.16,1,.3,1), box-shadow .45s; }
+  .pres-isl img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transition:transform 1.2s cubic-bezier(.16,1,.3,1); }
+  .pres-isl::after { content:''; position:absolute; inset:0; background:linear-gradient(180deg, rgba(3,14,20,0) 35%, rgba(3,14,20,.92) 100%); }
+  .pres-isl:hover { transform:translateY(-6px); box-shadow:0 30px 60px -20px rgba(0,0,0,.8), 0 0 0 2px rgba(110,231,183,.55); }
+  .pres-isl:hover img { transform:scale(1.08); }
+  .pres-isl .lbl { position:absolute; left:20px; right:20px; bottom:18px; z-index:2; }
+  .pres-isl.zoom { transform:scale(1.04); box-shadow:0 0 0 3px #6EE7B7; }
+  .pres-isl-all { background:linear-gradient(135deg,#0f3b45,#0a2530); display:grid; grid-template-columns:1fr 1fr 1fr; }
+  .pres-isl-all img { position:relative; height:100%; }
+  .pres-ychip { position:relative; border-radius:14px; padding:10px 10px 8px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); text-align:left; overflow:hidden; transition:all .25s; cursor:pointer; }
+  .pres-ychip:hover { background:rgba(110,231,183,.12); border-color:rgba(110,231,183,.5); transform:translateY(-2px); }
+  .pres-ychip .bar { position:absolute; left:0; bottom:0; height:4px; background:linear-gradient(90deg,#1F6F78,#6EE7B7); border-radius:0 4px 4px 0; transition:width 1s cubic-bezier(.16,1,.3,1); }
+  .pres-ychip.best { border-color:rgba(224,164,88,.7); }
+  .pres-ychip.empty { opacity:.3; pointer-events:none; }
+  .pres-dots { position:absolute; left:0; right:0; bottom:0; height:54px; z-index:5; display:flex; align-items:center; justify-content:center; gap:10px; padding:0 18px; background:linear-gradient(0deg, rgba(4,16,22,.85), rgba(4,16,22,0)); }
+  .pres-dot { height:8px; width:8px; border-radius:99px; background:rgba(255,255,255,.25); transition:all .35s; cursor:pointer; border:none; padding:0; }
+  .pres-dot.on { width:30px; background:#6EE7B7; }
+  .pres-hint { position:absolute; right:22px; font-size:.72rem; opacity:.5; }
+  .pres-nav { position:absolute; top:50%; z-index:6; transform:translateY(-50%); width:44px; height:44px; border-radius:99px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.06); color:#fff; font-size:1.2rem; display:flex; align-items:center; justify-content:center; transition:all .2s; }
+  .pres-nav:hover { background:rgba(110,231,183,.2); }
+  .pres-ring { --p:0; width:clamp(130px,16vw,190px); aspect-ratio:1; border-radius:50%; background:conic-gradient(#6EE7B7 calc(var(--p)*1%), rgba(255,255,255,.08) 0); display:grid; place-items:center; transition:--p 1.4s; }
+  .pres-ring > div { width:78%; aspect-ratio:1; border-radius:50%; background:#082028; display:grid; place-items:center; text-align:center; }
+  .pres-up { color:#6EE7B7 } .pres-down { color:#F2A07B }
+  .pres select { background:#0b2a35; color:#fff; border:1px solid rgba(110,231,183,.5); border-radius:999px; padding:.45rem 2rem .45rem .9rem; font-weight:700; font-size:1rem; }
+  .pres-insight { display:flex; gap:14px; align-items:flex-start; padding:16px 18px; }
+  .pres-insight .ic { font-size:1.6rem; line-height:1; }
+  @property --p { syntax:'<number>'; inherits:false; initial-value:0; }
+  .pres-sum { display:grid; gap:1.25rem; grid-template-columns:minmax(280px,1fr) 2fr; }
+  @media (max-width: 760px) { .pres-stage { inset:58px 0 50px 0 } .pres-top { padding:10px 12px } .pres-nav { display:none } .pres-crumb { display:none } .pres-hint { display:none } .pres-sum { grid-template-columns:1fr } .pres-screen { justify-content:flex-start; padding-top:8px; padding-bottom:20px } }
+  `
+  document.head.appendChild(st)
+}
+
+const presData = { loaded: false, years: [], byIsl: {} }
+async function loadPresData() {
+  if (presData.loaded) return presData
+  const thisYear = new Date().getFullYear()
+  const years = Array.from({ length: thisYear - 1990 + 1 }, (_, i) => 1990 + i)
+  const [ptb, ptk, psb, legacy] = await Promise.all([
+    ...['PTB', 'PTK', 'PSB'].map(code => supabase.rpc('get_multi_year_monthly', { p_years: years, p_island: code })),
+    (async () => {
+      const out = []
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase.from('monthly_summaries').select('island, year, month, telur_dikutip, jumlah_telur').order('year').order('month').range(from, from + 999)
+        if (error) break
+        out.push(...(data || []))
+        if (!data || data.length < 1000) break
+      }
+      return out
+    })()
+  ])
+  const legMap = {}
+  legacy.forEach(r => { legMap[`${r.island}|${r.year}|${r.month}`] = r })
+  const build = (code, res) => {
+    const m = {}
+    years.forEach(y => {
+      const arr = res?.data?.[String(y)] || []
+      m[y] = Array.from({ length: 12 }, (_, i) => {
+        const r = arr[i] || {}
+        const telur = Number(r.telur) || 0
+        const L = legMap[`${code}|${y}|${i + 1}`]
+        // telur dikutip: rekod lama simpan berasingan; data harian = sama dengan diram
+        const dikutip = telur + (L && L.telur_dikutip != null ? L.telur_dikutip - (L.jumlah_telur || 0) : 0)
+        return { telur, dikutip, penyu: Number(r.penyu) || 0, menetas: Number(r.menetas) || 0, buruk: Number(r.buruk) || 0 }
+      })
+    })
+    return m
+  }
+  presData.byIsl.PTB = build('PTB', ptb)
+  presData.byIsl.PTK = build('PTK', ptk)
+  presData.byIsl.PSB = build('PSB', psb)
+  const all = {}
+  years.forEach(y => {
+    all[y] = Array.from({ length: 12 }, (_, i) => {
+      const o = { telur: 0, dikutip: 0, penyu: 0, menetas: 0, buruk: 0 }
+      ;['PTB', 'PTK', 'PSB'].forEach(c => { const r = presData.byIsl[c][y][i]; for (const k in o) o[k] += r[k] })
+      return o
+    })
+  })
+  presData.byIsl.ALL = all
+  presData.years = years
+  presData.loaded = true
+  return presData
+}
+
+function yearSummary(months) {
+  const s = { telur: 0, dikutip: 0, penyu: 0, menetas: 0, buruk: 0 }
+  months.forEach(r => { for (const k in s) s[k] += r[k] })
+  s.rate = (s.menetas + s.buruk) ? s.menetas / (s.menetas + s.buruk) * 100 : null
+  s.hatchIncomplete = months.some(r => r.telur > 0 && r.menetas + r.buruk === 0)
+  s.active = months.map((r, i) => ({ ...r, m: i })).filter(r => r.telur > 0)
+  return s
+}
+
+async function openPresentation(opts = {}) {
+  injectPresStyles()
+  document.getElementById('pres')?.remove()
+  const thisYear = new Date().getFullYear()
+  const root = document.createElement('div')
+  root.id = 'pres'
+  root.className = 'pres'
+  root.innerHTML = `
+    <div class="pres-bg" id="presBg"></div>
+    <div class="pres-top">
+      <img src="assets/logo.png" alt="" onerror="this.style.display='none'" />
+      <div class="pres-crumb" id="presCrumb"><b>Lembaga Pengurusan Penyu</b></div>
+      <div style="flex:1"></div>
+      <button class="pres-btn" id="pIsl" style="display:none">🏝 Pulau</button>
+      <button class="pres-btn" id="pYear" style="display:none">📅 Tahun</button>
+      <button class="pres-btn" id="pFull" title="Skrin penuh (F)">⛶</button>
+      <button class="pres-btn" id="pClose" title="Keluar (Esc di skrin utama)">✕</button>
+    </div>
+    <div class="pres-stage" id="presStage"></div>
+    <button class="pres-nav" id="pPrev" style="left:16px; display:none">‹</button>
+    <button class="pres-nav" id="pNext" style="right:16px; display:none">›</button>
+    <div class="pres-dots" id="presDots"></div>`
+  document.body.appendChild(root)
+  document.body.style.overflow = 'hidden'
+
+  const S = { level: 'intro', island: null, year: null, sec: 0, cmp: null, charts: [] }
+  const $ = (sel) => root.querySelector(sel)
+  const fmt = (n) => Math.round(n).toLocaleString('en-US')
+  const fmtShort = (n) => n >= 1e6 ? (Math.round(n / 1e5) / 10) + ' juta' : n >= 1e4 ? Math.round(n / 1000) + 'k' : fmt(n)
+  const islandOf = (c) => PRES_ISLANDS.find(i => i.code === c)
+  const destroyPresCharts = () => { S.charts.forEach(c => c.destroy()); S.charts = [] }
+  const delay = (i, base = 0) => `data-d="${(base + i * 0.12).toFixed(2)}"`
+  const countUp = (scope) => scope.querySelectorAll('[data-count]').forEach(el => {
+    const target = Number(el.dataset.count), dec = Number(el.dataset.dec || 0), suf = el.dataset.suf || ''
+    const start = performance.now(), dur = Number(el.dataset.dur || 1600)
+    const step = (t) => {
+      const p = Math.min(1, (t - start) / dur), e = 1 - Math.pow(1 - p, 4)
+      el.textContent = (dec ? (target * e).toFixed(dec) : fmt(target * e)) + suf
+      if (p < 1 && document.body.contains(el)) requestAnimationFrame(step)
+    }
+    setTimeout(() => requestAnimationFrame(step), Number(el.dataset.wait || 300))
+  })
+  const chartBase = (extra = {}) => ({
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { labels: { color: '#cbd5d1', usePointStyle: true, pointStyle: 'circle', boxWidth: 8, font: { size: 13 } } }, tooltip: { padding: 12, titleFont: { size: 14 }, bodyFont: { size: 14 } } },
+    scales: { x: { grid: { display: false }, ticks: { color: '#9fb3ae', font: { size: 13 } } }, y: { grid: { color: 'rgba(255,255,255,.06)' }, ticks: { color: '#9fb3ae', font: { size: 12 }, callback: (v) => fmtShort(v) }, beginAtZero: true } },
+    ...extra
+  })
+
+  let data = null
+  let dir = 1
+  function show(html, after) {
+    const stage = $('#presStage')
+    const old = stage.querySelector('.pres-screen:not(.leave)')
+    if (old) { old.classList.add('leave'); if (dir < 0) old.classList.add('back'); setTimeout(() => old.remove(), 460) }
+    destroyPresCharts()
+    const scr = document.createElement('div')
+    scr.className = 'pres-screen enter' + (dir < 0 ? ' back' : '')
+    scr.innerHTML = html
+    scr.querySelectorAll('[data-d]').forEach(el => el.style.animationDelay = el.dataset.d + 's')
+    setTimeout(() => { stage.appendChild(scr); countUp(scr); after && after(scr) }, old ? 260 : 0)
+  }
+  function setBg(img) {
+    const bg = $('#presBg')
+    if (!img) { bg.classList.remove('on'); return }
+    bg.style.backgroundImage = `url('${img}')`
+    bg.classList.add('on')
+  }
+  function crumb() {
+    const parts = ['<b>Lembaga Pengurusan Penyu</b>']
+    if (S.island) parts.push('› ' + islandOf(S.island).name)
+    if (S.level === 'report') parts.push(`› <b>${S.year}</b> › ${PRES_SECTIONS[S.sec]}`)
+    $('#presCrumb').innerHTML = parts.join(' ')
+    $('#pIsl').style.display = S.level === 'years' || S.level === 'report' ? '' : 'none'
+    $('#pYear').style.display = S.level === 'report' ? '' : 'none'
+    $('#pPrev').style.display = $('#pNext').style.display = S.level === 'report' ? '' : 'none'
+    const dots = $('#presDots')
+    if (S.level === 'report') {
+      dots.innerHTML = PRES_SECTIONS.map((t, i) => `<button class="pres-dot ${i === S.sec ? 'on' : ''}" data-i="${i}" title="${t}"></button>`).join('') + `<span class="pres-hint">← → bahagian · Esc kembali · F skrin penuh</span>`
+      dots.querySelectorAll('.pres-dot').forEach(b => b.onclick = () => goSec(Number(b.dataset.i)))
+    } else {
+      dots.innerHTML = `<span class="pres-hint" style="position:static">${S.level === 'intro' ? 'Klik atau tekan → untuk mula' : 'Esc untuk kembali'}</span>`
+    }
+  }
+
+  // ---------- 1. Pembukaan ----------
+  async function renderIntro() {
+    S.level = 'intro'; S.island = null; setBg(null); crumb()
+    show(`
+      <div class="flex flex-col items-center text-center gap-5" style="max-width:900px">
+        <img src="assets/logo.png" class="pres-logo" alt="Logo Lembaga Pengurusan Penyu" onerror="this.style.display='none'" />
+        <div class="pres-eyebrow pa" ${delay(0, .8)}>Lembaga Pengurusan Penyu</div>
+        <h1 class="pres-title pa" ${delay(1, .8)} style="font-size:clamp(2rem,5.4vw,4.4rem)">Program Pemuliharaan Penyu<br/>Tiga Pulau</h1>
+        <div class="pa" ${delay(2, .8)} style="font-size:clamp(1rem,1.6vw,1.25rem); opacity:.8">Talang-Talang Besar · Talang-Talang Kechil · Satang Besar</div>
+        <div id="introStats" class="grid grid-cols-3 gap-4 mt-4 pa" ${delay(3, .8)} style="min-height:96px; width:min(820px,92vw)"><div class="col-span-3 opacity-60 text-sm">Memuatkan data sejak 1990…</div></div>
+        <button class="pres-btn pa" id="introGo" ${delay(5, .8)} style="font-size:1rem; padding:.8rem 1.6rem; margin-top:10px">Mula Pembentangan →</button>
+      </div>`, (scr) => {
+      scr.querySelector('#introGo').onclick = () => { dir = 1; renderIslands() }
+      const fill = () => {
+        if (!data) return
+        let tot = { dikutip: 0, menetas: 0, penyu: 0 }, first = null
+        data.years.forEach(y => { const s = yearSummary(data.byIsl.ALL[y]); if (s.dikutip > 0 && first === null) first = y; tot.dikutip += s.dikutip; tot.menetas += s.menetas; tot.penyu += s.penyu })
+        const box = scr.querySelector('#introStats'); if (!box) return
+        const cell = (n, l) => `<div class="pres-card p-4"><div class="pres-num" style="font-size:clamp(1.4rem,3vw,2.4rem)" data-count="${n}" data-wait="200" data-dur="2200">0</div><div class="text-xs opacity-70 mt-1">${l}</div></div>`
+        box.innerHTML = cell(tot.dikutip, `telur dikutip sejak ${first ?? 1990}`) + cell(tot.menetas, 'anak penyu menetas') + cell(tot.penyu, 'pendaratan penyu / sarang')
+        countUp(box)
+      }
+      if (data) fill(); else presReady.then(fill)
+    })
+  }
+
+  // ---------- 2. Pilih pulau ----------
+  function renderIslands() {
+    S.level = 'islands'; S.island = null; setBg(null); crumb()
+    const totals = (code) => data ? data.years.reduce((a, y) => a + yearSummary(data.byIsl[code][y]).dikutip, 0) : 0
+    show(`
+      <div style="width:min(1280px,100%)">
+        <div class="text-center mb-6">
+          <div class="pres-eyebrow pa" ${delay(0)}>Pilih pulau</div>
+          <h2 class="pres-title pa" ${delay(1)} style="font-size:clamp(1.8rem,4vw,3.2rem)">Tiga pulau, satu misi</h2>
+        </div>
+        <div class="grid gap-4" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr))">
+          ${PRES_ISLANDS.map((isl, i) => `
+            <div class="pres-isl pa ${isl.img ? '' : 'pres-isl-all'}" data-c="${isl.code}" ${delay(i, .25)}>
+              ${isl.img ? `<img src="${isl.img}" alt="${isl.name}" />` : PRES_ISLANDS.slice(0, 3).map(x => `<img src="${x.img}" alt="" />`).join('')}
+              <div class="lbl">
+                <div class="pres-eyebrow" style="color:#A7F3D0">${isl.code === 'ALL' ? 'Gabungan' : isl.code}</div>
+                <div class="pres-title" style="font-size:clamp(1.25rem,2vw,1.7rem)">${isl.name}</div>
+                <div class="text-sm opacity-80 mt-1"><span class="pres-num" data-count="${totals(isl.code)}" data-wait="${600 + i * 120}">0</span> telur sejak 1990</div>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>`, (scr) => {
+      scr.querySelectorAll('.pres-isl').forEach(el => el.onclick = () => {
+        el.classList.add('zoom')
+        S.island = el.dataset.c
+        setTimeout(() => { dir = 1; renderYears() }, 250)
+      })
+    })
+  }
+
+  // ---------- 3. Pilih tahun ----------
+  function renderYears() {
+    S.level = 'years'
+    const isl = islandOf(S.island)
+    setBg(isl.img || PRES_ISLANDS[0].img); crumb()
+    const sums = data.years.map(y => ({ y, ...yearSummary(data.byIsl[S.island][y]) }))
+    const max = Math.max(1, ...sums.map(s => s.dikutip))
+    const best = sums.reduce((b, s) => s.dikutip > b.dikutip ? s : b, sums[0])
+    show(`
+      <div style="width:min(1280px,100%)">
+        <div class="text-center mb-5">
+          <div class="pres-eyebrow pa" ${delay(0)}>${isl.name}</div>
+          <h2 class="pres-title pa" ${delay(1)} style="font-size:clamp(1.8rem,4vw,3rem)">Pilih tahun</h2>
+          <div class="text-sm opacity-70 pa" ${delay(2)}>Bar bawah = telur dikutip · bingkai emas = tahun tertinggi (${best.y})</div>
+        </div>
+        <div class="grid gap-2" style="grid-template-columns:repeat(auto-fill,minmax(118px,1fr))">
+          ${sums.slice().reverse().map((s, i) => `
+            <button class="pres-ychip pa ${s.dikutip ? '' : 'empty'} ${s.y === best.y ? 'best' : ''}" data-y="${s.y}" ${delay(i * .25, .2)}>
+              <div class="pres-num" style="font-size:1.15rem">${s.y}</div>
+              <div class="text-[11px] opacity-70">${s.dikutip ? fmt(s.dikutip) + ' telur' : 'tiada data'}${s.y === thisYear ? ' · semasa' : ''}</div>
+              <div class="bar" style="width:0%" data-w="${Math.round(s.dikutip / max * 100)}"></div>
+            </button>`).join('')}
+        </div>
+      </div>`, (scr) => {
+      setTimeout(() => scr.querySelectorAll('.bar').forEach(b => b.style.width = b.dataset.w + '%'), 500)
+      scr.querySelectorAll('.pres-ychip').forEach(b => b.onclick = () => { S.year = Number(b.dataset.y); S.sec = 0; S.cmp = null; dir = 1; renderSection() })
+    })
+  }
+
+  // ---------- 4. Laporan tahun ----------
+  function ctx() {
+    const months = data.byIsl[S.island][S.year]
+    const s = yearSummary(months)
+    const series = data.years.map(y => ({ y, ...yearSummary(data.byIsl[S.island][y]) })).filter(r => r.dikutip > 0)
+    const ranked = series.slice().sort((a, b) => b.dikutip - a.dikutip)
+    const rank = ranked.findIndex(r => r.y === S.year) + 1
+    const prevYear = series.filter(r => r.y < S.year).pop()
+    if (!S.cmp || S.cmp === S.year) S.cmp = prevYear?.y ?? series.find(r => r.y !== S.year)?.y
+    return { months, s, series, ranked, rank, prevYear, isl: islandOf(S.island) }
+  }
+  function goSec(i) {
+    if (i < 0 || i >= PRES_SECTIONS.length) return
+    dir = i > S.sec ? 1 : -1
+    S.sec = i
+    renderSection()
+  }
+  const head = (eyebrow, title) => `
+    <div class="mb-5" style="width:min(1200px,100%)">
+      <div class="pres-eyebrow pa" ${delay(0)}>${eyebrow}</div>
+      <h2 class="pres-title pa" ${delay(1)} style="font-size:clamp(1.7rem,3.6vw,3rem)">${title}</h2>
+    </div>`
+  const deltaTxt = (now, then) => {
+    if (!then) return '<span class="opacity-60">—</span>'
+    const d = (now - then) / then * 100
+    return `<span class="${d >= 0 ? 'pres-up' : 'pres-down'}">${d >= 0 ? '▲' : '▼'} ${Math.abs(d).toFixed(1)}%</span>`
+  }
+
+  function renderSection() {
+    S.level = 'report'
+    const C = ctx()
+    const { s, months, isl } = C
+    setBg(isl.img || PRES_ISLANDS[0].img)
+    crumb()
+    const sec = S.sec
+    const incompleteNote = S.year === thisYear ? 'Tahun semasa — data masih dikemas kini' : s.hatchIncomplete ? 'Sebahagian penetasan belum direkod' : ''
+
+    if (sec === 0) {
+      const ratePct = s.rate == null ? 0 : s.rate
+      show(`
+        ${head(`${isl.name} · Laporan Tahunan`, `Tahun ${S.year}`)}
+        <div class="pres-sum items-stretch" style="width:min(1200px,100%)">
+          <div class="pres-card p-6 pa flex flex-col justify-center items-center text-center gap-3" ${delay(2)}>
+            <div class="pres-ring" id="ring"><div><div><div class="pres-num" style="font-size:clamp(1.8rem,3vw,2.6rem)" data-count="${ratePct}" data-dec="1" data-suf="%">0%</div><div class="text-xs opacity-70">kadar menetas</div></div></div></div>
+            <div class="text-sm opacity-80">${C.rank ? `<span class="pres-num" style="color:#E0A458">#${C.rank}</span> daripada ${C.series.length} tahun (telur dikutip)` : ''}</div>
+            ${incompleteNote ? `<div class="text-xs" style="color:#F2C38B">⚠ ${incompleteNote}</div>` : ''}
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            ${[
+              ['🐢', 'Pendaratan penyu / sarang', s.penyu],
+              ['🥚', 'Telur dikutip', s.dikutip],
+              ['🏝', 'Telur ditanam', s.telur],
+              ['🐣', 'Anak penyu menetas', s.menetas]
+            ].map((c, i) => `
+              <div class="pres-card p-5 pa" ${delay(i, .35)}>
+                <div style="font-size:1.6rem">${c[0]}</div>
+                <div class="pres-num mt-1" style="font-size:clamp(1.8rem,3.4vw,3rem)" data-count="${c[2]}" data-wait="${450 + i * 150}">0</div>
+                <div class="text-sm opacity-70">${c[1]}</div>
+                ${C.prevYear && i < 4 ? `<div class="text-xs mt-1">${deltaTxt(c[2], [C.prevYear.penyu, C.prevYear.dikutip, C.prevYear.telur, C.prevYear.menetas][i])} <span class="opacity-60">vs ${C.prevYear.y}</span></div>` : ''}
+              </div>`).join('')}
+          </div>
+        </div>`, (scr) => setTimeout(() => { const r = scr.querySelector('#ring'); if (r) r.style.setProperty('--p', ratePct) }, 400))
+      return
+    }
+
+    if (sec === 1) {
+      const landas = months.map((r, i) => r.telur === 0 && r.dikutip === 0 ? MONTH_LABELS[i] : null).filter(Boolean)
+      const showDikutip = months.some(r => r.dikutip !== r.telur)
+      show(`
+        ${head(`${isl.name} · ${S.year}`, 'Perjalanan 12 bulan')}
+        <div class="pres-card p-5 pa" ${delay(2)} style="width:min(1200px,100%); height:clamp(300px,52vh,520px)"><canvas id="c1"></canvas></div>
+        ${landas.length ? `<div class="text-sm opacity-75 mt-4 pa" ${delay(3)}>🌊 Tiada pendaratan direkod: <b>${landas.join(', ')}</b> — musim landas, kakitangan tidak dapat ke pulau.</div>` : ''}`, (scr) => {
+        const ds = [{ label: 'Telur ditanam', data: months.map(r => r.telur), backgroundColor: months.map((r, i) => i === C.s.active.reduce((b, x) => x.telur > (months[b]?.telur || 0) ? x.m : b, 0) ? '#E0A458' : '#2FA4B8'), borderRadius: 8, order: 2 }]
+        if (showDikutip) ds.push({ type: 'line', label: 'Telur dikutip', data: months.map(r => r.dikutip), borderColor: 'rgba(255,255,255,.7)', borderDash: [6, 5], pointRadius: 0, borderWidth: 2, order: 1 })
+        ds.push({ type: 'line', label: 'Penyu / sarang', data: months.map(r => r.penyu), yAxisID: 'y2', borderColor: '#A7F3D0', backgroundColor: '#A7F3D0', pointRadius: 4, tension: .35, borderWidth: 2, order: 0, hidden: true })
+        S.charts.push(new Chart(scr.querySelector('#c1'), {
+          type: 'bar', data: { labels: MONTH_LABELS, datasets: ds },
+          options: chartBase({ animation: { duration: 900, delay: (c) => c.type === 'data' ? c.dataIndex * 110 + 300 : 0 }, interaction: { mode: 'index', intersect: false },
+            scales: { ...chartBase().scales, y2: { position: 'right', display: 'auto', grid: { display: false }, ticks: { color: '#A7F3D0' }, beginAtZero: true } },
+            plugins: { ...chartBase().plugins, tooltip: { ...chartBase().plugins.tooltip, callbacks: { label: (c) => ` ${c.dataset.label}: ${fmt(c.raw)}` } } } })
+        }))
+      })
+      return
+    }
+
+    if (sec === 2) {
+      const act = s.active
+      if (!act.length) { show(`${head(`${isl.name} · ${S.year}`, 'Bulan terbaik & terendah')}<div class="pres-card p-8 pa">Tiada pendaratan direkod tahun ini.</div>`); return }
+      const best = act.reduce((b, r) => r.telur > b.telur ? r : b, act[0])
+      const low = act.reduce((b, r) => r.telur < b.telur ? r : b, act[0])
+      const share = (r) => s.telur ? (r.telur / s.telur * 100).toFixed(1) : 0
+      const bestRate = act.filter(r => r.menetas + r.buruk > 0).reduce((b, r) => (!b || r.menetas / (r.menetas + r.buruk) > b.menetas / (b.menetas + b.buruk)) ? r : b, null)
+      const card2 = (tag, color, r, extra, i) => `
+        <div class="pres-card p-7 pa relative overflow-hidden" ${delay(i, .3)} style="border-color:${color}55">
+          <div style="position:absolute; right:-20px; top:-30px; font-size:9rem; opacity:.07; font-family:Fraunces">${MONTH_LABELS[r.m]}</div>
+          <div class="pres-eyebrow" style="color:${color}">${tag}</div>
+          <div class="pres-title mt-2" style="font-size:clamp(2.2rem,4.6vw,4rem)">${MONTH_FULL[r.m]}</div>
+          <div class="pres-num mt-2" style="font-size:clamp(1.6rem,3vw,2.6rem); color:${color}" data-count="${r.telur}" data-wait="${700 + i * 200}">0</div>
+          <div class="text-sm opacity-75">telur ditanam · ${share(r)}% daripada setahun · ${fmt(r.penyu)} sarang</div>
+          ${extra}
+        </div>`
+      show(`
+        ${head(`${isl.name} · ${S.year}`, 'Bulan terbaik & terendah')}
+        <div class="grid gap-5" style="width:min(1200px,100%); grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
+          ${card2('🏆 Bulan terbaik', '#E0A458', best, `<div class="text-sm mt-3 opacity-90">${best.menetas + best.buruk ? `Kadar menetas bulan ini: <b>${(best.menetas / (best.menetas + best.buruk) * 100).toFixed(1)}%</b>` : ''}</div>`, 0)}
+          ${card2('📉 Bulan terendah (yang ada pendaratan)', '#7DD3FC', low, `<div class="text-sm mt-3 opacity-90">${act.length} bulan ada pendaratan tahun ini</div>`, 1)}
+        </div>
+        ${bestRate ? `<div class="pres-card p-4 mt-5 pa text-sm" ${delay(3, .3)} style="width:min(1200px,100%)">🐣 Kadar menetas tertinggi: <b>${MONTH_FULL[bestRate.m]}</b> — ${(bestRate.menetas / (bestRate.menetas + bestRate.buruk) * 100).toFixed(1)}% (${fmt(bestRate.menetas)} anak penyu)</div>` : ''}`)
+      return
+    }
+
+    if (sec === 3) {
+      const unknown = Math.max(0, s.telur - s.menetas - s.buruk)
+      show(`
+        ${head(`${isl.name} · ${S.year}`, 'Penetasan')}
+        <div class="grid gap-5" style="width:min(1200px,100%); grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
+          <div class="pres-card p-5 pa relative" ${delay(2)} style="height:clamp(300px,50vh,480px)"><canvas id="c3a"></canvas>
+            <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none" style="padding-bottom:40px"><div class="pres-num" style="font-size:clamp(1.8rem,3vw,2.6rem)" data-count="${s.rate ?? 0}" data-dec="1" data-suf="%" data-wait="700">0%</div><div class="text-xs opacity-70">kadar menetas</div></div></div>
+          <div class="pres-card p-5 pa" ${delay(3)} style="height:clamp(300px,50vh,480px)"><canvas id="c3b"></canvas></div>
+        </div>
+        <div class="text-xs opacity-60 mt-3 pa" ${delay(4)}>Kadar menetas = menetas ÷ (menetas + buruk), ikut bulan telur ditanam.${s.hatchIncomplete ? ' ⚠ Sebahagian bulan belum ada data penetasan.' : ''}</div>`, (scr) => {
+        S.charts.push(new Chart(scr.querySelector('#c3a'), {
+          type: 'doughnut',
+          data: { labels: ['Menetas', 'Buruk', ...(unknown ? ['Belum direkod'] : [])], datasets: [{ data: [s.menetas, s.buruk, ...(unknown ? [unknown] : [])], backgroundColor: ['#2FA4B8', '#DC6A40', 'rgba(148,163,184,.3)'], borderColor: '#082028', borderWidth: 3, hoverOffset: 10 }] },
+          options: { responsive: true, maintainAspectRatio: false, cutout: '70%', animation: { animateRotate: true, duration: 1800 }, plugins: { legend: { position: 'bottom', labels: { color: '#cbd5d1', usePointStyle: true, font: { size: 13 } } }, tooltip: { callbacks: { label: (c) => ` ${c.label}: ${fmt(c.raw)}` } } } }
+        }))
+        const rate = months.map(r => r.menetas + r.buruk ? Math.round(r.menetas / (r.menetas + r.buruk) * 1000) / 10 : null)
+        S.charts.push(new Chart(scr.querySelector('#c3b'), {
+          type: 'bar',
+          data: { labels: MONTH_LABELS, datasets: [
+            { label: 'Menetas', data: months.map(r => r.menetas), backgroundColor: '#2FA4B8', borderRadius: 6, stack: 'a' },
+            { label: 'Buruk', data: months.map(r => r.buruk), backgroundColor: '#DC6A40', borderRadius: 6, stack: 'a' },
+            { type: 'line', label: 'Kadar %', data: rate, yAxisID: 'y2', borderColor: '#F1F5F4', backgroundColor: '#F1F5F4', pointRadius: 4, borderWidth: 2, tension: .3, spanGaps: true }
+          ] },
+          options: chartBase({ animation: { duration: 900, delay: (c) => c.type === 'data' ? c.dataIndex * 90 + 300 : 0 }, interaction: { mode: 'index', intersect: false },
+            scales: { x: { ...chartBase().scales.x, stacked: true }, y: { ...chartBase().scales.y, stacked: true }, y2: { position: 'right', min: 0, max: 100, grid: { display: false }, ticks: { color: '#F1F5F4', callback: (v) => v + '%' } } } })
+        }))
+      })
+      return
+    }
+
+    if (sec === 4) {
+      const opts = C.series.filter(r => r.y !== S.year).map(r => r.y).reverse()
+      const render4 = () => {
+        const cm = data.byIsl[S.island][S.cmp], cs = yearSummary(cm)
+        return { cm, cs }
+      }
+      let { cm, cs } = render4()
+      const kpis = () => [
+        ['Penyu / sarang', s.penyu, cs.penyu], ['Telur dikutip', s.dikutip, cs.dikutip], ['Telur ditanam', s.telur, cs.telur],
+        ['Anak penyu menetas', s.menetas, cs.menetas], ['Kadar menetas', s.rate, cs.rate, true]
+      ]
+      const kpiHTML = () => kpis().map((k, i) => `
+        <div class="pres-card p-4 pa" ${delay(i, .2)}>
+          <div class="text-xs opacity-70">${k[0]}</div>
+          <div class="pres-num" style="font-size:clamp(1.3rem,2.2vw,1.9rem)">${k[3] ? (k[1] == null ? '—' : k[1].toFixed(1) + '%') : fmt(k[1])}</div>
+          <div class="text-xs mt-1"><span class="opacity-60">${S.cmp}: ${k[3] ? (k[2] == null ? '—' : k[2].toFixed(1) + '%') : fmt(k[2])}</span> · ${k[3] ? (k[1] == null || k[2] == null ? '' : `<span class="${k[1] >= k[2] ? 'pres-up' : 'pres-down'}">${k[1] >= k[2] ? '▲' : '▼'} ${Math.abs(k[1] - k[2]).toFixed(1)} mata</span>`) : deltaTxt(k[1], k[2])}</div>
+        </div>`).join('')
+      show(`
+        <div class="mb-4 flex items-end justify-between gap-4 flex-wrap" style="width:min(1200px,100%)">
+          <div><div class="pres-eyebrow pa" ${delay(0)}>${isl.name}</div>
+          <h2 class="pres-title pa" ${delay(1)} style="font-size:clamp(1.7rem,3.6vw,3rem)">${S.year} <span style="opacity:.5">vs</span> <span style="color:#E0A458" id="cmpLbl">${S.cmp}</span></h2></div>
+          <label class="pa flex items-center gap-2 text-sm" ${delay(2)}><span class="opacity-75">Banding dengan</span>
+            <select id="cmpSel">${opts.map(y => `<option value="${y}" ${y === S.cmp ? 'selected' : ''}>${y}</option>`).join('')}</select></label>
+        </div>
+        <div class="grid gap-3 mb-4" id="kpiRow" style="width:min(1200px,100%); grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">${kpiHTML()}</div>
+        <div class="pres-card p-5 pa" ${delay(3)} style="width:min(1200px,100%); height:clamp(260px,40vh,420px)"><canvas id="c4"></canvas></div>`, (scr) => {
+        const chart = new Chart(scr.querySelector('#c4'), {
+          type: 'bar',
+          data: { labels: MONTH_LABELS, datasets: [
+            { label: String(S.year), data: months.map(r => r.telur), backgroundColor: '#2FA4B8', borderRadius: 6 },
+            { label: String(S.cmp), data: cm.map(r => r.telur), backgroundColor: '#E0A458', borderRadius: 6 }
+          ] },
+          options: chartBase({ animation: { duration: 900, delay: (c) => c.type === 'data' && c.mode === 'default' ? c.dataIndex * 70 + c.datasetIndex * 200 + 300 : 0 }, interaction: { mode: 'index', intersect: false },
+            plugins: { ...chartBase().plugins, tooltip: { ...chartBase().plugins.tooltip, callbacks: { label: (c) => ` ${c.dataset.label}: ${fmt(c.raw)} telur` } } } })
+        })
+        S.charts.push(chart)
+        scr.querySelector('#cmpSel').onchange = (e) => {
+          S.cmp = Number(e.target.value)
+          ;({ cm, cs } = render4())
+          chart.data.datasets[1].label = String(S.cmp)
+          chart.data.datasets[1].data = cm.map(r => r.telur)
+          chart.update()
+          scr.querySelector('#cmpLbl').textContent = S.cmp
+          const row = scr.querySelector('#kpiRow'); row.innerHTML = kpiHTML()
+        }
+      })
+      return
+    }
+
+    if (sec === 5) {
+      const ser = C.series
+      const best = ser.reduce((b, r) => r.dikutip > b.dikutip ? r : b, ser[0])
+      const worst = ser.filter(r => r.y !== thisYear).reduce((b, r) => r.dikutip < b.dikutip ? r : b, ser[0])
+      const rated = ser.filter(r => r.rate != null && !r.hatchIncomplete)
+      const bestRate = rated.reduce((b, r) => !b || r.rate > b.rate ? r : b, null)
+      const avg = ser.reduce((a, r) => a + r.dikutip, 0) / ser.length
+      show(`
+        ${head(isl.name, `${S.year} dalam sejarah ${ser[0].y}–${ser[ser.length - 1].y}`)}
+        <div class="grid gap-3 mb-4" style="width:min(1200px,100%); grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
+          <div class="pres-card p-4 pa" ${delay(0, .2)}><div class="text-xs opacity-70">🏆 Tahun tertinggi</div><div class="pres-num" style="font-size:1.6rem; color:#E0A458">${best.y}</div><div class="text-xs opacity-75">${fmt(best.dikutip)} telur dikutip</div></div>
+          <div class="pres-card p-4 pa" ${delay(1, .2)}><div class="text-xs opacity-70">📉 Tahun terendah</div><div class="pres-num" style="font-size:1.6rem; color:#7DD3FC">${worst.y}</div><div class="text-xs opacity-75">${fmt(worst.dikutip)} telur dikutip</div></div>
+          ${bestRate ? `<div class="pres-card p-4 pa" ${delay(2, .2)}><div class="text-xs opacity-70">🐣 Kadar menetas terbaik</div><div class="pres-num" style="font-size:1.6rem; color:#6EE7B7">${bestRate.y}</div><div class="text-xs opacity-75">${bestRate.rate.toFixed(1)}%</div></div>` : ''}
+          <div class="pres-card p-4 pa" ${delay(3, .2)}><div class="text-xs opacity-70">📍 ${S.year}</div><div class="pres-num" style="font-size:1.6rem">#${C.rank}</div><div class="text-xs opacity-75">${deltaTxt(s.dikutip, avg)} berbanding purata</div></div>
+        </div>
+        <div class="pres-card p-5 pa" ${delay(4, .2)} style="width:min(1200px,100%); height:clamp(260px,42vh,440px)"><canvas id="c5"></canvas></div>
+        <div class="text-xs opacity-60 mt-2 pa" ${delay(5, .2)}>Klik mana-mana tahun pada graf untuk terus ke laporan tahun itu.</div>`, (scr) => {
+        const col = (r) => r.y === S.year ? '#6EE7B7' : r.y === best.y ? '#E0A458' : r.y === worst.y ? '#7DD3FC' : 'rgba(47,164,184,.45)'
+        const ch = new Chart(scr.querySelector('#c5'), {
+          data: { labels: ser.map(r => r.y), datasets: [
+            { type: 'bar', label: 'Telur dikutip', data: ser.map(r => r.dikutip), backgroundColor: ser.map(col), borderRadius: 4, yAxisID: 'y' },
+            { type: 'line', label: 'Kadar menetas %', data: ser.map(r => r.rate == null ? null : Math.round(r.rate * 10) / 10), yAxisID: 'y2', borderColor: 'rgba(241,245,244,.75)', pointRadius: 0, borderWidth: 2, tension: .3, spanGaps: true }
+          ] },
+          options: chartBase({ animation: { duration: 700, delay: (c) => c.type === 'data' ? c.dataIndex * 35 + 300 : 0 }, interaction: { mode: 'index', intersect: false },
+            onClick: (e, els) => { if (els.length) { S.year = ser[els[0].index].y; S.sec = 0; S.cmp = null; dir = 1; renderSection() } },
+            onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default' },
+            scales: { x: { ...chartBase().scales.x, ticks: { color: '#9fb3ae', maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } }, y: chartBase().scales.y, y2: { position: 'right', min: 0, max: 100, grid: { display: false }, ticks: { color: '#F1F5F4', callback: (v) => v + '%' } } },
+            plugins: { ...chartBase().plugins, tooltip: { ...chartBase().plugins.tooltip, callbacks: { label: (c) => c.datasetIndex === 0 ? ` Telur dikutip: ${fmt(c.raw)}` : ` Kadar menetas: ${c.raw}%` } } } })
+        })
+        S.charts.push(ch)
+      })
+      return
+    }
+
+    if (sec === 6) {
+      const ins = []
+      const act = s.active
+      if (C.rank) ins.push(['🏅', `<b>${S.year}</b> berada di kedudukan <b>#${C.rank}</b> daripada ${C.series.length} tahun bagi telur dikutip (${fmt(s.dikutip)} biji).`])
+      if (C.prevYear) {
+        const d = (s.dikutip - C.prevYear.dikutip) / C.prevYear.dikutip * 100
+        ins.push([d >= 0 ? '📈' : '📉', `Telur dikutip ${d >= 0 ? 'meningkat' : 'menurun'} <b>${Math.abs(d).toFixed(1)}%</b> berbanding ${C.prevYear.y} (${fmt(C.prevYear.dikutip)} biji).`])
+      }
+      if (act.length) {
+        const best = act.reduce((b, r) => r.telur > b.telur ? r : b, act[0])
+        ins.push(['🏆', `<b>${MONTH_FULL[best.m]}</b> bulan paling sibuk — ${fmt(best.telur)} telur (${(best.telur / (s.telur || 1) * 100).toFixed(0)}% setahun).`])
+      }
+      if (s.rate != null) {
+        const rated = C.series.filter(r => r.rate != null && !r.hatchIncomplete)
+        const avgRate = rated.reduce((a, r) => a + r.rate, 0) / (rated.length || 1)
+        const top = rated.slice().sort((a, b) => b.rate - a.rate).findIndex(r => r.y === S.year) + 1
+        ins.push(['🐣', `Kadar menetas <b>${s.rate.toFixed(1)}%</b> — ${s.rate >= avgRate ? 'melebihi' : 'di bawah'} purata ${avgRate.toFixed(1)}% sejak ${C.series[0].y}${top === 1 ? ', <b>tertinggi dalam sejarah</b>' : top ? ` (#${top} terbaik)` : ''}.${s.hatchIncomplete ? ' <span style="color:#F2C38B">(penetasan belum lengkap)</span>' : ''}`])
+      }
+      const landas = months.map((r, i) => r.telur === 0 ? MONTH_LABELS[i] : null).filter(Boolean)
+      if (landas.length && landas.length < 12) ins.push(['🌊', `Tiada pendaratan direkod pada <b>${landas.join(', ')}</b> — musim landas.`])
+      show(`
+        ${head(`${isl.name} · ${S.year}`, 'Rumusan')}
+        <div class="grid gap-3" style="width:min(1000px,100%)">
+          ${ins.map((t, i) => `<div class="pres-card pres-insight pa" ${delay(i, .35)}><div class="ic">${t[0]}</div><div style="font-size:clamp(1rem,1.6vw,1.25rem); line-height:1.5">${t[1]}</div></div>`).join('')}
+        </div>
+        <div class="flex gap-3 mt-6 flex-wrap justify-center pa" ${delay(ins.length + 1, .35)}>
+          <button class="pres-btn" id="rIsl" style="font-size:1rem; padding:.7rem 1.3rem">🏝 Pulau lain</button>
+          <button class="pres-btn" id="rYear" style="font-size:1rem; padding:.7rem 1.3rem">📅 Tahun lain</button>
+          <button class="pres-btn" id="rHome" style="font-size:1rem; padding:.7rem 1.3rem">🏠 Utama</button>
+        </div>`, (scr) => {
+        scr.querySelector('#rIsl').onclick = () => { dir = -1; renderIslands() }
+        scr.querySelector('#rYear').onclick = () => { dir = -1; renderYears() }
+        scr.querySelector('#rHome').onclick = () => { dir = -1; renderIntro() }
+      })
+    }
+  }
+
+  // ---------- Navigasi ----------
+  const back = () => {
+    dir = -1
+    if (S.level === 'report') renderYears()
+    else if (S.level === 'years') renderIslands()
+    else if (S.level === 'islands') renderIntro()
+    else close()
+  }
+  const next = () => {
+    if (S.level === 'intro') { dir = 1; if (data) renderIslands() }
+    else if (S.level === 'report') goSec(S.sec + 1)
+  }
+  const prev = () => { if (S.level === 'report') { if (S.sec === 0) back(); else goSec(S.sec - 1) } }
+  function close() {
+    destroyPresCharts()
+    window.removeEventListener('keydown', onKey, true)
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+    root.style.transition = 'opacity .4s'; root.style.opacity = '0'
+    setTimeout(() => { root.remove(); document.body.style.overflow = '' }, 400)
+  }
+  function onKey(e) {
+    if (!document.body.contains(root)) return
+    if (e.target && ['SELECT', 'INPUT', 'TEXTAREA'].includes(e.target.tagName) && e.key !== 'Escape') return
+    const k = e.key
+    if (['ArrowRight', 'PageDown', ' ', 'Enter'].includes(k)) { e.preventDefault(); e.stopPropagation(); next() }
+    else if (['ArrowLeft', 'PageUp', 'Backspace'].includes(k)) { e.preventDefault(); e.stopPropagation(); prev() }
+    else if (k === 'Escape') { e.preventDefault(); e.stopPropagation(); if (document.fullscreenElement) return; back() }
+    else if (k === 'f' || k === 'F') { e.preventDefault(); toggleFull() }
+  }
+  const toggleFull = () => { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); else root.requestFullscreen?.().catch(() => {}) }
+  window.addEventListener('keydown', onKey, true)
+  $('#pClose').onclick = close
+  $('#pFull').onclick = toggleFull
+  $('#pIsl').onclick = () => { dir = -1; renderIslands() }
+  $('#pYear').onclick = () => { dir = -1; renderYears() }
+  $('#pNext').onclick = next
+  $('#pPrev').onclick = prev
+  // swipe (telefon/tablet)
+  let tx = null
+  root.addEventListener('touchstart', (e) => { tx = e.touches[0].clientX }, { passive: true })
+  root.addEventListener('touchend', (e) => { if (tx == null) return; const dx = e.changedTouches[0].clientX - tx; if (Math.abs(dx) > 60) dx < 0 ? next() : prev(); tx = null }, { passive: true })
+  // klik kosong pada skrin pembukaan = mula
+  root.addEventListener('click', (e) => { if (S.level === 'intro' && e.target.closest('.pres-stage') && !e.target.closest('button')) next() })
+
+  const presReady = loadPresData().then(d => { data = d; return d }).catch(err => { toast('Gagal muat data pembentangan: ' + err.message, 'error'); throw err })
+  renderIntro()
+  if (opts.island) {
+    await presReady
+    S.island = opts.island
+    if (opts.year) { S.year = opts.year; S.sec = 0; renderSection() } else renderYears()
+  }
+}
+window.openPresentation = openPresentation
 
 // ---------- Init ----------
 render(location.hash.slice(1) || 'splash')
