@@ -2593,8 +2593,9 @@ async function screenAdmin() {
   }
 
   function buildImportPlan(rows, app) {
-    const plan = { baru: [], sama: [], lengkap: [], canggah: [], appOnly: 0 }
+    const plan = { baru: [], sama: [], lengkap: [], canggah: [], extra: [], appOnly: 0 }
     const fileKeys = new Set()
+    const fileMonths = new Set(rows.map(r => r.tarikh.slice(0, 7)))
     rows.forEach(fr => {
       const key = `${fr.tarikh}|${fr.ram}`
       fileKeys.add(key)
@@ -2618,7 +2619,11 @@ async function screenAdmin() {
       else if (Object.keys(fills).length) plan.lengkap.push(item)
       else plan.sama.push(item)
     })
-    plan.appOnly = Object.keys(app).filter(k => !fileKeys.has(k)).length
+    // Rekod app yang TIADA dalam fail, bagi bulan yang fail ada data — punca jumlah "bertambah"
+    Object.keys(app).filter(k => !fileKeys.has(k)).sort().forEach(k => {
+      if (fileMonths.has(k.slice(0, 7))) { const g = app[k]; plan.extra.push({ key: k, daily: g.daily, nests: g.nests, agg: aggregateDayRam(g.daily, g.nests) }) }
+      else plan.appOnly++
+    })
     return plan
   }
 
@@ -2679,7 +2684,14 @@ async function screenAdmin() {
         ${chip(plan.lengkap.length, 'Lengkapkan', 'text-sky-300')}
         ${chip(plan.canggah.length, 'Bercanggah', plan.canggah.length ? 'text-amber-300' : '')}
       </div>
-      ${plan.appOnly ? `<p class="text-[11px] opacity-60 mb-2">${plan.appOnly} hari ada dalam app tetapi tiada dalam fail — tidak disentuh.</p>` : ''}
+      ${plan.appOnly ? `<p class="text-[11px] opacity-60 mb-2">${plan.appOnly} hari/RAM dalam bulan lain (tiada data dalam fail) — tidak disentuh.</p>` : ''}
+      ${plan.extra.length ? `
+        <div class="border border-red-500/50 rounded-xl p-3 mb-3">
+          <div class="text-sm font-semibold text-red-300 mb-1">🔴 Ada dalam app, TIADA dalam fail (${plan.extra.length})</div>
+          <div class="text-[11px] opacity-80 mb-2">Rekod ini akan <b>ditambah</b> kepada jumlah fail kalau dibiarkan — sebab itu jumlah boleh jadi berganda. Untuk jadikan app <b>sama tepat</b> macam fail, padamkan.</div>
+          <div class="text-xs opacity-80 max-h-40 overflow-y-auto space-y-0.5 mb-2">${plan.extra.map(p => { const [t, ram] = p.key.split('|'); const tl = (p.agg.jumlah_telur_diram_bertag || 0) + (p.agg.jumlah_telur_diram_takbertag || 0); const py = (p.agg.bilangan_penyu_bertag || 0) + (p.agg.bilangan_penyu_takbertag || 0); return `<div>${fmtDate(t)} · <b>${ram}</b> · ${py} penyu · ${tl.toLocaleString()} telur · ${[p.daily.length ? p.daily.length + ' Harian' : '', p.nests.length ? p.nests.length + ' Individu' : ''].filter(Boolean).join(' + ')}</div>` }).join('')}</div>
+          <label class="flex items-start gap-2 text-sm cursor-pointer"><input type="checkbox" id="im_delExtra" checked style="width:auto; margin-top:3px" /> <span>Padam rekod ini — app ikut fail sepenuhnya (bulan yang ada dalam fail sahaja). Boleh dipulihkan di Sejarah Import.</span></label>
+        </div>` : ''}
       ${listDetails(plan.baru, '🟢 Baharu — akan dimasukkan', p => `<div>${fmtDate(p.file.tarikh)} · ${p.file.ram} · ${p.file.jumlah_telur_diram_bertag + p.file.jumlah_telur_diram_takbertag} telur</div>`)}
       ${listDetails(plan.lengkap, '🔵 Lengkapkan — app kosong, fail ada nilai (diisi)', p => `<div>${fmtDate(p.file.tarikh)} · ${p.file.ram} · ${Object.keys(p.fills).map(f => DAY_FIELD_LABEL[f] + ' ' + p.fills[f]).join(', ')}</div>`)}
       ${listDetails(plan.sama, '⚪ Sama — dilangkau', p => `<div>${fmtDate(p.file.tarikh)} · ${p.file.ram}</div>`)}
@@ -2699,15 +2711,17 @@ async function screenAdmin() {
 
     const confirmBtn = pc.querySelector('#im_confirm')
     let armed = false
+    const delExtra = () => !!pc.querySelector('#im_delExtra')?.checked && plan.extra.length > 0
     function label() {
       const timpa = plan.canggah.filter(p => decisions[p.key] === 'fail').length
-      const n = plan.baru.length + plan.lengkap.length + timpa
-      return n ? `Sahkan: ${plan.baru.length} baharu · ${plan.lengkap.length} lengkapkan · ${timpa} timpa` : 'Tiada perubahan untuk disimpan'
+      const pad = delExtra() ? plan.extra.length : 0
+      const n = plan.baru.length + plan.lengkap.length + timpa + pad
+      return n ? `Sahkan: ${plan.baru.length} baharu · ${plan.lengkap.length} lengkapkan · ${timpa} timpa${pad ? ` · ${pad} padam` : ''}` : 'Tiada perubahan untuk disimpan'
     }
     function refreshConfirm() {
       if (!armed) return
       const timpa = plan.canggah.filter(p => decisions[p.key] === 'fail').length
-      const n = plan.baru.length + plan.lengkap.length + timpa
+      const n = plan.baru.length + plan.lengkap.length + timpa + (delExtra() ? plan.extra.length : 0)
       confirmBtn.disabled = !n
       confirmBtn.textContent = label()
     }
@@ -2721,6 +2735,7 @@ async function screenAdmin() {
     pc.querySelectorAll('[data-key]').forEach(el => el.querySelectorAll('[data-d]').forEach(b => b.onclick = () => setDecision(el.dataset.key, b.dataset.d)))
     pc.querySelector('#allApp')?.addEventListener('click', () => plan.canggah.forEach(p => setDecision(p.key, 'app')))
     pc.querySelector('#allFail')?.addEventListener('click', () => plan.canggah.forEach(p => setDecision(p.key, 'fail')))
+    pc.querySelector('#im_delExtra')?.addEventListener('change', refreshConfirm)
     pc.querySelector('#im_cancel').onclick = () => { previewHolder.innerHTML = ''; toast('Import dibatalkan — tiada apa disimpan.', 'info') }
     let cd = 5
     const iv = setInterval(() => {
@@ -2731,7 +2746,7 @@ async function screenAdmin() {
     confirmBtn.onclick = async () => {
       confirmBtn.disabled = true; confirmBtn.textContent = 'Menyimpan...'
       try {
-        const res = await applyImportPlan(plan, decisions, ctx)
+        const res = await applyImportPlan(plan, decisions, { ...ctx, delExtra: delExtra() })
         previewHolder.innerHTML = ''
         const m = importCard.querySelector('#im_msg')
         m.textContent = `Import selesai ✓ ${res.inserted} baharu · ${res.updated} dikemaskini · ${res.deleted} dipadam · ${plan.sama.length} sama dilangkau` + (res.keptApp ? ` · ${res.keptApp} canggah kekal app` : '')
@@ -2767,6 +2782,7 @@ async function screenAdmin() {
       }
       p.nests.forEach(n => delNests.push(n))
     })
+    if (ctx.delExtra) plan.extra.forEach(p => { p.daily.forEach(d => delDaily.push(d)); p.nests.forEach(n => delNests.push(n)) })
     // 1) salinan sebelum ubah/padam (untuk undo)
     await saveUndo(batch, [
       ...updates.map(u => ({ table: 'daily_entries', row: u.row, action: 'update' })),
