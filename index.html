@@ -3026,20 +3026,32 @@ async function screenAdmin() {
       lgiGo.textContent = 'Membanding dengan data app...'
       const years = [...new Set(rows.map(r => r.year))]
       const minY = Math.min(...years), maxY = Math.max(...years)
-      const [existing, daily, nests] = await Promise.all([
+      const [existing, daily, nests, hatches] = await Promise.all([
         fetchAll(() => supabase.from('monthly_summaries').select('*').gte('year', minY).lte('year', maxY).order('year').order('month')),
-        fetchAll(() => supabase.from('daily_entries').select('island, tarikh').gte('tarikh', `${minY}-01-01`).lte('tarikh', `${maxY}-12-31`).order('tarikh')),
-        fetchAll(() => supabase.from('nest_records').select('island, tarikh_dijumpai').gte('tarikh_dijumpai', `${minY}-01-01`).lte('tarikh_dijumpai', `${maxY}-12-31`).order('tarikh_dijumpai'))
+        fetchAll(() => supabase.from('daily_entries').select('island, tarikh, telur_menetas_bertag, telur_menetas_takbertag, telur_buruk_bertag, telur_buruk_takbertag').gte('tarikh', `${minY}-01-01`).lte('tarikh', `${maxY}-12-31`).order('tarikh')),
+        fetchAll(() => supabase.from('nest_records').select('island, tarikh_dijumpai, telur_menetas, telur_buruk').gte('tarikh_dijumpai', `${minY}-01-01`).lte('tarikh_dijumpai', `${maxY}-12-31`).order('tarikh_dijumpai')),
+        fetchAll(() => supabase.from('monthly_hatch').select('island, year, month').gte('year', minY).lte('year', maxY).order('year').order('month'))
       ])
       const exMap = {}; existing.forEach(e => exMap[`${e.island}|${e.year}|${e.month}`] = e)
       // Bulan yang sudah ada data harian/individu → elak kira dua kali
       const dayMonths = {}
       daily.forEach(d => { const k = `${d.island}|${Number(d.tarikh.slice(0,4))}|${Number(d.tarikh.slice(5,7))}`; dayMonths[k] = (dayMonths[k] || 0) + 1 })
       nests.forEach(n => { const k = `${n.island}|${Number(n.tarikh_dijumpai.slice(0,4))}|${Number(n.tarikh_dijumpai.slice(5,7))}`; dayMonths[k] = (dayMonths[k] || 0) + 1 })
-      const plan = { baru: [], sama: [], canggah: [], harian: [] }
+      // Bulan yang sudah ada data PENETASAN (harian / individu / menetas bulanan)
+      const hatchMonths = {}
+      const hv = (...v) => v.some(x => x !== null && x !== undefined)
+      daily.forEach(d => { if (hv(d.telur_menetas_bertag, d.telur_menetas_takbertag, d.telur_buruk_bertag, d.telur_buruk_takbertag)) hatchMonths[`${d.island}|${Number(d.tarikh.slice(0,4))}|${Number(d.tarikh.slice(5,7))}`] = true })
+      nests.forEach(n => { if (hv(n.telur_menetas, n.telur_buruk)) hatchMonths[`${n.island}|${Number(n.tarikh_dijumpai.slice(0,4))}|${Number(n.tarikh_dijumpai.slice(5,7))}`] = true })
+      hatches.forEach(h => { hatchMonths[`${h.island}|${h.year}|${h.month}`] = true })
+      const plan = { baru: [], sama: [], canggah: [], harian: [], penetasan: [] }
       rows.forEach(r => {
         const k = `${r.island}|${r.year}|${r.month}`
-        if (dayMonths[k]) { plan.harian.push({ k, file: r, n: dayMonths[k] }); return }
+        if (dayMonths[k]) {
+          // Telur sudah dari data harian; tapi kalau penetasan belum direkod, lengkapkan dari fail
+          if (!hatchMonths[k] && ((r.telur_menetas || 0) + (r.telur_buruk || 0)) > 0) plan.penetasan.push({ k, file: r, n: dayMonths[k] })
+          else plan.harian.push({ k, file: r, n: dayMonths[k] })
+          return
+        }
         const ex = exMap[k]
         if (!ex) { plan.baru.push({ k, file: r }); return }
         const diffs = LG_FIELDS.filter(([f]) => (ex[f] ?? null) !== (r[f] ?? null)).map(([f]) => f)
@@ -3076,18 +3088,21 @@ async function screenAdmin() {
     const pc = card(`
       <h2 class="font-display text-lg mb-1">Semakan Import Data Lama</h2>
       <p class="text-xs opacity-70 mb-3">${fileName} · ${rows.length} baris · ${Object.keys(byYear).length} tahun</p>
-      <div class="grid grid-cols-4 gap-2 mb-3">
+      <div class="grid gap-2 mb-3" style="grid-template-columns:repeat(${plan.penetasan.length ? 5 : 4},minmax(0,1fr))">
         ${chip(plan.baru.length, 'Baharu', 'text-emerald-300')}
+        ${plan.penetasan.length ? chip(plan.penetasan.length, 'Penetasan', 'text-teal-300') : ''}
         ${chip(plan.sama.length, 'Sama', '')}
         ${chip(plan.canggah.length, 'Bercanggah', plan.canggah.length ? 'text-amber-300' : '')}
         ${chip(plan.harian.length, 'Dilangkau', plan.harian.length ? 'text-sky-300' : '')}
       </div>
+      ${plan.penetasan.length ? `<p class="text-[11px] text-teal-200 mb-2">🐣 ${plan.penetasan.length} bulan sudah ada telur dari data harian tetapi <b>penetasan belum direkod</b> — menetas &amp; buruk dari fail akan diisi sebagai Menetas Bulanan (telur tidak disentuh).</p>` : ''}
       ${plan.harian.length ? `<p class="text-[11px] text-sky-200 mb-2">ℹ️ ${plan.harian.length} bulan dilangkau kerana app sudah ada data harian/individu untuk bulan itu — supaya telur tidak dikira dua kali.</p>` : ''}
       <details class="mb-2"><summary class="text-sm cursor-pointer">📊 Jumlah ikut tahun dalam fail (semak dengan buku)</summary>
         <div class="overflow-x-auto mt-2 max-h-64 overflow-y-auto"><table class="w-full text-xs"><thead><tr class="opacity-60 text-left"><th>Tahun</th><th class="text-right">Dikutip</th><th class="text-right">Ditanam</th><th class="text-right">Menetas</th></tr></thead><tbody>${yearTable}</tbody></table></div>
       </details>
       ${details(plan.baru, '🟢 Baharu — akan dimasukkan', p => `<div>${label(p)} · ${(p.file.jumlah_telur).toLocaleString()} telur ditanam</div>`)}
       ${details(plan.sama, '⚪ Sama — dilangkau', p => `<div>${label(p)}</div>`)}
+      ${details(plan.penetasan, '🐣 Lengkapkan penetasan — telur dari data harian kekal', p => `<div>${label(p)} · menetas ${fmtN(p.file.telur_menetas)} · buruk ${fmtN(p.file.telur_buruk)}</div>`)}
       ${details(plan.harian, '🔵 Dilangkau — ada data harian dalam app', p => `<div>${label(p)} · ${p.n} rekod harian/individu</div>`)}
       ${plan.canggah.length ? `
         <div class="flex items-center justify-between mt-4 mb-2 gap-2 flex-wrap">
@@ -3104,7 +3119,7 @@ async function screenAdmin() {
     const btn = pc.querySelector('#lgi_confirm')
     let armed = false
     const nTimpa = () => plan.canggah.filter(p => decisions[p.k] === 'fail').length
-    const refresh = () => { if (!armed) return; const n = plan.baru.length + nTimpa(); btn.disabled = !n; btn.textContent = n ? `Sahkan: ${plan.baru.length} baharu · ${nTimpa()} timpa` : 'Tiada perubahan untuk disimpan' }
+    const refresh = () => { if (!armed) return; const n = plan.baru.length + nTimpa() + plan.penetasan.length; btn.disabled = !n; btn.textContent = n ? `Sahkan: ${plan.baru.length} baharu · ${nTimpa()} timpa${plan.penetasan.length ? ` · ${plan.penetasan.length} penetasan` : ''}` : 'Tiada perubahan untuk disimpan' }
     const setD = (k, d) => { decisions[k] = d; const el = pc.querySelector(`[data-k="${CSS.escape(k)}"]`); el.querySelectorAll('[data-d]').forEach(b => b.className = b.dataset.d === d ? 'active' : ''); refresh() }
     pc.querySelectorAll('[data-k]').forEach(el => el.querySelectorAll('[data-d]').forEach(b => b.onclick = () => setD(el.dataset.k, b.dataset.d)))
     pc.querySelector('#lgAllApp')?.addEventListener('click', () => plan.canggah.forEach(p => setD(p.k, 'app')))
@@ -3136,10 +3151,18 @@ async function screenAdmin() {
           const { error } = await supabase.from('monthly_summaries').upsert(toSave.slice(i, i + 200), { onConflict: 'island,year,month' })
           if (error) throw new Error(/telur_dikutip|import_batch/.test(error.message) ? 'Run migration-data-lama.sql dalam Supabase dulu. (' + error.message + ')' : error.message)
         }
-        await supabase.from('import_log').update({ inserted: plan.baru.length, updated: timpa.length }).eq('batch', batch)
+        if (plan.penetasan.length) {
+          btn.textContent = 'Menyimpan penetasan...'
+          const hatchRows = plan.penetasan.map(p => ({ island: p.file.island, year: p.file.year, month: p.file.month, ram: 'SFC',
+            menetas_bertag: p.file.telur_menetas || 0, menetas_takbertag: 0, buruk_bertag: p.file.telur_buruk || 0, buruk_takbertag: 0,
+            catatan: 'Data Lama (tiada pecahan bertag)', import_batch: batch, created_by: state.profile.id }))
+          const { error } = await supabase.from('monthly_hatch').insert(hatchRows)
+          if (error) throw new Error(/import_batch/.test(error.message) ? 'Run migration-penetasan-data-lama.sql dalam Supabase dulu. (' + error.message + ')' : error.message)
+        }
+        await supabase.from('import_log').update({ inserted: plan.baru.length + plan.penetasan.length, updated: timpa.length }).eq('batch', batch)
         lgPreview.innerHTML = ''
         const m = lgImportCard.querySelector('#lgi_msg')
-        m.textContent = `Data Lama diimport ✓ ${plan.baru.length} baharu · ${timpa.length} ditimpa · ${plan.sama.length} sama · ${plan.harian.length} dilangkau (ada data harian)`
+        m.textContent = `Data Lama diimport ✓ ${plan.baru.length} baharu · ${timpa.length} ditimpa · ${plan.penetasan.length} penetasan dilengkapkan · ${plan.sama.length} sama · ${plan.harian.length} dilangkau (ada data harian)`
         m.classList.remove('hidden'); toast(m.textContent, 'success')
         lgiFile.value = ''; lgiReset()
         window.__reloadImportHistory?.(); loadLegacyRow(); loadLegacyList()
@@ -4387,6 +4410,12 @@ async function openPresentation(opts = {}) {
       <div class="pres-eyebrow pa" ${delay(0)}>${eyebrow}</div>
       <h2 class="pres-title pa" ${delay(1)} style="font-size:clamp(1.7rem,3.6vw,3rem)">${title}</h2>
     </div>`
+  // Banding menetas hanya jika penetasan KEDUA-DUA tahun lengkap; jika tidak, % akan mengelirukan
+  const hatchCmpTxt = (now, yNow, sNow, then, yThen, sThen) => {
+    if (sThen.hatchIncomplete || !sThen.menetas) return `<span style="color:#F2C38B">⚠ data penetasan ${yThen} belum lengkap</span>`
+    if (sNow.hatchIncomplete) return `<span style="color:#F2C38B">⚠ penetasan ${yNow} belum lengkap</span> <span class="opacity-60">· ${yThen}: ${fmt(then)}</span>`
+    return deltaTxt(now, then) + ` <span class="opacity-60">vs ${yThen}</span>`
+  }
   const deltaTxt = (now, then) => {
     if (!then) return '<span class="opacity-60">—</span>'
     const d = (now - then) / then * 100
@@ -4424,7 +4453,7 @@ async function openPresentation(opts = {}) {
                 <div style="font-size:1.6rem">${c[0]}</div>
                 <div class="pres-num mt-1" style="font-size:clamp(1.8rem,3.4vw,3rem)" data-count="${c[2]}" data-wait="${450 + i * 150}">0</div>
                 <div class="text-sm opacity-70">${c[1]}</div>
-                ${C.prevYear && i < 4 ? `<div class="text-xs mt-1">${deltaTxt(c[2], [C.prevYear.penyu, C.prevYear.dikutip, C.prevYear.telur, C.prevYear.menetas][i])} <span class="opacity-60">vs ${C.prevYear.y}</span></div>` : ''}
+                ${C.prevYear && i < 4 ? `<div class="text-xs mt-1">${i === 3 ? hatchCmpTxt(c[2], S.year, s, C.prevYear.menetas, C.prevYear.y, C.prevYear) : `${deltaTxt(c[2], [C.prevYear.penyu, C.prevYear.dikutip, C.prevYear.telur][i])} <span class="opacity-60">vs ${C.prevYear.y}</span>`}</div>` : ''}
               </div>`).join('')}
           </div>
         </div>`, (scr) => setTimeout(() => { const r = scr.querySelector('#ring'); if (r) r.style.setProperty('--p', ratePct) }, 400))
@@ -4525,13 +4554,13 @@ async function openPresentation(opts = {}) {
       let { cm, cs } = render4()
       const kpis = () => [
         ['Penyu / sarang', s.penyu, cs.penyu], ['Telur dikutip', s.dikutip, cs.dikutip], ['Telur ditanam', s.telur, cs.telur],
-        ['Anak penyu menetas', s.menetas, cs.menetas], ['Kadar menetas', s.rate, cs.rate, true]
+        ['Anak penyu menetas', s.menetas, cs.menetas, false, true], ['Kadar menetas', s.rate, cs.rate, true]
       ]
       const kpiHTML = () => kpis().map((k, i) => `
         <div class="pres-card p-4 pa" ${delay(i, .2)}>
           <div class="text-xs opacity-70">${k[0]}</div>
           <div class="pres-num" style="font-size:clamp(1.3rem,2.2vw,1.9rem)">${k[3] ? (k[1] == null ? '—' : k[1].toFixed(1) + '%') : fmt(k[1])}</div>
-          <div class="text-xs mt-1"><span class="opacity-60">${S.cmp}: ${k[3] ? (k[2] == null ? '—' : k[2].toFixed(1) + '%') : fmt(k[2])}</span> · ${k[3] ? (k[1] == null || k[2] == null ? '' : `<span class="${k[1] >= k[2] ? 'pres-up' : 'pres-down'}">${k[1] >= k[2] ? '▲' : '▼'} ${Math.abs(k[1] - k[2]).toFixed(1)} mata</span>`) : deltaTxt(k[1], k[2])}</div>
+          <div class="text-xs mt-1">${k[4] && (s.hatchIncomplete || cs.hatchIncomplete || !cs.menetas) ? `<span class="opacity-60">${S.cmp}: ${fmt(k[2])}</span> · <span style="color:#F2C38B">⚠ penetasan ${cs.hatchIncomplete || !cs.menetas ? S.cmp : S.year} belum lengkap</span>` : `<span class="opacity-60">${S.cmp}: ${k[3] ? (k[2] == null ? '—' : k[2].toFixed(1) + '%') : fmt(k[2])}</span> · ${k[3] ? (k[1] == null || k[2] == null ? '' : `<span class="${k[1] >= k[2] ? 'pres-up' : 'pres-down'}">${k[1] >= k[2] ? '▲' : '▼'} ${Math.abs(k[1] - k[2]).toFixed(1)} mata</span>`) : deltaTxt(k[1], k[2])}`}</div>
         </div>`).join('')
       show(`
         <div class="mb-4 flex items-end justify-between gap-4 flex-wrap" style="width:min(1200px,100%)">
