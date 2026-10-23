@@ -3397,6 +3397,7 @@ async function generatePresDeck(island, year) {
   const isl = ISL.find(i => i.code === island)
   const fmt = (n) => Math.round(n).toLocaleString('en-US')
   const fmtShort = (n) => n >= 1e6 ? (Math.round(n / 1e5) / 10) + ' juta' : n >= 1e4 ? Math.round(n / 1000) + 'k' : fmt(n)
+  const kFmt = (v) => v >= 1000 ? (v / 1000).toFixed(1) + 'k' : String(v)
   const months = data.byIsl[island][year]
   const s = yearSummary(months, year)
   const series = data.years.map(y => ({ y, ...yearSummary(data.byIsl[island][y], y) })).filter(r => r.dikutip > 0)
@@ -3444,7 +3445,23 @@ async function generatePresDeck(island, year) {
   } catch (e) { logo = null }
 
   // ---- Carta Chart.js → PNG (tanpa animasi) ----
-  async function chartPng(cfg, wIn, hIn) {
+  // Label angka pada bar/titik (slaid tiada tooltip). ds.noLabel = tiada label; ds.labelFmt = format sendiri
+  const valueLabels = (size = 12) => ({ id: 'vl', afterDatasetsDraw(ch) {
+    const g = ch.ctx; g.save(); g.textAlign = 'center'; g.font = `600 ${size}px Arial`
+    ch.data.datasets.forEach((ds, di) => {
+      const meta = ch.getDatasetMeta(di); if (meta.hidden || ds.noLabel) return
+      meta.data.forEach((el, i) => {
+        const v = ds.data[i]; if (v == null || v === 0) return
+        const txt = ds.labelFmt ? ds.labelFmt(v) : fmt(v)
+        if (meta.type === 'line') { g.fillStyle = typeof ds.borderColor === 'string' ? ds.borderColor : '#F1F5F4'; g.textBaseline = 'bottom'; g.fillText(txt, el.x, el.y - 7); return }
+        if (ds.stack) { const h = Math.abs(el.base - el.y); if (h < size + 4) return; g.fillStyle = '#FFFFFF'; g.textBaseline = 'middle'; g.fillText(txt, el.x, (el.y + el.base) / 2); return }
+        g.fillStyle = '#E6F0EE'; g.textBaseline = 'bottom'; g.fillText(txt, el.x, el.y - 4)
+      })
+    })
+    g.restore()
+  } })
+  async function chartPng(cfg, wIn, hIn, labelSize) {
+    if (labelSize) { cfg.plugins = [...(cfg.plugins || []), valueLabels(labelSize)]; cfg.options = { ...(cfg.options || {}), layout: { padding: { top: labelSize + 10 } } } }
     const pxW = Math.round(wIn * 110), pxH = Math.round(hIn * 110)
     const c = document.createElement('canvas'); c.width = pxW; c.height = pxH
     c.style.cssText = `position:fixed; left:-10000px; top:0; width:${pxW}px; height:${pxH}px`
@@ -3577,9 +3594,9 @@ async function generatePresDeck(island, year) {
     const sl = newSlide(); head(sl, `${isl.name} · ${year}`, 'Perjalanan 12 bulan')
     const bestM = s.active.reduce((b, r) => r.telur > (months[b]?.telur || 0) ? r.m : b, 0)
     const ds = [{ label: 'Telur ditanam', data: months.map(r => r.telur), backgroundColor: months.map((r, i) => i === bestM ? '#E0A458' : '#2FA4B8'), borderRadius: 8, order: 2 }]
-    if (months.some(r => r.dikutip !== r.telur)) ds.push({ type: 'line', label: 'Telur dikutip', data: months.map(r => r.dikutip), borderColor: 'rgba(255,255,255,.75)', borderDash: [6, 5], pointRadius: 0, borderWidth: 2, order: 1 })
+    if (months.some(r => r.dikutip !== r.telur)) ds.push({ type: 'line', label: 'Telur dikutip', data: months.map(r => r.dikutip), borderColor: 'rgba(255,255,255,.75)', borderDash: [6, 5], pointRadius: 0, borderWidth: 2, order: 1, noLabel: true })
     card(sl, 0.6, 1.85, 12.1, 4.55)
-    sl.addImage({ data: await chartPng({ type: 'bar', data: { labels: MONTH_LABELS, datasets: ds }, options: axis() }, 11.7, 4.25), x: 0.8, y: 2.0, w: 11.7, h: 4.25 })
+    sl.addImage({ data: await chartPng({ type: 'bar', data: { labels: MONTH_LABELS, datasets: ds }, options: axis() }, 11.7, 4.25, 14), x: 0.8, y: 2.0, w: 11.7, h: 4.25 })
     const landas = months.map((r, i) => r.telur === 0 && r.dikutip === 0 ? MONTH_LABELS[i] : null).filter(Boolean)
     if (landas.length && landas.length < 12) sl.addText([{ text: '🌊 Tiada pendaratan direkod: ', options: { color: 'CBD5D1' } }, { text: landas.join(', '), options: { bold: true, color: C.text } }, { text: ' — musim landas.', options: { color: 'CBD5D1' } }], { x: 0.6, y: 6.5, w: 12, h: 0.4, fontFace: BODY, fontSize: 12 })
     footer(sl)
@@ -3615,17 +3632,19 @@ async function generatePresDeck(island, year) {
   {
     const sl = newSlide(); head(sl, `${isl.name} · ${year}`, 'Penetasan')
     const unknown = Math.max(0, s.telur - s.menetas - s.buruk)
-    card(sl, 0.6, 1.85, 5.9, 4.6); card(sl, 6.8, 1.85, 5.9, 4.6)
-    const donut = await chartPng({ type: 'doughnut', data: { labels: ['Menetas', 'Buruk', ...(unknown ? ['Belum direkod'] : [])], datasets: [{ data: [s.menetas, s.buruk, ...(unknown ? [unknown] : [])], backgroundColor: ['#2FA4B8', '#DC6A40', 'rgba(148,163,184,.3)'], borderColor: '#0b2530', borderWidth: 3 }] }, options: { cutout: '70%', plugins: { legend: { position: 'bottom', labels: { color: '#cbd5d1', usePointStyle: true, font: { size: 14 } } } } } }, 5.5, 4.3)
-    sl.addImage({ data: donut, x: 0.8, y: 2.0, w: 5.5, h: 4.3 })
-    sl.addText([{ text: s.rate == null ? '—' : `${s.rate.toFixed(1)}%`, options: { fontSize: 28, bold: true, color: C.text, breakLine: true } }, { text: 'kadar menetas', options: { fontSize: 11, color: C.mute } }], { x: 2.3, y: 3.3, w: 2.5, h: 1.0, align: 'center', valign: 'middle', fontFace: BODY })
+    card(sl, 0.6, 1.85, 3.9, 4.6); card(sl, 4.7, 1.85, 8.0, 4.6)
+    const lab = [`Menetas: ${fmt(s.menetas)}`, `Buruk: ${fmt(s.buruk)}`, ...(unknown ? [`Belum direkod: ${fmt(unknown)}`] : [])]
+    const donut = await chartPng({ type: 'doughnut', data: { labels: lab, datasets: [{ data: [s.menetas, s.buruk, ...(unknown ? [unknown] : [])], backgroundColor: ['#2FA4B8', '#DC6A40', 'rgba(148,163,184,.3)'], borderColor: '#0b2530', borderWidth: 3 }] }, options: { cutout: '68%', plugins: { legend: { position: 'bottom', labels: { color: '#e2ebe9', usePointStyle: true, font: { size: 13 }, padding: 10 } } } } }, 3.6, 4.35)
+    sl.addImage({ data: donut, x: 0.75, y: 1.98, w: 3.6, h: 4.35 })
+    sl.addText([{ text: s.rate == null ? '—' : `${s.rate.toFixed(1)}%`, options: { fontSize: 22, bold: true, color: C.text, breakLine: true } }, { text: 'kadar menetas', options: { fontSize: 9, color: C.mute } }], { x: 1.55, y: 3.5, w: 2.0, h: 0.8, align: 'center', valign: 'middle', fontFace: BODY })
     const rate = months.map(r => r.menetas + r.buruk ? Math.round(r.menetas / (r.menetas + r.buruk) * 1000) / 10 : null)
-    const bar = await chartPng({ type: 'bar', data: { labels: MONTH_LABELS, datasets: [
+    // kadar % ditulis di bawah nama bulan supaya tidak bertindih dengan angka bar
+    const bar = await chartPng({ type: 'bar', data: { labels: MONTH_LABELS.map((m, i) => rate[i] == null ? [m, ''] : [m, rate[i].toFixed(0) + '%']), datasets: [
       { label: 'Menetas', data: months.map(r => r.menetas), backgroundColor: '#2FA4B8', borderRadius: 6, stack: 'a' },
       { label: 'Buruk', data: months.map(r => r.buruk), backgroundColor: '#DC6A40', borderRadius: 6, stack: 'a' },
-      { type: 'line', label: 'Kadar %', data: rate, yAxisID: 'y2', borderColor: '#F1F5F4', backgroundColor: '#F1F5F4', pointRadius: 4, borderWidth: 2, tension: .3, spanGaps: true }
-    ] }, options: axis({ scales: { x: { stacked: true, grid: { display: false }, ticks: { color: '#9fb3ae', font: { size: 13 } } }, y: { stacked: true, grid: { color: 'rgba(255,255,255,.08)' }, ticks: { color: '#9fb3ae', callback: (v) => fmtShort(v) }, beginAtZero: true }, y2: { position: 'right', min: 0, max: 100, grid: { display: false }, ticks: { color: '#F1F5F4', callback: (v) => v + '%' } } } }) }, 5.5, 4.3)
-    sl.addImage({ data: bar, x: 7.0, y: 2.0, w: 5.5, h: 4.3 })
+      { type: 'line', label: 'Kadar %', data: rate, yAxisID: 'y2', borderColor: '#F1F5F4', backgroundColor: '#F1F5F4', pointRadius: 4, borderWidth: 2, tension: .3, spanGaps: true, noLabel: true }
+    ] }, options: axis({ scales: { x: { stacked: true, grid: { display: false }, ticks: { color: '#cbd5d1', font: { size: 13 } } }, y: { stacked: true, grid: { color: 'rgba(255,255,255,.08)' }, ticks: { color: '#9fb3ae', callback: (v) => fmtShort(v) }, beginAtZero: true }, y2: { position: 'right', min: 0, max: 115, grid: { display: false }, ticks: { color: '#F1F5F4', callback: (v) => v <= 100 ? v + '%' : '' } } } }) }, 7.7, 4.3, 11)
+    sl.addImage({ data: bar, x: 4.85, y: 2.0, w: 7.7, h: 4.3 })
     sl.addText(`Kadar menetas = menetas ÷ (menetas + buruk), ikut bulan telur ditanam.${s.hatchIncomplete ? ' ⚠ Sebahagian bulan belum ada data penetasan.' : ''}`, { x: 0.6, y: 6.5, w: 12.1, h: 0.35, align: 'center', fontFace: BODY, fontSize: 10.5, color: C.mute })
     footer(sl)
   }
@@ -3650,9 +3669,9 @@ async function generatePresDeck(island, year) {
     })
     card(sl, 0.6, 3.45, 12.1, 3.35)
     sl.addImage({ data: await chartPng({ type: 'bar', data: { labels: MONTH_LABELS, datasets: [
-      { label: String(year), data: months.map(r => r.telur), backgroundColor: '#2FA4B8', borderRadius: 6 },
-      { label: String(cmpY), data: cmpM.map(r => r.telur), backgroundColor: '#E0A458', borderRadius: 6 }
-    ] }, options: axis() }, 11.7, 3.1), x: 0.8, y: 3.57, w: 11.7, h: 3.1 })
+      { label: String(year), data: months.map(r => r.telur), backgroundColor: '#2FA4B8', borderRadius: 6, labelFmt: kFmt },
+      { label: String(cmpY), data: cmpM.map(r => r.telur), backgroundColor: '#E0A458', borderRadius: 6, labelFmt: kFmt }
+    ] }, options: axis() }, 11.7, 3.1, 10), x: 0.8, y: 3.57, w: 11.7, h: 3.1 })
     footer(sl)
   }
 
