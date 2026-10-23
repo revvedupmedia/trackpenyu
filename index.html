@@ -2065,24 +2065,31 @@ async function screenDashboard() {
     <button id="presentBtn" class="btn btn-ghost w-full flex items-center justify-center gap-2 text-sm">
       <span>📄</span><span>Muat turun PowerPoint</span>
     </button>
-    <div id="presentMsg" class="hidden text-xs mt-2 text-emerald-300 text-center"></div>
+    <div id="presentPick" class="hidden mt-3">
+      <p class="text-xs opacity-70 mb-2 text-center">Slaid sama macam Mod Pembentangan (tanpa animasi). Fail .pptx boleh dibuka di PowerPoint atau Google Slides.</p>
+      <div class="grid grid-cols-2 gap-2 mb-2">
+        <div><label class="text-xs opacity-70">Pulau</label><select id="pp_island">${['PTB','PTK','PSB','ALL'].map(c => `<option value="${c}" ${c === viewIsland ? 'selected' : ''}>${c === 'ALL' ? 'Ketiga-tiga pulau' : c}</option>`).join('')}</select></div>
+        <div><label class="text-xs opacity-70">Tahun</label><select id="pp_year">${Array.from({ length: new Date().getFullYear() - 1990 + 1 }, (_, i) => new Date().getFullYear() - i).map(y => `<option value="${y}" ${y === year ? 'selected' : ''}>${y}</option>`).join('')}</select></div>
+      </div>
+      <button id="pp_go" class="btn btn-primary w-full text-sm">Jana &amp; Muat Turun</button>
+    </div>
   `, 'mb-4'))
   stats.querySelector('#presModeBtn').onclick = () => openPresentation()
-  stats.querySelector('#presentBtn').onclick = async (e) => {
+  stats.querySelector('#presentBtn').onclick = () => {
+    const box = stats.querySelector('#presentPick')
+    box.classList.toggle('hidden')
+  }
+  stats.querySelector('#pp_go').onclick = async (e) => {
     const btn = e.currentTarget
-    btn.disabled = true; btn.textContent = 'Menjana pembentangan...'
+    const isl = stats.querySelector('#pp_island').value, yr = Number(stats.querySelector('#pp_year').value)
+    btn.disabled = true; btn.textContent = 'Menjana slaid...'
     try {
-      await generatePresentation(viewIsland, year, {
-        jumlahTelur, target, pct, hatchRate, jumlahBuruk, jumlahPenyu,
-        monthly: data?.monthly || [], monthlyPenyu: data?.monthly_penyu || [],
-        monthlyTargetMap
-      })
-      toast('Pembentangan dimuat turun', 'success')
+      const f = await generatePresDeck(isl, yr)
+      toast(`${f} dimuat turun — buka terus atau upload ke Google Drive → Google Slides`, 'success')
     } catch (err) {
-      toast('Gagal jana pembentangan: ' + err.message, 'error')
+      toast('Gagal jana PowerPoint: ' + err.message, 'error')
     }
-    btn.disabled = false
-    btn.innerHTML = '<span>📄</span><span>Muat turun PowerPoint</span>'
+    btn.disabled = false; btn.textContent = 'Jana & Muat Turun'
   }
   }
 
@@ -3378,118 +3385,346 @@ git push</pre>
 }
 
 // ---------- Excel export logic ----------
-// ---------- Presentation generator (PptxGenJS) ----------
-async function generatePresentation(island, year, s) {
+// ---------- PowerPoint ikut Mod Pembentangan (PptxGenJS) ----------
+// Slaid sama dengan Mod Pembentangan (tanpa animasi): Pembukaan → Pendahuluan → Pulau →
+// Ringkasan → 12 Bulan → Terbaik/Terendah → Penetasan → Perbandingan → Sejarah → Rumusan → Penutup.
+// Fon Georgia + Arial dan carta sebagai gambar supaya kekal kemas bila dibuka di Google Slides.
+async function generatePresDeck(island, year) {
+  if (!window.PptxGenJS) throw new Error('PptxGenJS tidak dimuat — semak internet')
+  const [data, T] = await Promise.all([loadPresData(), loadPresText()])
+  const thisYear = new Date().getFullYear()
+  const ISL = PRES_ISLANDS.map(i => ({ ...i, name: T.names[i.code] || i.name }))
+  const isl = ISL.find(i => i.code === island)
+  const fmt = (n) => Math.round(n).toLocaleString('en-US')
+  const fmtShort = (n) => n >= 1e6 ? (Math.round(n / 1e5) / 10) + ' juta' : n >= 1e4 ? Math.round(n / 1000) + 'k' : fmt(n)
+  const months = data.byIsl[island][year]
+  const s = yearSummary(months, year)
+  const series = data.years.map(y => ({ y, ...yearSummary(data.byIsl[island][y], y) })).filter(r => r.dikutip > 0)
+  const ranked = series.slice().sort((a, b) => b.dikutip - a.dikutip)
+  const rank = ranked.findIndex(r => r.y === year) + 1
+  const prev = series.filter(r => r.y < year).pop()
+  const cmpY = prev?.y ?? series.find(r => r.y !== year)?.y
+  const cmpM = cmpY ? data.byIsl[island][cmpY] : null
+  const cs = cmpY ? yearSummary(cmpM, cmpY) : null
+
+  // ---- Warna & fon (sama tema Mod Pembentangan) ----
+  const C = { bg: '061820', card: '0A242E', line: 'FFFFFF', text: 'F1F5F4', mute: '9FB3AE', mint: '6EE7B7', teal: '2FA4B8', gold: 'E0A458', sky: '7DD3FC', coral: 'DC6A40', up: '6EE7B7', down: 'F2A07B', warn: 'F2C38B' }
+  const HEAD = 'Georgia', BODY = 'Arial'
+  const W = 13.333, H = 7.5
+
+  // ---- Latar: gambar pulau dikaburkan + gelap (dibakar ke JPEG) ----
+  const loadImg = (src) => new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src })
+  async function makeBg(img) {
+    const c = document.createElement('canvas'); c.width = 1600; c.height = 900
+    const x = c.getContext('2d')
+    x.fillStyle = '#061820'; x.fillRect(0, 0, 1600, 900)
+    if (img) {
+      const im = await loadImg(img)
+      const sc = Math.max(1700 / im.width, 1000 / im.height)
+      x.filter = 'blur(22px) brightness(0.34) saturate(1.2)'
+      x.drawImage(im, 800 - im.width * sc / 2, 450 - im.height * sc / 2, im.width * sc, im.height * sc)
+      x.filter = 'none'
+    }
+    let g = x.createRadialGradient(240, 0, 0, 240, 0, 1100); g.addColorStop(0, 'rgba(18,64,74,.75)'); g.addColorStop(1, 'rgba(18,64,74,0)')
+    x.fillStyle = g; x.fillRect(0, 0, 1600, 900)
+    g = x.createLinearGradient(0, 0, 0, 900); g.addColorStop(0, 'rgba(4,16,22,.35)'); g.addColorStop(1, 'rgba(4,16,22,.65)')
+    x.fillStyle = g; x.fillRect(0, 0, 1600, 900)
+    // garis riak halus di atas
+    x.strokeStyle = 'rgba(180,255,235,.06)'; x.lineWidth = 2
+    for (let i = 0; i < 4; i++) { x.beginPath(); for (let px = 0; px <= 1600; px += 20) { const py = 70 + i * 18 + Math.sin(px / 45 + i) * 5; px ? x.lineTo(px, py) : x.moveTo(px, py) } x.stroke() }
+    return c.toDataURL('image/jpeg', 0.86)
+  }
+  const bgPlain = await makeBg(null)
+  const bgIsl = isl.img ? await makeBg(isl.img) : bgPlain
+  let logo = null
+  try {
+    const im = await loadImg('assets/logo.png')
+    const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight
+    c.getContext('2d').drawImage(im, 0, 0); logo = { data: c.toDataURL('image/png'), r: im.naturalHeight / im.naturalWidth }
+  } catch (e) { logo = null }
+
+  // ---- Carta Chart.js → PNG (tanpa animasi) ----
+  async function chartPng(cfg, wIn, hIn) {
+    const pxW = Math.round(wIn * 110), pxH = Math.round(hIn * 110)
+    const c = document.createElement('canvas'); c.width = pxW; c.height = pxH
+    c.style.cssText = `position:fixed; left:-10000px; top:0; width:${pxW}px; height:${pxH}px`
+    document.body.appendChild(c)
+    cfg.options = { ...(cfg.options || {}), responsive: false, animation: false, devicePixelRatio: 2 }
+    const ch = new Chart(c, cfg)
+    const url = ch.toBase64Image('image/png', 1)
+    ch.destroy(); c.remove()
+    return url
+  }
+  const axis = (extra = {}) => ({
+    plugins: { legend: { labels: { color: '#cbd5d1', usePointStyle: true, pointStyle: 'circle', boxWidth: 8, font: { size: 14 } } } },
+    scales: { x: { grid: { display: false }, ticks: { color: '#9fb3ae', font: { size: 14 } } }, y: { grid: { color: 'rgba(255,255,255,.08)' }, ticks: { color: '#9fb3ae', font: { size: 13 }, callback: (v) => fmtShort(v) }, beginAtZero: true } },
+    ...extra
+  })
+
+  // ---- Pembantu slaid ----
   const pptx = new PptxGenJS()
   pptx.layout = 'LAYOUT_WIDE'
-  const NAVY='0A1F2B', PANEL='123244', PANEL2='0F2A38', TEAL='1F6F78', GLOW='6EE7B7',
-        SAND='F7F2E7', GOLD='E0A458', CORAL='E1604C', MUTED='9CA3AF'
+  pptx.title = `${isl.name} ${year} — Lembaga Pengurusan Penyu`
+  let n = 0
+  const footer = (sl) => {
+    n++
+    sl.addText(`Lembaga Pengurusan Penyu · ${isl.name} · ${year}`, { x: 0.6, y: 7.0, w: 9, h: 0.3, fontFace: BODY, fontSize: 9, color: C.mute })
+    sl.addText(String(n), { x: 12.2, y: 7.0, w: 0.55, h: 0.3, fontFace: BODY, fontSize: 9, color: C.mute, align: 'right' })
+  }
+  const newSlide = (bg = bgIsl) => { const sl = pptx.addSlide(); sl.background = { data: bg, path: 'latar.jpg' }; return sl }
+  const head = (sl, eyebrow, title) => {
+    sl.addText(eyebrow.toUpperCase(), { x: 0.6, y: 0.45, w: 12, h: 0.32, fontFace: BODY, fontSize: 11, bold: true, color: C.mint, charSpacing: 3 })
+    sl.addText(title, { x: 0.6, y: 0.78, w: 12.1, h: 0.85, fontFace: HEAD, fontSize: 34, bold: true, color: C.text })
+  }
+  const card = (sl, x, y, w, h, border) => sl.addShape(pptx.ShapeType.roundRect, { x, y, w, h, rectRadius: 0.18, fill: { color: C.card, transparency: 22 }, line: { color: border || C.line, transparency: border ? 50 : 88, width: 1 } })
+  const delta = (now, then, vs) => {
+    if (!then) return [{ text: '—', options: { color: C.mute } }]
+    const d = (now - then) / then * 100
+    return [{ text: `${d >= 0 ? '▲' : '▼'} ${Math.abs(d).toFixed(1)}%`, options: { color: d >= 0 ? C.up : C.down, bold: true } }, { text: vs ? `  vs ${vs}` : '', options: { color: C.mute } }]
+  }
+  const hatchDelta = (now, sNow, yNow, then, sThen, yThen) => {
+    if (!sThen.menetas) return [{ text: `⚠ tiada data penetasan ${yThen}`, options: { color: C.warn } }]
+    if (sThen.hatchIncomplete) return [{ text: `⚠ data penetasan ${yThen} belum lengkap`, options: { color: C.warn } }]
+    if (sNow.hatchIncomplete) return [{ text: `⚠ penetasan ${yNow} belum lengkap`, options: { color: C.warn } }, { text: `  ·  ${yThen}: ${fmt(then)}`, options: { color: C.mute } }]
+    return delta(now, then, yThen)
+  }
+  // teks dengan <b> → runs PptxGenJS
+  const runs = (html, base = {}) => html.split(/(<b>.*?<\/b>)/g).filter(Boolean).map(p => p.startsWith('<b>') ? { text: p.slice(3, -4), options: { ...base, bold: true, color: C.text } } : { text: p.replace(/<[^>]+>/g, ''), options: base })
 
-  let slideNum = 0
-  function baseSlide(title) {
-    slideNum++
-    const sl = pptx.addSlide()
-    sl.background = { color: NAVY }
-    sl.addText(title, { x:0.67, y:0.43, w:12, h:0.73, fontSize:24, bold:true, color:SAND })
-    sl.addShape(pptx.ShapeType.rect, { x:0.67, y:1.16, w:1.47, h:0.06, fill:{ color:GLOW }, line:{ type:'none' } })
-    sl.addText(`${island} · Penyu Tracker · ${year}`, { x:0.67, y:7.07, w:8, h:0.4, fontSize:9, color:MUTED })
-    sl.addText(String(slideNum), { x:12.13, y:7.07, w:0.53, h:0.4, fontSize:9, color:MUTED, align:'right' })
-    return sl
+  // ===== 1. Pembukaan =====
+  {
+    const sl = newSlide(bgPlain)
+    let y = 0.7
+    if (logo) { const lw = 1.7; sl.addImage({ data: logo.data, x: (W - lw) / 2, y, w: lw, h: lw * logo.r, rounding: false }); y += lw * logo.r + 0.25 }
+    sl.addText(T.intro.eyebrow.toUpperCase(), { x: 0.5, y, w: W - 1, h: 0.35, align: 'center', fontFace: BODY, fontSize: 12, bold: true, color: C.mint, charSpacing: 4 }); y += 0.4
+    const tl = T.intro.title.split('\n').length
+    sl.addText(T.intro.title, { x: 0.5, y, w: W - 1, h: 0.75 * tl + 0.1, align: 'center', fontFace: HEAD, fontSize: 44, bold: true, color: C.text, valign: 'middle' }); y += 0.75 * tl + 0.2
+    sl.addText(T.intro.subtitle, { x: 0.5, y, w: W - 1, h: 0.45, align: 'center', fontFace: BODY, fontSize: 16, color: 'CBD5D1' }); y += 0.7
+    let tot = { dikutip: 0, menetas: 0, penyu: 0 }, first = null
+    data.years.forEach(yy => { const z = yearSummary(data.byIsl.ALL[yy], yy); if (z.dikutip > 0 && first === null) first = yy; tot.dikutip += z.dikutip; tot.menetas += z.menetas; tot.penyu += z.penyu })
+    const cells = [[tot.dikutip, T.intro.stat1], [tot.menetas, T.intro.stat2], [tot.penyu, T.intro.stat3]]
+    const cw = 3.4, gap = 0.3, x0 = (W - (cw * 3 + gap * 2)) / 2
+    cells.forEach(([v, l], i) => {
+      const x = x0 + i * (cw + gap)
+      card(sl, x, y, cw, 1.25)
+      sl.addText(fmt(v), { x, y: y + 0.12, w: cw, h: 0.6, align: 'center', fontFace: BODY, fontSize: 28, bold: true, color: C.text })
+      sl.addText(l.replace(/\{tahun\}/g, first ?? 1990), { x, y: y + 0.72, w: cw, h: 0.4, align: 'center', fontFace: BODY, fontSize: 11, color: C.mute })
+    })
+    n++
   }
 
-  // Slide 1 — Title
-  const s1 = pptx.addSlide()
-  s1.background = { color: NAVY }
-  s1.addShape(pptx.ShapeType.rect, { x:0, y:0, w:0.19, h:7.5, fill:{ color:GLOW }, line:{ type:'none' } })
-  s1.addText('Penyu Tracker', { x:0.93, y:2.47, w:11.33, h:1.2, fontSize:40, bold:true, color:SAND, fontFace:'Georgia' })
-  s1.addText(`Laporan Prestasi — ${island} · ${year}`, { x:0.93, y:3.53, w:11.33, h:0.8, fontSize:20, color:GLOW })
-  s1.addText(`Dijana ${new Date().toLocaleDateString('ms-MY')}`, { x:0.93, y:6.6, w:11.33, h:0.53, fontSize:11, color:MUTED })
+  // ===== 1b. Pendahuluan (jika diisi) =====
+  if (T.prelude.title || T.prelude.body) {
+    const sl = newSlide(bgPlain)
+    sl.addText('PENDAHULUAN', { x: 0.5, y: 1.2, w: W - 1, h: 0.35, align: 'center', fontFace: BODY, fontSize: 12, bold: true, color: C.mint, charSpacing: 4 })
+    if (T.prelude.title) sl.addText(T.prelude.title, { x: 0.5, y: 1.6, w: W - 1, h: 0.9, align: 'center', fontFace: HEAD, fontSize: 38, bold: true, color: C.text })
+    const paras = T.prelude.body.split(/\n\s*\n/).map(x => x.trim()).filter(Boolean)
+    if (paras.length) {
+      // tinggi kad ikut panjang teks (≈ 85 aksara sebaris pada 17pt)
+      const lines = paras.reduce((a, p) => a + Math.max(1, Math.ceil(p.length / 85)), 0) + (paras.length - 1) * 0.6
+      const th = Math.min(4.3, 0.55 + lines * 0.42)
+      const cy = Math.max(2.25, (H - th) / 2 + 0.35)
+      card(sl, 1.4, cy, W - 2.8, th)
+      sl.addText(paras.map((p, i) => ({ text: p.replace(/\n/g, ' '), options: { breakLine: i < paras.length - 1, paraSpaceAfter: 12 } })), { x: 1.8, y: cy + 0.15, w: W - 3.6, h: th - 0.3, fontFace: BODY, fontSize: 17, color: C.text, valign: 'middle', lineSpacingMultiple: 1.25 })
+    }
+    footer(sl)
+  }
 
-  // Slide 2 — Key numbers
-  slideNum++
-  const s2 = pptx.addSlide()
-  s2.background = { color: NAVY }
-  s2.addText('Pencapaian Sasaran', { x:0.67, y:0.43, w:12, h:0.73, fontSize:24, bold:true, color:SAND })
-  s2.addShape(pptx.ShapeType.rect, { x:0.67, y:1.16, w:1.47, h:0.06, fill:{ color:GLOW }, line:{ type:'none' } })
-  const kpis = [
-    [`${s.jumlahTelur.toLocaleString()}`, 'Jumlah Telur', GLOW],
-    [s.target ? `${s.pct}%` : '—', 'Peratus Sasaran', GOLD],
-    [`${s.jumlahPenyu.toLocaleString()}`, 'Bilangan Penyu', SAND],
-    [`${s.hatchRate}%`, 'Kadar Menetas', GLOW],
-    [`${s.jumlahBuruk.toLocaleString()}`, 'Telur Buruk', CORAL],
-    [s.target ? s.target.toLocaleString() : '—', 'Sasaran Tahunan', SAND],
-  ]
-  kpis.forEach((k, i) => {
-    const col = i % 3, row = Math.floor(i / 3)
-    const x = 0.67 + col * 4.13, y = 1.6 + row * 2.53
-    s2.addShape(pptx.ShapeType.roundRect, { x, y, w:3.8, h:2.13, fill:{ color:PANEL }, line:{ color:TEAL, width:1 }, rectRadius:0.08 })
-    s2.addText(k[0], { x, y:y+0.2, w:3.8, h:1.07, align:'center', fontSize:28, bold:true, color:k[2] })
-    s2.addText(k[1], { x, y:y+1.27, w:3.8, h:0.53, align:'center', fontSize:12, color:MUTED })
-  })
-  s2.addText(`${island} · Penyu Tracker · ${year}`, { x:0.67, y:7.07, w:8, h:0.4, fontSize:9, color:MUTED })
-  s2.addText(String(slideNum), { x:12.13, y:7.07, w:0.53, h:0.4, fontSize:9, color:MUTED, align:'right' })
+  // ===== 2. Pulau (kulit) =====
+  {
+    const sl = newSlide(bgIsl)
+    if (isl.img) {
+      const im = await loadImg(isl.img), r = im.height / im.width
+      const iw = 7.2, ih = Math.min(5.6, iw * r)
+      sl.addImage({ data: isl.img, x: W - iw - 0.6, y: (H - ih) / 2 - 0.1, w: iw, h: ih, rounding: false })
+    } else {
+      const pics = ISL.slice(0, 3)
+      for (let i = 0; i < 3; i++) sl.addImage({ data: pics[i].img, x: 6.1 + i * 2.4, y: 1.4, w: 2.3, h: 4.6, sizing: { type: 'cover', w: 2.3, h: 4.6 } })
+    }
+    const totIsl = data.years.reduce((a, yy) => a + yearSummary(data.byIsl[island][yy], yy).dikutip, 0)
+    sl.addText(island === 'ALL' ? 'GABUNGAN' : island, { x: 0.6, y: 2.2, w: 5.4, h: 0.35, fontFace: BODY, fontSize: 13, bold: true, color: C.mint, charSpacing: 4 })
+    sl.addText(isl.name, { x: 0.6, y: 2.6, w: 5.4, h: 1.5, fontFace: HEAD, fontSize: 36, bold: true, color: C.text, valign: 'top' })
+    sl.addText(`Laporan Tahunan ${year}`, { x: 0.6, y: 4.15, w: 5.4, h: 0.5, fontFace: BODY, fontSize: 18, color: 'CBD5D1' })
+    sl.addText([{ text: fmt(totIsl), options: { bold: true, color: C.text } }, { text: ' telur dikutip sejak 1990', options: { color: C.mute } }], { x: 0.6, y: 4.7, w: 5.4, h: 0.4, fontFace: BODY, fontSize: 13 })
+    footer(sl)
+  }
 
-  // Slide 3 — Monthly breakdown table (penyu, telur, sasaran, % capaian per month)
-  const s3 = baseSlide('Data Bulanan Terperinci')
-  const monthlyTarget = s.monthlyTargetMap || {}
-  let bestIdx = 0
-  s.monthly.forEach((m, i) => { if ((m.telur||0) > (s.monthly[bestIdx]?.telur||0)) bestIdx = i })
-  const headerRow = ['Bulan', 'Penyu', 'Telur', 'Sasaran', '% Capaian'].map(t => ({
-    text: t, options: { bold:true, color:SAND, fill:{ color:TEAL }, align: t==='Bulan' ? 'left' : 'right', fontSize:11 }
-  }))
-  const dataRows = MONTH_LABELS.map((label, i) => {
-    const m = i + 1
-    const telur = s.monthly[i]?.telur || 0
-    const penyu = s.monthlyPenyu[i]?.penyu || 0
-    const mTarget = monthlyTarget[m]
-    const mPct = mTarget ? Math.round((telur / mTarget) * 100) : null
-    const achieved = mTarget && mPct >= 100
-    const rowFill = i % 2 === 0 ? PANEL2 : PANEL
-    const isBest = i === bestIdx && telur > 0
-    return [
-      { text: label + (isBest ? '  🏆' : ''), options: { color:SAND, fill:{ color:rowFill }, fontSize:11 } },
-      { text: String(penyu), options: { color:SAND, fill:{ color:rowFill }, align:'right', fontSize:11 } },
-      { text: telur.toLocaleString(), options: { color: isBest ? GOLD : GLOW, bold:true, fill:{ color:rowFill }, align:'right', fontSize:11 } },
-      { text: mTarget ? mTarget.toLocaleString() : '—', options: { color:MUTED, fill:{ color:rowFill }, align:'right', fontSize:11 } },
-      { text: mTarget ? mPct + '%' : '—', options: { color: achieved ? GOLD : MUTED, bold: achieved, fill:{ color:rowFill }, align:'right', fontSize:11 } },
-    ]
-  })
-  s3.addTable([headerRow, ...dataRows], {
-    x:0.67, y:1.4, w:12, colW:[2.76, 2.58, 2.58, 2.58, 1.5],
-    border: { type:'solid', color:'0A1F2B', pt:0.5 },
-    autoPage: false, valign:'middle', margin:0.04
-  })
+  // ===== 3. Ringkasan =====
+  {
+    const sl = newSlide(); head(sl, `${isl.name} · Laporan Tahunan`, `Tahun ${year}`)
+    card(sl, 0.6, 1.85, 4.0, 4.95)
+    const ratePct = s.rate == null ? 0 : s.rate
+    const ring = await chartPng({ type: 'doughnut', data: { datasets: [{ data: [ratePct, 100 - ratePct], backgroundColor: ['#6EE7B7', 'rgba(255,255,255,.09)'], borderWidth: 0 }] }, options: { cutout: '78%', plugins: { legend: { display: false }, tooltip: { enabled: false } } } }, 2.6, 2.6)
+    sl.addImage({ data: ring, x: 1.3, y: 2.15, w: 2.6, h: 2.6 })
+    sl.addText([{ text: s.rate == null ? '—' : `${s.rate.toFixed(1)}%`, options: { fontSize: 30, bold: true, color: C.text, breakLine: true } }, { text: 'kadar menetas', options: { fontSize: 11, color: C.mute } }], { x: 1.3, y: 2.95, w: 2.6, h: 1.0, align: 'center', valign: 'middle', fontFace: BODY })
+    if (rank) sl.addText([{ text: `#${rank}`, options: { bold: true, color: C.gold } }, { text: ` daripada ${series.length} tahun (telur dikutip)`, options: { color: 'CBD5D1' } }], { x: 0.7, y: 4.95, w: 3.8, h: 0.4, align: 'center', fontFace: BODY, fontSize: 12 })
+    const note = year === thisYear ? 'Tahun semasa — data masih dikemas kini' : ''
+    if (note) sl.addText(`⚠ ${note}`, { x: 0.7, y: 5.4, w: 3.8, h: 0.4, align: 'center', fontFace: BODY, fontSize: 10, color: C.warn })
+    const kp = [['🐢', 'Pendaratan penyu / sarang', s.penyu, prev?.penyu], ['🥚', 'Telur dikutip', s.dikutip, prev?.dikutip], ['🏝', 'Telur ditanam', s.telur, prev?.telur], ['🐣', 'Anak penyu menetas', s.menetas, prev?.menetas]]
+    kp.forEach((k, i) => {
+      const x = 4.85 + (i % 2) * 4.0, y = 1.85 + Math.floor(i / 2) * 2.55
+      card(sl, x, y, 3.8, 2.4)
+      sl.addText(k[0], { x: x + 0.25, y: y + 0.15, w: 1, h: 0.45, fontSize: 20 })
+      sl.addText(fmt(k[2]), { x: x + 0.25, y: y + 0.6, w: 3.4, h: 0.75, fontFace: BODY, fontSize: 32, bold: true, color: C.text })
+      sl.addText(k[1], { x: x + 0.25, y: y + 1.35, w: 3.4, h: 0.35, fontFace: BODY, fontSize: 12, color: 'CBD5D1' })
+      if (prev) sl.addText(i === 3 ? hatchDelta(s.menetas, s, year, prev.menetas, prev, prev.y) : delta(k[2], k[3], prev.y), { x: x + 0.25, y: y + 1.75, w: 3.45, h: 0.35, fontFace: BODY, fontSize: 10.5 })
+    })
+    footer(sl)
+  }
 
-  // Slide 4 — Monthly eggs bar chart
-  const s4 = baseSlide('Trend Bulanan — Jumlah Telur')
-  s4.addChart(pptx.ChartType.bar, [{
-    name: 'Telur', labels: s.monthly.map(m=>m.month), values: s.monthly.map(m=>m.telur)
-  }], {
-    x:0.67, y:1.47, w:12, h:5.4,
-    chartColors:[TEAL], catAxisLabelColor:SAND, valAxisLabelColor:SAND,
-    dataLabelColor:SAND, showLegend:false, showTitle:false,
-    catAxisLineColor:'444444', valAxisLineColor:'444444'
-  })
+  // ===== 4. Perjalanan 12 bulan =====
+  {
+    const sl = newSlide(); head(sl, `${isl.name} · ${year}`, 'Perjalanan 12 bulan')
+    const bestM = s.active.reduce((b, r) => r.telur > (months[b]?.telur || 0) ? r.m : b, 0)
+    const ds = [{ label: 'Telur ditanam', data: months.map(r => r.telur), backgroundColor: months.map((r, i) => i === bestM ? '#E0A458' : '#2FA4B8'), borderRadius: 8, order: 2 }]
+    if (months.some(r => r.dikutip !== r.telur)) ds.push({ type: 'line', label: 'Telur dikutip', data: months.map(r => r.dikutip), borderColor: 'rgba(255,255,255,.75)', borderDash: [6, 5], pointRadius: 0, borderWidth: 2, order: 1 })
+    card(sl, 0.6, 1.85, 12.1, 4.55)
+    sl.addImage({ data: await chartPng({ type: 'bar', data: { labels: MONTH_LABELS, datasets: ds }, options: axis() }, 11.7, 4.25), x: 0.8, y: 2.0, w: 11.7, h: 4.25 })
+    const landas = months.map((r, i) => r.telur === 0 && r.dikutip === 0 ? MONTH_LABELS[i] : null).filter(Boolean)
+    if (landas.length && landas.length < 12) sl.addText([{ text: '🌊 Tiada pendaratan direkod: ', options: { color: 'CBD5D1' } }, { text: landas.join(', '), options: { bold: true, color: C.text } }, { text: ' — musim landas.', options: { color: 'CBD5D1' } }], { x: 0.6, y: 6.5, w: 12, h: 0.4, fontFace: BODY, fontSize: 12 })
+    footer(sl)
+  }
 
-  // Slide 5 — Monthly turtle count bar chart
-  const s5 = baseSlide('Trend Bulanan — Bilangan Penyu')
-  s5.addChart(pptx.ChartType.bar, [{
-    name: 'Penyu', labels: s.monthlyPenyu.map(m=>m.month), values: s.monthlyPenyu.map(m=>m.penyu)
-  }], {
-    x:0.67, y:1.47, w:12, h:5.4,
-    chartColors:[GLOW], catAxisLabelColor:SAND, valAxisLabelColor:SAND,
-    dataLabelColor:SAND, showLegend:false, showTitle:false,
-    catAxisLineColor:'444444', valAxisLineColor:'444444'
-  })
+  // ===== 5. Bulan terbaik & terendah =====
+  {
+    const sl = newSlide(); head(sl, `${isl.name} · ${year}`, 'Bulan terbaik & terendah')
+    const act = s.active
+    if (!act.length) { card(sl, 0.6, 1.9, 12.1, 1.2); sl.addText('Tiada pendaratan direkod tahun ini.', { x: 0.9, y: 2.1, w: 11.5, h: 0.8, fontFace: BODY, fontSize: 18, color: C.text }) }
+    else {
+      const best = act.reduce((b, r) => r.telur > b.telur ? r : b, act[0])
+      const low = act.reduce((b, r) => r.telur < b.telur ? r : b, act[0])
+      const share = (r) => s.telur ? (r.telur / s.telur * 100).toFixed(1) : 0
+      const box = (x, tag, color, r, extra) => {
+        card(sl, x, 1.9, 5.9, 3.9, color)
+        sl.addText(MONTH_LABELS[r.m], { x: x + 3.0, y: 1.95, w: 2.8, h: 1.6, align: 'right', fontFace: HEAD, fontSize: 80, bold: true, color: C.text, transparency: 92 })
+        sl.addText(tag.toUpperCase(), { x: x + 0.35, y: 2.15, w: 5.2, h: 0.35, fontFace: BODY, fontSize: 11, bold: true, color, charSpacing: 3 })
+        sl.addText(MONTH_FULL[r.m], { x: x + 0.35, y: 2.55, w: 5.3, h: 0.95, fontFace: HEAD, fontSize: 44, bold: true, color: C.text })
+        sl.addText(fmt(r.telur), { x: x + 0.35, y: 3.5, w: 5.3, h: 0.7, fontFace: BODY, fontSize: 32, bold: true, color })
+        sl.addText(`telur ditanam · ${share(r)}% daripada setahun · ${fmt(r.penyu)} sarang`, { x: x + 0.35, y: 4.2, w: 5.3, h: 0.4, fontFace: BODY, fontSize: 12, color: 'CBD5D1' })
+        if (extra) sl.addText(runs(extra, { color: 'CBD5D1' }), { x: x + 0.35, y: 4.75, w: 5.3, h: 0.45, fontFace: BODY, fontSize: 13 })
+      }
+      box(0.6, '🏆 Bulan terbaik', C.gold, best, best.menetas + best.buruk ? `Kadar menetas bulan ini: <b>${(best.menetas / (best.menetas + best.buruk) * 100).toFixed(1)}%</b>` : '')
+      box(6.8, '📉 Bulan terendah (ada pendaratan)', C.sky, low, `${act.length} bulan ada pendaratan tahun ini`)
+      const bestRate = act.filter(r => r.menetas + r.buruk > 0).reduce((b, r) => (!b || r.menetas / (r.menetas + r.buruk) > b.menetas / (b.menetas + b.buruk)) ? r : b, null)
+      if (bestRate) { card(sl, 0.6, 6.0, 12.1, 0.7); sl.addText(runs(`🐣 Kadar menetas tertinggi: <b>${MONTH_FULL[bestRate.m]}</b> — ${(bestRate.menetas / (bestRate.menetas + bestRate.buruk) * 100).toFixed(1)}% (${fmt(bestRate.menetas)} anak penyu)`, { color: 'CBD5D1' }), { x: 0.85, y: 6.05, w: 11.6, h: 0.6, fontFace: BODY, fontSize: 13 }) }
+    }
+    footer(sl)
+  }
 
-  // Slide 6 — Closing
-  const s6 = pptx.addSlide()
-  s6.background = { color: NAVY }
-  s6.addShape(pptx.ShapeType.rect, { x:0, y:0, w:0.19, h:7.5, fill:{ color:GLOW }, line:{ type:'none' } })
-  s6.addText('Terima Kasih', { x:0.93, y:2.87, w:11.33, h:1.2, fontSize:34, bold:true, color:SAND, fontFace:'Georgia' })
-  s6.addText(`${island} · Penyu Tracker`, { x:0.93, y:3.87, w:11.33, h:0.67, fontSize:16, color:GLOW })
+  // ===== 6. Penetasan =====
+  {
+    const sl = newSlide(); head(sl, `${isl.name} · ${year}`, 'Penetasan')
+    const unknown = Math.max(0, s.telur - s.menetas - s.buruk)
+    card(sl, 0.6, 1.85, 5.9, 4.6); card(sl, 6.8, 1.85, 5.9, 4.6)
+    const donut = await chartPng({ type: 'doughnut', data: { labels: ['Menetas', 'Buruk', ...(unknown ? ['Belum direkod'] : [])], datasets: [{ data: [s.menetas, s.buruk, ...(unknown ? [unknown] : [])], backgroundColor: ['#2FA4B8', '#DC6A40', 'rgba(148,163,184,.3)'], borderColor: '#0b2530', borderWidth: 3 }] }, options: { cutout: '70%', plugins: { legend: { position: 'bottom', labels: { color: '#cbd5d1', usePointStyle: true, font: { size: 14 } } } } } }, 5.5, 4.3)
+    sl.addImage({ data: donut, x: 0.8, y: 2.0, w: 5.5, h: 4.3 })
+    sl.addText([{ text: s.rate == null ? '—' : `${s.rate.toFixed(1)}%`, options: { fontSize: 28, bold: true, color: C.text, breakLine: true } }, { text: 'kadar menetas', options: { fontSize: 11, color: C.mute } }], { x: 2.3, y: 3.3, w: 2.5, h: 1.0, align: 'center', valign: 'middle', fontFace: BODY })
+    const rate = months.map(r => r.menetas + r.buruk ? Math.round(r.menetas / (r.menetas + r.buruk) * 1000) / 10 : null)
+    const bar = await chartPng({ type: 'bar', data: { labels: MONTH_LABELS, datasets: [
+      { label: 'Menetas', data: months.map(r => r.menetas), backgroundColor: '#2FA4B8', borderRadius: 6, stack: 'a' },
+      { label: 'Buruk', data: months.map(r => r.buruk), backgroundColor: '#DC6A40', borderRadius: 6, stack: 'a' },
+      { type: 'line', label: 'Kadar %', data: rate, yAxisID: 'y2', borderColor: '#F1F5F4', backgroundColor: '#F1F5F4', pointRadius: 4, borderWidth: 2, tension: .3, spanGaps: true }
+    ] }, options: axis({ scales: { x: { stacked: true, grid: { display: false }, ticks: { color: '#9fb3ae', font: { size: 13 } } }, y: { stacked: true, grid: { color: 'rgba(255,255,255,.08)' }, ticks: { color: '#9fb3ae', callback: (v) => fmtShort(v) }, beginAtZero: true }, y2: { position: 'right', min: 0, max: 100, grid: { display: false }, ticks: { color: '#F1F5F4', callback: (v) => v + '%' } } } }) }, 5.5, 4.3)
+    sl.addImage({ data: bar, x: 7.0, y: 2.0, w: 5.5, h: 4.3 })
+    sl.addText(`Kadar menetas = menetas ÷ (menetas + buruk), ikut bulan telur ditanam.${s.hatchIncomplete ? ' ⚠ Sebahagian bulan belum ada data penetasan.' : ''}`, { x: 0.6, y: 6.5, w: 12.1, h: 0.35, align: 'center', fontFace: BODY, fontSize: 10.5, color: C.mute })
+    footer(sl)
+  }
 
-  pptx.writeFile({ fileName: `Pembentangan-${island}-${year}.pptx` })
+  // ===== 7. Perbandingan =====
+  if (cmpY) {
+    const sl = newSlide()
+    sl.addText(isl.name.toUpperCase(), { x: 0.6, y: 0.45, w: 12, h: 0.32, fontFace: BODY, fontSize: 11, bold: true, color: C.mint, charSpacing: 3 })
+    sl.addText([{ text: `${year} `, options: { color: C.text } }, { text: 'vs ', options: { color: '7C8C89' } }, { text: String(cmpY), options: { color: C.gold } }], { x: 0.6, y: 0.78, w: 12, h: 0.85, fontFace: HEAD, fontSize: 34, bold: true })
+    const k = [['Penyu / sarang', s.penyu, cs.penyu], ['Telur dikutip', s.dikutip, cs.dikutip], ['Telur ditanam', s.telur, cs.telur], ['Anak penyu menetas', s.menetas, cs.menetas, 'hatch'], ['Kadar menetas', s.rate, cs.rate, 'rate']]
+    const cw = 2.3, gap = 0.15
+    k.forEach((r, i) => {
+      const x = 0.6 + i * (cw + gap)
+      card(sl, x, 1.8, cw, 1.45)
+      sl.addText(r[0], { x: x + 0.15, y: 1.88, w: cw - 0.3, h: 0.3, fontFace: BODY, fontSize: 10, color: 'CBD5D1' })
+      sl.addText(r[3] === 'rate' ? (r[1] == null ? '—' : r[1].toFixed(1) + '%') : fmt(r[1]), { x: x + 0.15, y: 2.18, w: cw - 0.3, h: 0.5, fontFace: BODY, fontSize: 20, bold: true, color: C.text })
+      let sub
+      if (r[3] === 'rate') sub = [{ text: `${cmpY}: ${r[2] == null ? '—' : r[2].toFixed(1) + '%'}`, options: { color: C.mute, breakLine: true } }, ...(r[1] != null && r[2] != null ? [{ text: `${r[1] >= r[2] ? '▲' : '▼'} ${Math.abs(r[1] - r[2]).toFixed(1)} mata`, options: { color: r[1] >= r[2] ? C.up : C.down, bold: true } }] : [])]
+      else if (r[3] === 'hatch' && (!cs.menetas || cs.hatchIncomplete || s.hatchIncomplete)) sub = [{ text: `${cmpY}: ${fmt(r[2])}`, options: { color: C.mute, breakLine: true } }, { text: `⚠ ${!cs.menetas ? `tiada data penetasan ${cmpY}` : `penetasan ${cs.hatchIncomplete ? cmpY : year} belum lengkap`}`, options: { color: C.warn } }]
+      else sub = [{ text: `${cmpY}: ${fmt(r[2])}`, options: { color: C.mute, breakLine: true } }, ...delta(r[1], r[2])]
+      sl.addText(sub, { x: x + 0.15, y: 2.68, w: cw - 0.25, h: 0.5, fontFace: BODY, fontSize: 9.5, valign: 'top' })
+    })
+    card(sl, 0.6, 3.45, 12.1, 3.35)
+    sl.addImage({ data: await chartPng({ type: 'bar', data: { labels: MONTH_LABELS, datasets: [
+      { label: String(year), data: months.map(r => r.telur), backgroundColor: '#2FA4B8', borderRadius: 6 },
+      { label: String(cmpY), data: cmpM.map(r => r.telur), backgroundColor: '#E0A458', borderRadius: 6 }
+    ] }, options: axis() }, 11.7, 3.1), x: 0.8, y: 3.57, w: 11.7, h: 3.1 })
+    footer(sl)
+  }
+
+  // ===== 8. Dalam sejarah =====
+  if (series.length) {
+    const sl = newSlide(); head(sl, isl.name, `${year} dalam sejarah ${series[0].y}–${series[series.length - 1].y}`)
+    const best = series.reduce((b, r) => r.dikutip > b.dikutip ? r : b, series[0])
+    const worst = series.filter(r => r.y !== thisYear).reduce((b, r) => r.dikutip < b.dikutip ? r : b, series[0])
+    const rated = series.filter(r => r.rate != null && !r.hatchIncomplete)
+    const bestRate = rated.reduce((b, r) => !b || r.rate > b.rate ? r : b, null)
+    const avg = series.reduce((a, r) => a + r.dikutip, 0) / series.length
+    const stats = [['🏆 Tahun tertinggi', String(best.y), C.gold, [{ text: `${fmt(best.dikutip)} telur dikutip`, options: { color: 'CBD5D1' } }]],
+      ['📉 Tahun terendah', String(worst.y), C.sky, [{ text: `${fmt(worst.dikutip)} telur dikutip`, options: { color: 'CBD5D1' } }]],
+      ...(bestRate ? [['🐣 Kadar menetas terbaik', String(bestRate.y), C.mint, [{ text: `${bestRate.rate.toFixed(1)}%`, options: { color: 'CBD5D1' } }]]] : []),
+      [`📍 ${year}`, `#${rank}`, C.text, [...delta(s.dikutip, avg), { text: ' berbanding purata', options: { color: 'CBD5D1' } }]]]
+    const cw = (12.1 - (stats.length - 1) * 0.2) / stats.length
+    stats.forEach((st, i) => {
+      const x = 0.6 + i * (cw + 0.2)
+      card(sl, x, 1.8, cw, 1.35)
+      sl.addText(st[0], { x: x + 0.2, y: 1.88, w: cw - 0.4, h: 0.3, fontFace: BODY, fontSize: 10.5, color: 'CBD5D1' })
+      sl.addText(st[1], { x: x + 0.2, y: 2.17, w: cw - 0.4, h: 0.5, fontFace: BODY, fontSize: 22, bold: true, color: st[2] })
+      sl.addText(st[3], { x: x + 0.2, y: 2.68, w: cw - 0.4, h: 0.35, fontFace: BODY, fontSize: 10 })
+    })
+    const col = (r) => r.y === year ? '#6EE7B7' : r.y === best.y ? '#E0A458' : r.y === worst.y ? '#7DD3FC' : 'rgba(47,164,184,.55)'
+    card(sl, 0.6, 3.35, 12.1, 3.45)
+    sl.addImage({ data: await chartPng({ data: { labels: series.map(r => r.y), datasets: [
+      { type: 'bar', label: 'Telur dikutip', data: series.map(r => r.dikutip), backgroundColor: series.map(col), borderRadius: 4, yAxisID: 'y' },
+      { type: 'line', label: 'Kadar menetas %', data: series.map(r => r.rate == null ? null : Math.round(r.rate * 10) / 10), yAxisID: 'y2', borderColor: 'rgba(241,245,244,.8)', pointRadius: 0, borderWidth: 2, tension: .3, spanGaps: true }
+    ] }, options: axis({ scales: { x: { grid: { display: false }, ticks: { color: '#9fb3ae', maxRotation: 0, autoSkip: true, maxTicksLimit: 14, font: { size: 13 } } }, y: { grid: { color: 'rgba(255,255,255,.08)' }, ticks: { color: '#9fb3ae', callback: (v) => fmtShort(v) }, beginAtZero: true }, y2: { position: 'right', min: 0, max: 100, grid: { display: false }, ticks: { color: '#F1F5F4', callback: (v) => v + '%' } } } }) }, 11.7, 3.2), x: 0.8, y: 3.47, w: 11.7, h: 3.2 })
+    footer(sl)
+  }
+
+  // ===== 9. Rumusan =====
+  {
+    const sl = newSlide(); head(sl, `${isl.name} · ${year}`, 'Rumusan')
+    const ins = []
+    if (rank) ins.push(['🏅', `<b>${year}</b> berada di kedudukan <b>#${rank}</b> daripada ${series.length} tahun bagi telur dikutip (${fmt(s.dikutip)} biji).`])
+    if (prev) { const d = (s.dikutip - prev.dikutip) / prev.dikutip * 100; ins.push([d >= 0 ? '📈' : '📉', `Telur dikutip ${d >= 0 ? 'meningkat' : 'menurun'} <b>${Math.abs(d).toFixed(1)}%</b> berbanding ${prev.y} (${fmt(prev.dikutip)} biji).`]) }
+    if (s.active.length) { const b = s.active.reduce((x, r) => r.telur > x.telur ? r : x, s.active[0]); ins.push(['🏆', `<b>${MONTH_FULL[b.m]}</b> bulan paling sibuk — ${fmt(b.telur)} telur (${(b.telur / (s.telur || 1) * 100).toFixed(0)}% setahun).`]) }
+    if (s.rate != null) {
+      const rated = series.filter(r => r.rate != null && !r.hatchIncomplete)
+      const avgRate = rated.reduce((a, r) => a + r.rate, 0) / (rated.length || 1)
+      const top = rated.slice().sort((a, b) => b.rate - a.rate).findIndex(r => r.y === year) + 1
+      ins.push(['🐣', `Kadar menetas <b>${s.rate.toFixed(1)}%</b> — ${s.rate >= avgRate ? 'melebihi' : 'di bawah'} purata ${avgRate.toFixed(1)}% sejak ${series[0].y}${top === 1 ? ', <b>tertinggi dalam sejarah</b>' : top ? ` (#${top} terbaik)` : ''}.${s.hatchIncomplete ? ' (penetasan belum lengkap)' : ''}`])
+    }
+    const landas = months.map((r, i) => r.telur === 0 ? MONTH_LABELS[i] : null).filter(Boolean)
+    if (landas.length && landas.length < 12) ins.push(['🌊', `Tiada pendaratan direkod pada <b>${landas.join(', ')}</b> — musim landas.`])
+    const rh = Math.min(0.92, 4.9 / Math.max(ins.length, 1) - 0.12)
+    ins.forEach((t, i) => {
+      const y = 1.85 + i * (rh + 0.12)
+      card(sl, 1.2, y, 10.9, rh)
+      sl.addText(t[0], { x: 1.4, y, w: 0.6, h: rh, fontSize: 22, valign: 'middle' })
+      sl.addText(runs(t[1], { color: 'CBD5D1' }), { x: 2.05, y, w: 9.9, h: rh, fontFace: BODY, fontSize: 15, valign: 'middle' })
+    })
+    footer(sl)
+  }
+
+  // ===== 10. Penutup =====
+  {
+    const sl = newSlide(bgPlain)
+    const P = T.closing
+    let y = 1.4
+    if (logo) { const lw = 1.3; sl.addImage({ data: logo.data, x: (W - lw) / 2, y, w: lw, h: lw * logo.r }); y += lw * logo.r + 0.35 }
+    sl.addText(P.title || 'Terima Kasih', { x: 0.5, y, w: W - 1, h: 1.1, align: 'center', fontFace: HEAD, fontSize: 52, bold: true, color: C.text }); y += 1.2
+    if (P.name) { sl.addText(P.name, { x: 0.5, y, w: W - 1, h: 0.5, align: 'center', fontFace: BODY, fontSize: 18, color: 'CBD5D1' }); y += 0.6 }
+    if (P.date) sl.addText(P.date.toUpperCase(), { x: 0.5, y, w: W - 1, h: 0.4, align: 'center', fontFace: BODY, fontSize: 12, bold: true, color: C.mint, charSpacing: 4 })
+    n++
+  }
+
+  const fname = `Pembentangan-${island}-${year}.pptx`
+  await pptx.writeFile({ fileName: fname })
+  return fname
 }
 
 // Export ditulis TERUS ke dalam XML template (bukan melalui SheetJS) supaya
@@ -3926,11 +4161,12 @@ async function loadPresData() {
   return presData
 }
 
-function yearSummary(months) {
+// "Penetasan belum lengkap" hanya untuk TAHUN SEMASA; tahun lepas dianggap data muktamad
+function yearSummary(months, year) {
   const s = { telur: 0, dikutip: 0, penyu: 0, menetas: 0, buruk: 0 }
   months.forEach(r => { for (const k in s) s[k] += r[k] })
   s.rate = (s.menetas + s.buruk) ? s.menetas / (s.menetas + s.buruk) * 100 : null
-  s.hatchIncomplete = months.some(r => r.telur > 0 && r.menetas + r.buruk === 0)
+  s.hatchIncomplete = year === new Date().getFullYear() && months.some(r => r.telur > 0 && r.menetas + r.buruk === 0)
   s.active = months.map((r, i) => ({ ...r, m: i })).filter(r => r.telur > 0)
   return s
 }
@@ -4294,7 +4530,7 @@ async function openPresentation(opts = {}) {
       const fill = () => {
         if (!data) return
         let tot = { dikutip: 0, menetas: 0, penyu: 0 }, first = null
-        data.years.forEach(y => { const s = yearSummary(data.byIsl.ALL[y]); if (s.dikutip > 0 && first === null) first = y; tot.dikutip += s.dikutip; tot.menetas += s.menetas; tot.penyu += s.penyu })
+        data.years.forEach(y => { const s = yearSummary(data.byIsl.ALL[y], y); if (s.dikutip > 0 && first === null) first = y; tot.dikutip += s.dikutip; tot.menetas += s.menetas; tot.penyu += s.penyu })
         const box = scr.querySelector('#introStats'); if (!box) return
         const cell = (n, l) => `<div class="pres-card p-4"><div class="pres-num" style="font-size:clamp(1.4rem,3vw,2.4rem)" data-count="${n}" data-wait="200" data-dur="2200">0</div><div class="text-xs opacity-70 mt-1">${presEsc(l)}</div></div>`
         box.innerHTML = cell(tot.dikutip, I.stat1.replace(/\{tahun\}/g, first ?? 1990)) + cell(tot.menetas, I.stat2.replace(/\{tahun\}/g, first ?? 1990)) + cell(tot.penyu, I.stat3.replace(/\{tahun\}/g, first ?? 1990))
@@ -4322,7 +4558,7 @@ async function openPresentation(opts = {}) {
   // ---------- 2. Pilih pulau ----------
   function renderIslands() {
     S.level = 'islands'; S.island = null; setBg(null); crumb()
-    const totals = (code) => data ? data.years.reduce((a, y) => a + yearSummary(data.byIsl[code][y]).dikutip, 0) : 0
+    const totals = (code) => data ? data.years.reduce((a, y) => a + yearSummary(data.byIsl[code][y], y).dikutip, 0) : 0
     show(`
       <div style="width:min(1280px,100%)">
         <div class="text-center mb-6">
@@ -4360,7 +4596,7 @@ async function openPresentation(opts = {}) {
     S.level = 'years'
     const isl = islandOf(S.island)
     setBg(isl.img || ISL[0].img); crumb()
-    const sums = data.years.map(y => ({ y, ...yearSummary(data.byIsl[S.island][y]) }))
+    const sums = data.years.map(y => ({ y, ...yearSummary(data.byIsl[S.island][y], y) }))
     const max = Math.max(1, ...sums.map(s => s.dikutip))
     const best = sums.reduce((b, s) => s.dikutip > b.dikutip ? s : b, sums[0])
     show(`
@@ -4391,8 +4627,8 @@ async function openPresentation(opts = {}) {
   // ---------- 4. Laporan tahun ----------
   function ctx() {
     const months = data.byIsl[S.island][S.year]
-    const s = yearSummary(months)
-    const series = data.years.map(y => ({ y, ...yearSummary(data.byIsl[S.island][y]) })).filter(r => r.dikutip > 0)
+    const s = yearSummary(months, S.year)
+    const series = data.years.map(y => ({ y, ...yearSummary(data.byIsl[S.island][y], y) })).filter(r => r.dikutip > 0)
     const ranked = series.slice().sort((a, b) => b.dikutip - a.dikutip)
     const rank = ranked.findIndex(r => r.y === S.year) + 1
     const prevYear = series.filter(r => r.y < S.year).pop()
@@ -4412,7 +4648,8 @@ async function openPresentation(opts = {}) {
     </div>`
   // Banding menetas hanya jika penetasan KEDUA-DUA tahun lengkap; jika tidak, % akan mengelirukan
   const hatchCmpTxt = (now, yNow, sNow, then, yThen, sThen) => {
-    if (sThen.hatchIncomplete || !sThen.menetas) return `<span style="color:#F2C38B">⚠ data penetasan ${yThen} belum lengkap</span>`
+    if (!sThen.menetas) return `<span style="color:#F2C38B">⚠ tiada data penetasan ${yThen}</span>`
+    if (sThen.hatchIncomplete) return `<span style="color:#F2C38B">⚠ data penetasan ${yThen} belum lengkap</span>`
     if (sNow.hatchIncomplete) return `<span style="color:#F2C38B">⚠ penetasan ${yNow} belum lengkap</span> <span class="opacity-60">· ${yThen}: ${fmt(then)}</span>`
     return deltaTxt(now, then) + ` <span class="opacity-60">vs ${yThen}</span>`
   }
@@ -4548,7 +4785,7 @@ async function openPresentation(opts = {}) {
     if (sec === 4) {
       const opts = C.series.filter(r => r.y !== S.year).map(r => r.y).reverse()
       const render4 = () => {
-        const cm = data.byIsl[S.island][S.cmp], cs = yearSummary(cm)
+        const cm = data.byIsl[S.island][S.cmp], cs = yearSummary(cm, S.cmp)
         return { cm, cs }
       }
       let { cm, cs } = render4()
@@ -4560,7 +4797,7 @@ async function openPresentation(opts = {}) {
         <div class="pres-card p-4 pa" ${delay(i, .2)}>
           <div class="text-xs opacity-70">${k[0]}</div>
           <div class="pres-num" style="font-size:clamp(1.3rem,2.2vw,1.9rem)">${k[3] ? (k[1] == null ? '—' : k[1].toFixed(1) + '%') : fmt(k[1])}</div>
-          <div class="text-xs mt-1">${k[4] && (s.hatchIncomplete || cs.hatchIncomplete || !cs.menetas) ? `<span class="opacity-60">${S.cmp}: ${fmt(k[2])}</span> · <span style="color:#F2C38B">⚠ penetasan ${cs.hatchIncomplete || !cs.menetas ? S.cmp : S.year} belum lengkap</span>` : `<span class="opacity-60">${S.cmp}: ${k[3] ? (k[2] == null ? '—' : k[2].toFixed(1) + '%') : fmt(k[2])}</span> · ${k[3] ? (k[1] == null || k[2] == null ? '' : `<span class="${k[1] >= k[2] ? 'pres-up' : 'pres-down'}">${k[1] >= k[2] ? '▲' : '▼'} ${Math.abs(k[1] - k[2]).toFixed(1)} mata</span>`) : deltaTxt(k[1], k[2])}`}</div>
+          <div class="text-xs mt-1">${k[4] && (s.hatchIncomplete || cs.hatchIncomplete || !cs.menetas) ? `<span class="opacity-60">${S.cmp}: ${fmt(k[2])}</span> · <span style="color:#F2C38B">⚠ ${!cs.menetas ? `tiada data penetasan ${S.cmp}` : `penetasan ${cs.hatchIncomplete ? S.cmp : S.year} belum lengkap`}</span>` : `<span class="opacity-60">${S.cmp}: ${k[3] ? (k[2] == null ? '—' : k[2].toFixed(1) + '%') : fmt(k[2])}</span> · ${k[3] ? (k[1] == null || k[2] == null ? '' : `<span class="${k[1] >= k[2] ? 'pres-up' : 'pres-down'}">${k[1] >= k[2] ? '▲' : '▼'} ${Math.abs(k[1] - k[2]).toFixed(1)} mata</span>`) : deltaTxt(k[1], k[2])}`}</div>
         </div>`).join('')
       show(`
         <div class="mb-4 flex items-end justify-between gap-4 flex-wrap" style="width:min(1200px,100%)">
