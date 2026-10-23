@@ -3385,6 +3385,38 @@ git push</pre>
 }
 
 // ---------- Excel export logic ----------
+// Label angka pada bar — dikongsi Mod Pembentangan & PowerPoint.
+// Angka muncul (fade-in) mengikut ketinggian bar semasa animasi; tiada label untuk garis.
+// ds.noLabel = tiada label; ds.labelFmt = format sendiri. Label dilangkau jika tidak muat.
+function presValueLabels(size = 12, fmtNum = (v) => Math.round(v).toLocaleString('en-US')) {
+  return { id: 'vl', afterDatasetsDraw(ch) {
+    if (ch.width < 560) return // skrin kecil (telefon): terlalu sempit, guna tooltip
+    const g = ch.ctx; g.save(); g.textAlign = 'center'; g.font = `600 ${size}px Inter, Arial, sans-serif`
+    ch.data.datasets.forEach((ds, di) => {
+      const meta = ch.getDatasetMeta(di)
+      if (!ch.isDatasetVisible(di) || ds.noLabel || meta.type === 'line') return
+      meta.data.forEach((el, i) => {
+        const v = ds.data[i]; if (v == null || v === 0) return
+        const fin = el.getProps(['y', 'base'], true)
+        const full = Math.abs(fin.base - fin.y); if (!full) return
+        const p = Math.min(1, Math.max(0, Math.abs(el.base - el.y) / full))
+        const a = Math.pow(p, 4); if (a < 0.03) return
+        const txt = ds.labelFmt ? ds.labelFmt(v) : fmtNum(v)
+        const tw = g.measureText(txt).width
+        g.globalAlpha = a
+        if (ds.stack) {
+          if (full < size + 4 || tw > (el.width || 0) + 8) return
+          g.fillStyle = '#FFFFFF'; g.textBaseline = 'middle'; g.fillText(txt, el.x, (el.y + el.base) / 2)
+        } else {
+          if (tw > (el.width || 0) * 1.9) return
+          g.fillStyle = '#E6F0EE'; g.textBaseline = 'bottom'; g.fillText(txt, el.x, el.y - 4)
+        }
+      })
+    })
+    g.restore()
+  } }
+}
+
 // ---------- PowerPoint ikut Mod Pembentangan (PptxGenJS) ----------
 // Slaid sama dengan Mod Pembentangan (tanpa animasi): Pembukaan → Pendahuluan → Pulau →
 // Ringkasan → 12 Bulan → Terbaik/Terendah → Penetasan → Perbandingan → Sejarah → Rumusan → Penutup.
@@ -3445,21 +3477,7 @@ async function generatePresDeck(island, year) {
   } catch (e) { logo = null }
 
   // ---- Carta Chart.js → PNG (tanpa animasi) ----
-  // Label angka pada bar/titik (slaid tiada tooltip). ds.noLabel = tiada label; ds.labelFmt = format sendiri
-  const valueLabels = (size = 12) => ({ id: 'vl', afterDatasetsDraw(ch) {
-    const g = ch.ctx; g.save(); g.textAlign = 'center'; g.font = `600 ${size}px Arial`
-    ch.data.datasets.forEach((ds, di) => {
-      const meta = ch.getDatasetMeta(di); if (meta.hidden || ds.noLabel) return
-      meta.data.forEach((el, i) => {
-        const v = ds.data[i]; if (v == null || v === 0) return
-        const txt = ds.labelFmt ? ds.labelFmt(v) : fmt(v)
-        if (meta.type === 'line') { g.fillStyle = typeof ds.borderColor === 'string' ? ds.borderColor : '#F1F5F4'; g.textBaseline = 'bottom'; g.fillText(txt, el.x, el.y - 7); return }
-        if (ds.stack) { const h = Math.abs(el.base - el.y); if (h < size + 4) return; g.fillStyle = '#FFFFFF'; g.textBaseline = 'middle'; g.fillText(txt, el.x, (el.y + el.base) / 2); return }
-        g.fillStyle = '#E6F0EE'; g.textBaseline = 'bottom'; g.fillText(txt, el.x, el.y - 4)
-      })
-    })
-    g.restore()
-  } })
+  const valueLabels = (size) => presValueLabels(size, fmt)
   async function chartPng(cfg, wIn, hIn, labelSize) {
     if (labelSize) { cfg.plugins = [...(cfg.plugins || []), valueLabels(labelSize)]; cfg.options = { ...(cfg.options || {}), layout: { padding: { top: labelSize + 10 } } } }
     const pxW = Math.round(wIn * 110), pxH = Math.round(hIn * 110)
@@ -4672,6 +4690,7 @@ async function openPresentation(opts = {}) {
     if (sNow.hatchIncomplete) return `<span style="color:#F2C38B">⚠ penetasan ${yNow} belum lengkap</span> <span class="opacity-60">· ${yThen}: ${fmt(then)}</span>`
     return deltaTxt(now, then) + ` <span class="opacity-60">vs ${yThen}</span>`
   }
+  const kLbl = (v) => v >= 1000 ? (v / 1000).toFixed(1) + 'k' : String(v)
   const deltaTxt = (now, then) => {
     if (!then) return '<span class="opacity-60">—</span>'
     const d = (now - then) / then * 100
@@ -4724,11 +4743,11 @@ async function openPresentation(opts = {}) {
         <div class="pres-card p-5 pa" ${delay(2)} style="width:min(1200px,100%); height:clamp(300px,52vh,520px)"><canvas id="c1"></canvas></div>
         ${landas.length ? `<div class="text-sm opacity-75 mt-4 pa" ${delay(3)}>🌊 Tiada pendaratan direkod: <b>${landas.join(', ')}</b> — musim landas, kakitangan tidak dapat ke pulau.</div>` : ''}`, (scr) => {
         const ds = [{ label: 'Telur ditanam', data: months.map(r => r.telur), backgroundColor: months.map((r, i) => i === C.s.active.reduce((b, x) => x.telur > (months[b]?.telur || 0) ? x.m : b, 0) ? '#E0A458' : '#2FA4B8'), borderRadius: 8, order: 2 }]
-        if (showDikutip) ds.push({ type: 'line', label: 'Telur dikutip', data: months.map(r => r.dikutip), borderColor: 'rgba(255,255,255,.7)', borderDash: [6, 5], pointRadius: 0, borderWidth: 2, order: 1 })
+        if (showDikutip) ds.push({ type: 'line', label: 'Telur dikutip', data: months.map(r => r.dikutip), borderColor: 'rgba(255,255,255,.7)', borderDash: [6, 5], pointRadius: 0, borderWidth: 2, order: 1, noLabel: true })
         ds.push({ type: 'line', label: 'Penyu / sarang', data: months.map(r => r.penyu), yAxisID: 'y2', borderColor: '#A7F3D0', backgroundColor: '#A7F3D0', pointRadius: 4, tension: .35, borderWidth: 2, order: 0, hidden: true })
         S.charts.push(new Chart(scr.querySelector('#c1'), {
-          type: 'bar', data: { labels: MONTH_LABELS, datasets: ds },
-          options: chartBase({ animation: { duration: 900, delay: (c) => c.type === 'data' ? c.dataIndex * 110 + 300 : 0 }, interaction: { mode: 'index', intersect: false },
+          type: 'bar', data: { labels: MONTH_LABELS, datasets: ds }, plugins: [presValueLabels(13, fmt)],
+          options: chartBase({ layout: { padding: { top: 22 } }, animation: { duration: 900, delay: (c) => c.type === 'data' ? c.dataIndex * 110 + 300 : 0 }, interaction: { mode: 'index', intersect: false },
             scales: { ...chartBase().scales, y2: { position: 'right', display: 'auto', grid: { display: false }, ticks: { color: '#A7F3D0' }, beginAtZero: true } },
             plugins: { ...chartBase().plugins, tooltip: { ...chartBase().plugins.tooltip, callbacks: { label: (c) => ` ${c.dataset.label}: ${fmt(c.raw)}` } } } })
         }))
@@ -4767,7 +4786,7 @@ async function openPresentation(opts = {}) {
       const egg = MODE === 'hidup' && (s.menetas + s.buruk) > 0
       show(`
         ${head(`${isl.name} · ${S.year}`, 'Penetasan')}
-        <div class="grid gap-5" style="width:min(1200px,100%); grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
+        <div class="pres-sum" style="width:min(1200px,100%)">
           <div class="pres-card p-5 pa relative" ${delay(2)} style="height:clamp(300px,50vh,480px)"><canvas id="c3a"></canvas>
             ${egg ? '<canvas class="pres-eggc" id="eggC"></canvas>' : ''}
             <div id="c3lbl" class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none" style="padding-bottom:40px; transition:opacity .6s; ${egg ? 'opacity:0' : ''}"><div class="pres-num" style="font-size:clamp(1.8rem,3vw,2.6rem)" data-count="${s.rate ?? 0}" data-dec="1" data-suf="%" data-wait="${egg ? 2100 : 700}">0%</div><div class="text-xs opacity-70">kadar menetas</div></div></div>
@@ -4779,8 +4798,8 @@ async function openPresentation(opts = {}) {
           scr.querySelector('#c3lbl').style.opacity = '1'
           const ch = new Chart(scr.querySelector('#c3a'), {
             type: 'doughnut',
-            data: { labels: ['Menetas', 'Buruk', ...(unknown ? ['Belum direkod'] : [])], datasets: [{ data: [s.menetas, s.buruk, ...(unknown ? [unknown] : [])], backgroundColor: ['#2FA4B8', '#DC6A40', 'rgba(148,163,184,.3)'], borderColor: '#082028', borderWidth: 3, hoverOffset: 10 }] },
-            options: { responsive: true, maintainAspectRatio: false, cutout: '70%', animation: { animateRotate: true, duration: 1800 }, plugins: { legend: { position: 'bottom', labels: { color: '#cbd5d1', usePointStyle: true, font: { size: 13 } } }, tooltip: { callbacks: { label: (c) => ` ${c.label}: ${fmt(c.raw)}` } } } }
+            data: { labels: [`Menetas: ${fmt(s.menetas)}`, `Buruk: ${fmt(s.buruk)}`, ...(unknown ? [`Belum direkod: ${fmt(unknown)}`] : [])], datasets: [{ data: [s.menetas, s.buruk, ...(unknown ? [unknown] : [])], backgroundColor: ['#2FA4B8', '#DC6A40', 'rgba(148,163,184,.3)'], borderColor: '#082028', borderWidth: 3, hoverOffset: 10 }] },
+            options: { responsive: true, maintainAspectRatio: false, cutout: '70%', animation: { animateRotate: true, duration: 1800 }, plugins: { legend: { position: 'bottom', labels: { color: '#cbd5d1', usePointStyle: true, font: { size: 13 } } }, tooltip: { callbacks: { label: (c) => ` ${c.label.split(':')[0]}: ${fmt(c.raw)}` } } } }
           })
           // carta mungkin dibina selepas skrin bertukar; simpan pada skrin supaya dimusnahkan bersama
           if (scr.isConnected && scr === $('#presStage').lastElementChild) S.charts.push(ch); else (scr._charts = scr._charts || []).push(ch)
@@ -4788,14 +4807,14 @@ async function openPresentation(opts = {}) {
         if (egg) { eggCrack(scr.querySelector('#eggC')); setTimeout(donut, 1700) } else donut()
         const rate = months.map(r => r.menetas + r.buruk ? Math.round(r.menetas / (r.menetas + r.buruk) * 1000) / 10 : null)
         S.charts.push(new Chart(scr.querySelector('#c3b'), {
-          type: 'bar',
-          data: { labels: MONTH_LABELS, datasets: [
+          type: 'bar', plugins: [presValueLabels(11, fmt)],
+          data: { labels: MONTH_LABELS.map((m, i) => rate[i] == null ? [m, ''] : [m, rate[i].toFixed(0) + '%']), datasets: [
             { label: 'Menetas', data: months.map(r => r.menetas), backgroundColor: '#2FA4B8', borderRadius: 6, stack: 'a' },
             { label: 'Buruk', data: months.map(r => r.buruk), backgroundColor: '#DC6A40', borderRadius: 6, stack: 'a' },
-            { type: 'line', label: 'Kadar %', data: rate, yAxisID: 'y2', borderColor: '#F1F5F4', backgroundColor: '#F1F5F4', pointRadius: 4, borderWidth: 2, tension: .3, spanGaps: true }
+            { type: 'line', label: 'Kadar %', data: rate, yAxisID: 'y2', borderColor: '#F1F5F4', backgroundColor: '#F1F5F4', pointRadius: 4, borderWidth: 2, tension: .3, spanGaps: true, noLabel: true }
           ] },
-          options: chartBase({ animation: { duration: 900, delay: (c) => c.type === 'data' ? c.dataIndex * 90 + 300 : 0 }, interaction: { mode: 'index', intersect: false },
-            scales: { x: { ...chartBase().scales.x, stacked: true }, y: { ...chartBase().scales.y, stacked: true }, y2: { position: 'right', min: 0, max: 100, grid: { display: false }, ticks: { color: '#F1F5F4', callback: (v) => v + '%' } } } })
+          options: chartBase({ layout: { padding: { top: 8 } }, animation: { duration: 900, delay: (c) => c.type === 'data' ? c.dataIndex * 90 + 300 : 0 }, interaction: { mode: 'index', intersect: false },
+            scales: { x: { ...chartBase().scales.x, stacked: true, ticks: { color: '#cbd5d1', font: { size: 12 } } }, y: { ...chartBase().scales.y, stacked: true }, y2: { position: 'right', min: 0, max: 100, grid: { display: false }, ticks: { color: '#F1F5F4', callback: (v) => v + '%' } } } })
         }))
       })
       return
@@ -4830,10 +4849,10 @@ async function openPresentation(opts = {}) {
         const chart = new Chart(scr.querySelector('#c4'), {
           type: 'bar',
           data: { labels: MONTH_LABELS, datasets: [
-            { label: String(S.year), data: months.map(r => r.telur), backgroundColor: '#2FA4B8', borderRadius: 6 },
-            { label: String(S.cmp), data: cm.map(r => r.telur), backgroundColor: '#E0A458', borderRadius: 6 }
-          ] },
-          options: chartBase({ animation: { duration: 900, delay: (c) => c.type === 'data' && c.mode === 'default' ? c.dataIndex * 70 + c.datasetIndex * 200 + 300 : 0 }, interaction: { mode: 'index', intersect: false },
+            { label: String(S.year), data: months.map(r => r.telur), backgroundColor: '#2FA4B8', borderRadius: 6, labelFmt: kLbl },
+            { label: String(S.cmp), data: cm.map(r => r.telur), backgroundColor: '#E0A458', borderRadius: 6, labelFmt: kLbl }
+          ] }, plugins: [presValueLabels(11, fmt)],
+          options: chartBase({ layout: { padding: { top: 28 } }, animation: { duration: 900, delay: (c) => c.type === 'data' && c.mode === 'default' ? c.dataIndex * 70 + c.datasetIndex * 200 + 300 : 0 }, interaction: { mode: 'index', intersect: false },
             plugins: { ...chartBase().plugins, tooltip: { ...chartBase().plugins.tooltip, callbacks: { label: (c) => ` ${c.dataset.label}: ${fmt(c.raw)} telur` } } } })
         })
         S.charts.push(chart)
