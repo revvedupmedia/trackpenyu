@@ -434,6 +434,34 @@ async function deleteWithBackup(items, island, yr, note) {
   }
 }
 
+// ---------- Semakan kemasukakalan data harian ----------
+// HARD (mesti dibetulkan): ada penyu tetapi telur 0.
+// SOFT (amaran, boleh teruskan): terlalu banyak penyu sehari, telur tanpa penyu, nisbah telur seekor penyu pelik.
+const DAYCHECK = { maxPenyu: 30, minPerPenyu: 30, maxPerPenyu: 250 }
+function dayCheck(penyu, telur) {
+  const hard = [], soft = []
+  if (penyu > 0 && telur <= 0) hard.push(`Ada <b>${penyu.toLocaleString()} penyu</b> tetapi telur <b>0</b>. Kalau ada penyu, telur mesti lebih daripada 0 — mungkin angka telur tertinggal atau tersalah masuk di ruang penyu.`)
+  if (penyu > DAYCHECK.maxPenyu) soft.push(`<b>${penyu.toLocaleString()} penyu</b> dalam sehari nampak terlalu banyak (lazimnya di bawah ${DAYCHECK.maxPenyu}). Mungkin angka telur tersalah taip di ruang penyu?`)
+  if (penyu === 0 && telur > 0) soft.push(`Ada <b>${telur.toLocaleString()} telur</b> tetapi penyu <b>0</b>. Pastikan bilangan penyu tidak tertinggal.`)
+  if (penyu > 0 && telur > 0) {
+    const per = telur / penyu
+    if (per < DAYCHECK.minPerPenyu) soft.push(`Hanya <b>${per < 1 ? 'kurang daripada 1' : Math.round(per)} telur</b> seekor penyu (biasanya sekitar 80–130). Semak angka telur atau bilangan penyu.`)
+    else if (per > DAYCHECK.maxPerPenyu) soft.push(`<b>${Math.round(per).toLocaleString()} telur</b> seekor penyu nampak terlalu banyak (biasanya sekitar 80–130). Semak bilangan penyu.`)
+  }
+  return { hard, soft }
+}
+function dayCheckHTML(dc) {
+  return dc.hard.map(t => `<div class="text-sm bg-red-500/10 border border-red-500/50 rounded-xl px-3 py-2 mb-2">⛔ ${t}<div class="text-xs opacity-80 mt-1">Perlu dibetulkan sebelum boleh disimpan.</div></div>`).join('')
+    + dc.soft.map(t => `<div class="text-sm bg-amber-500/10 border border-amber-500/40 rounded-xl px-3 py-2 mb-2">⚠️ ${t}<div class="text-xs opacity-80 mt-1">Kalau memang betul, anda boleh teruskan.</div></div>`).join('')
+}
+
+// Padam di Log: salinan disimpan dulu (admin boleh pulihkan di Sejarah Import)
+async function deleteLogEntries(table, ids, note) {
+  const { data, error } = await supabase.rpc('delete_entries_with_backup', { p_table: table, p_ids: ids, p_note: note || 'Padam di Log' })
+  if (error) throw new Error(/function|schema cache|PGRST202/i.test((error.message || '') + (error.code || '')) ? 'Fungsi padam-dengan-salinan belum dipasang — run migration-padam-salinan.sql di Supabase SQL Editor dulu.' : error.message)
+  return data || 0
+}
+
 // ---------- Router ----------
 function go(route) {
   if (location.hash.slice(1) === route) render(route)
@@ -794,6 +822,7 @@ function buildHarianForm() {
         <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Bilangan Penyu (Bertag/Tak)</span><span class="font-semibold tabular-num">${payload.bilangan_penyu_bertag} / ${payload.bilangan_penyu_takbertag}</span></div>
         <div class="flex justify-between border-b border-white/10 pb-2"><span class="opacity-70">Jumlah Telur (Bertag/Tak)</span><span class="font-semibold tabular-num">${payload.jumlah_telur_diram_bertag} / ${payload.jumlah_telur_diram_takbertag}</span></div>
       </div>
+      <div id="dayCheck" class="mt-4"></div>
       <div class="flex gap-2 mt-6">
         <button id="backBtn" data-esc class="btn btn-ghost flex-1">← Betulkan</button>
         <button id="submitBtn" class="btn btn-primary flex-1" disabled>Tunggu 5s...</button>
@@ -803,22 +832,32 @@ function buildHarianForm() {
     c.querySelector('#backBtn').onclick = renderForm
     const submitBtn = c.querySelector('#submitBtn')
     let ready = false
+    let hardBlock = false
     const readyLabel = () => existing.length ? (mode === 'ganti' ? 'Ganti Sekarang' : mode === 'campur' ? 'Campur Sekarang' : 'Pilih Ganti / Campur') : (nests.length ? 'Teruskan (penyu lain)' : 'Hantar Sekarang')
-    const refreshBtn = () => { if (!ready) return; submitBtn.disabled = !mode; submitBtn.textContent = readyLabel() }
+    const refreshBtn = () => { if (!ready) return; if (hardBlock) { submitBtn.disabled = true; submitBtn.textContent = 'Betulkan dahulu'; return } submitBtn.disabled = !mode; submitBtn.textContent = readyLabel() }
+    const dayBox = c.querySelector('#dayCheck')
+    const updateCheck = () => {
+      const m = (existing.length && mode === 'campur') ? merged() : payload
+      const dc = dayCheck(m.bilangan_penyu_bertag + m.bilangan_penyu_takbertag, m.jumlah_telur_diram_bertag + m.jumlah_telur_diram_takbertag)
+      hardBlock = dc.hard.length > 0
+      dayBox.innerHTML = dayCheckHTML(dc)
+      refreshBtn()
+    }
     c.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => {
       mode = b.dataset.mode
       c.querySelectorAll('[data-mode]').forEach(x => x.className = x === b ? 'active' : '')
       const m = merged()
       c.querySelector('#mergeResult').innerHTML = `Hasil selepas simpan: Penyu <b>${m.bilangan_penyu_bertag}/${m.bilangan_penyu_takbertag}</b> · Telur <b>${m.jumlah_telur_diram_bertag}/${m.jumlah_telur_diram_takbertag}</b>${existing.length > 1 ? ' <span class="text-red-300">(rekod berganda lain kekal — bersihkan di Admin → Semak Data Bercanggah)</span>' : ''}`
-      refreshBtn()
+      updateCheck()
     })
+    updateCheck()
     const iv = setInterval(() => {
       countdown--
       if (countdown <= 0) { clearInterval(iv); ready = true; refreshBtn() }
       else submitBtn.textContent = `Tunggu ${countdown}s...`
     }, 1000)
     submitBtn.onclick = async () => {
-      if (!mode) return
+      if (!mode || hardBlock) return
       submitBtn.disabled = true; submitBtn.textContent = 'Menghantar...'
       let err = null
       if (!navigator.onLine) { queueWrite({ table:'daily_entries', op:'insert', payload }) }
@@ -961,6 +1000,14 @@ function buildIndividuForm() {
         </div>`
     }
     holder.innerHTML = ''
+    // Setiap sarang = 1 penyu: telur mesti > 0; nisbah pelik jadi amaran
+    const turtleCheck = { hard: [], soft: [] }
+    draft.turtles.forEach((t, i) => {
+      const r = dayCheck(1, Number(t.jumlah) || 0)
+      r.hard.forEach(x => turtleCheck.hard.push(`Penyu #${i + 1}: ` + x))
+      r.soft.forEach(x => turtleCheck.soft.push(`Penyu #${i + 1}: ` + x))
+    })
+    const turtleBlock = turtleCheck.hard.length > 0
     const c = card(`
       <h2 class="font-display text-xl mb-4">Sahkan ${draft.count} Rekod Penyu</h2>
       ${warnHTML}
@@ -968,6 +1015,7 @@ function buildIndividuForm() {
         ${draft.turtles.map((t,i) => `<div class="flex justify-between border-b border-white/10 py-1.5"><span class="opacity-70">Penyu #${i+1} · ${t.ram} · ${t.bertag?'Bertag':'Tak Bertag'}</span><span class="font-semibold tabular-num">${t.jumlah} telur</span></div>`).join('')}
       </div>
       <div class="flex justify-between text-sm mb-4 pt-2 border-t border-white/20"><span class="opacity-80 font-semibold">Jumlah Keseluruhan</span><span class="font-display text-lg tabular-num">${totalTelur} telur</span></div>
+      ${dayCheckHTML(turtleCheck)}
       <div class="flex gap-2">
         <button id="backBtn" data-esc class="btn btn-ghost flex-1">← Betulkan</button>
         <button id="submitBtn" class="btn btn-primary flex-1" disabled>Tunggu 5s...</button>
@@ -978,10 +1026,11 @@ function buildIndividuForm() {
     const submitBtn = c.querySelector('#submitBtn')
     const iv = setInterval(() => {
       countdown--
-      if (countdown <= 0) { clearInterval(iv); submitBtn.disabled = false; submitBtn.textContent = warnHTML ? 'Teruskan' : 'Hantar Sekarang' }
+      if (countdown <= 0) { clearInterval(iv); if (turtleBlock) { submitBtn.textContent = 'Betulkan dahulu'; return } submitBtn.disabled = false; submitBtn.textContent = (warnHTML || turtleCheck.soft.length) ? 'Teruskan' : 'Hantar Sekarang' }
       else submitBtn.textContent = `Tunggu ${countdown}s...`
     }, 1000)
     submitBtn.onclick = async () => {
+      if (turtleBlock) return
       submitBtn.disabled = true; submitBtn.textContent = 'Menghantar...'
       const rows = draft.turtles.map(t => ({
         island: state.island, tarikh_dijumpai: draft.tarikh, species: SPECIES[0],
@@ -1437,14 +1486,16 @@ async function screenEntries() {
     }
     wrap.querySelector('#bulkDelete').onclick = async () => {
       if (!bulkSelected.size) { toast('Tiada entri dipilih.', 'info'); return }
-      if (!confirm(`Padam ${bulkSelected.size} entri terpilih? Tindakan ini kekal.`)) return
+      if (!confirm(`Padam ${bulkSelected.size} entri terpilih? Salinan disimpan — admin boleh memulihkan di Sejarah Import.`)) return
       const dailyIds = [], nestIds = []
       bulkSelected.forEach((type, id) => (type === 'harian' ? dailyIds : nestIds).push(id))
-      let err = null
-      if (dailyIds.length) { const r = await supabase.from('daily_entries').delete().in('id', dailyIds); err = err || r.error }
-      if (nestIds.length) { const r = await supabase.from('nest_records').delete().in('id', nestIds); err = err || r.error }
-      if (err) { toast('Gagal padam: ' + err.message, 'error'); return }
-      toast(`${bulkSelected.size} entri dipadam`, 'success')
+      let done = 0
+      try {
+        if (dailyIds.length) done += await deleteLogEntries('daily_entries', dailyIds, 'Padam di Log (dipilih)')
+        if (nestIds.length) done += await deleteLogEntries('nest_records', nestIds, 'Padam di Log (dipilih)')
+      } catch (err) { toast('Gagal padam: ' + err.message, 'error'); return }
+      if (!done) { toast('Tiada entri dipadam (hanya entri sendiri boleh dipadam).', 'error'); return }
+      toast(`${done} entri dipadam — salinan disimpan`, 'success')
       bulkSelected.clear()
       updateBulkBar()
       loadList()
@@ -1461,19 +1512,23 @@ async function screenEntries() {
 
 // ---------- Edit entry (fixes old bug: now always targets a specific id) ----------
 // Live warning + "Teruskan" after 5s when menetas + buruk > diram.
-function attachHatchGuard(c, getRows, saveBtn, doSave) {
+function attachHatchGuard(c, getRows, saveBtn, doSave, getDay) {
   const box = c.querySelector('#e_warn')
   const label = saveBtn.textContent
-  let armed = false, iv = null
+  let armed = false, iv = null, blocked = false
   function refresh() {
-    const html = overDiramWarning(getRows())
+    const dc = getDay ? dayCheck(...getDay()) : { hard: [], soft: [] }
+    const html = overDiramWarning(getRows()) + dayCheckHTML(dc)
     box.innerHTML = html
+    if (dc.hard.length) { blocked = true; armed = false; clearInterval(iv); saveBtn.disabled = true; saveBtn.textContent = 'Betulkan dahulu'; return html }
+    if (blocked) { blocked = false; saveBtn.disabled = false; saveBtn.textContent = label }
     if (!html) { armed = false; clearInterval(iv); saveBtn.disabled = false; saveBtn.textContent = label }
     return html
   }
   c.querySelectorAll('input').forEach(i => i.addEventListener('input', refresh))
   refresh()
   saveBtn.onclick = async () => {
+    if (blocked) return
     if (refresh() && !armed) {
       armed = true
       let cd = 5
@@ -1494,7 +1549,7 @@ function attachHatchGuard(c, getRows, saveBtn, doSave) {
 function attachDeleteUI(wrap, table, id) {
   const delCard = card(`
     <h2 class="font-display text-lg mb-2 text-red-400">Zon Bahaya</h2>
-    <p class="text-sm opacity-70 mb-3">Padam rekod ini secara kekal. Tindakan ini tidak boleh dibatalkan.</p>
+    <p class="text-sm opacity-70 mb-3">Rekod ini akan dipadam daripada app. Satu salinan disimpan — admin boleh memulihkannya di Admin → Sejarah Import.</p>
     <button id="e_del" class="btn w-full" style="background:rgba(225,96,76,.15); border:1px solid rgba(225,96,76,.4); color:#E1604C;" disabled>Tunggu 5s...</button>
   `, 'mt-4')
   wrap.appendChild(delCard)
@@ -1506,11 +1561,13 @@ function attachDeleteUI(wrap, table, id) {
     else delBtn.textContent = `Tunggu ${countdown}s...`
   }, 1000)
   delBtn.onclick = async () => {
-    if (!confirm('Padam rekod ini? Tindakan ini kekal.')) return
+    if (!confirm('Padam rekod ini? Salinan disimpan — admin boleh memulihkan di Sejarah Import.')) return
     delBtn.disabled = true
-    const { error } = await supabase.from(table).delete().eq('id', id)
-    if (error) { toast('Gagal padam: ' + error.message, 'error'); delBtn.disabled = false; return }
-    toast('Rekod dipadam', 'success')
+    try {
+      const n = await deleteLogEntries(table, [id], 'Padam di Log')
+      if (!n) { toast('Rekod tidak dipadam (hanya entri sendiri boleh dipadam).', 'error'); delBtn.disabled = false; return }
+    } catch (err) { toast('Gagal padam: ' + err.message, 'error'); delBtn.disabled = false; return }
+    toast('Rekod dipadam — salinan disimpan', 'success')
     go('entries')
   }
 }
@@ -1575,7 +1632,7 @@ async function screenEditEntry() {
       const { error } = await supabase.from('daily_entries').update(payload).eq('id', target.id)
       if (error) { toast(error.code === '23505' ? 'Sudah ada Entri Harian lain untuk tarikh + RAM itu. Ubah rekod tersebut, atau padam salah satu.' : 'Gagal simpan: ' + error.message, 'error'); return }
       toast('Disimpan', 'success'); go('entries')
-    })
+    }, () => [(nv('#e_bp_b') || 0) + (nv('#e_bp_t') || 0), (nv('#e_td_b') || 0) + (nv('#e_td_t') || 0)])
     attachDeleteUI(wrap, 'daily_entries', target.id)
   } else {
     const { data: n } = await supabase.from('nest_records').select('*').eq('id', target.id).single()
@@ -1624,7 +1681,7 @@ async function screenEditEntry() {
       const { error } = await supabase.from('nest_records').update(payload).eq('id', target.id)
       if (error) { toast('Gagal simpan: ' + error.message, 'error'); return }
       toast('Disimpan', 'success'); go('entries')
-    })
+    }, () => [1, Number(c.querySelector('#e_td').value || 0)])
     attachDeleteUI(wrap, 'nest_records', target.id)
   }
   return wrap
@@ -2587,10 +2644,12 @@ async function screenAdmin() {
       const yr = Number(importCard.querySelector('#im_year').value)
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' })
       const rows = parseImportFile(wb, island, yr)
-      if (!rows.length) { toast('Tiada data dijumpai dalam fail. Pastikan format ikut template rasmi dan tahun betul.', 'error'); resetImGo(); return }
+      const checks = checkImportRows(rows, wb, yr)
+      if (!rows.length && !checks.ignored.length) { toast('Tiada data dijumpai dalam fail. Pastikan format ikut template rasmi dan tahun betul.', 'error'); resetImGo(); return }
       imGo.textContent = 'Membanding dengan data app...'
       const app = await loadDayRamIndex(island, yr)
-      const plan = buildImportPlan(rows, app)
+      const plan = buildImportPlan(checks.okRows, app, checks.hard.map(h => h.row))
+      plan.checks = checks
       renderImportPreview(plan, { island, yr, fileName: file.name })
       resetImGo()
     } catch (err) {
@@ -2599,10 +2658,40 @@ async function screenAdmin() {
     }
   }
 
-  function buildImportPlan(rows, app) {
+  // Semakan fail sebelum dibanding dengan app:
+  //  - hard  : baris ada penyu tetapi telur 0 → TIDAK diimport (mesti dibetulkan dalam Excel)
+  //  - soft  : nisbah penyu/telur pelik → amaran sahaja
+  //  - ignored: ada angka pada tarikh yang tidak wujud (cth. 31 Sept) → TIDAK diimport
+  function checkImportRows(rows, wb, yr) {
+    const hard = [], soft = [], ignored = [], okRows = []
+    rows.forEach(r => {
+      const penyu = (r.bilangan_penyu_bertag || 0) + (r.bilangan_penyu_takbertag || 0)
+      const telur = (r.jumlah_telur_diram_bertag || 0) + (r.jumlah_telur_diram_takbertag || 0)
+      const tag = `${fmtDate(r.tarikh)} · ${r.ram}`
+      const dc = dayCheck(penyu, telur)
+      if (dc.hard.length) { hard.push({ tag, penyu, telur, row: r }); return }
+      okRows.push(r)
+      dc.soft.forEach(t => soft.push({ tag, why: t }))
+    })
+    const cols = ['C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S']
+    MONTH_SHEET_NAMES.forEach((sn, mi) => {
+      const ws = wb.Sheets[sn]; if (!ws) return
+      const dim = new Date(yr, mi + 1, 0).getDate()
+      for (let day = dim + 1; day <= 31; day++) {
+        const r = 7 + day
+        const v = cols.map(col => { const c = ws[col + r]; const n = c ? Number(c.v) : 0; return isNaN(n) ? 0 : n })
+        if (!v.some(x => x)) continue
+        ignored.push({ tag: `${String(day).padStart(2, '0')}/${String(mi + 1).padStart(2, '0')}/${yr}`, dim, mi: mi + 1, penyu: v[0] + v[1] + v[2] + v[3], telur: v[4] + v[5] + v[6] + v[7] })
+      }
+    })
+    return { hard, soft, ignored, okRows }
+  }
+
+  function buildImportPlan(rows, app, blockedRows = []) {
     const plan = { baru: [], sama: [], lengkap: [], canggah: [], extra: [], appOnly: 0 }
-    const fileKeys = new Set()
-    const fileMonths = new Set(rows.map(r => r.tarikh.slice(0, 7)))
+    // Baris disekat (penyu tanpa telur) dikira "ada dalam fail" supaya data app untuknya TIDAK ditawarkan untuk dipadam
+    const fileKeys = new Set(blockedRows.map(r => `${r.tarikh}|${r.ram}`))
+    const fileMonths = new Set([...rows, ...blockedRows].map(r => r.tarikh.slice(0, 7)))
     rows.forEach(fr => {
       const key = `${fr.tarikh}|${fr.ram}`
       fileKeys.add(key)
@@ -2682,9 +2771,30 @@ async function screenAdmin() {
         <div class="text-xs opacity-80 mt-2 max-h-48 overflow-y-auto space-y-0.5">${items.map(fmtItem).join('')}</div>
       </details>` : ''
 
+    const ck = plan.checks || { hard: [], soft: [], ignored: [] }
+    const checksHTML = [
+      ck.ignored.length ? `
+        <div class="border border-red-500/50 rounded-xl p-3 mb-3">
+          <div class="text-sm font-semibold text-red-300 mb-1">🔴 Ada angka pada tarikh yang TIDAK WUJUD — tidak diimport (${ck.ignored.length})</div>
+          <div class="text-xs opacity-90 space-y-0.5 mb-2">${ck.ignored.map(g => `<div><b>${g.tag}</b> — bulan ini hanya ada ${g.dim} hari · ${g.penyu} penyu · ${g.telur.toLocaleString()} telur</div>`).join('')}</div>
+          <div class="text-[11px] opacity-80">Mungkin ini sebenarnya tarikh lain (cth. 1 haribulan bulan depan) atau salah baris. Betulkan dalam Excel dan import semula, atau masukkan terus di Entri.</div>
+        </div>` : '',
+      ck.hard.length ? `
+        <div class="border border-red-500/50 rounded-xl p-3 mb-3">
+          <div class="text-sm font-semibold text-red-300 mb-1">⛔ Ada penyu tetapi telur 0 — tidak diimport (${ck.hard.length})</div>
+          <div class="text-xs opacity-90 space-y-0.5 mb-2">${ck.hard.map(h => `<div><b>${h.tag}</b> — ${h.penyu} penyu · telur 0</div>`).join('')}</div>
+          <div class="text-[11px] opacity-80">Kalau ada penyu, telur mesti lebih daripada 0. Semak fail, betulkan, dan import semula. Data app untuk hari ini tidak disentuh.</div>
+        </div>` : '',
+      ck.soft.length ? `
+        <details class="border border-amber-500/40 rounded-xl p-3 mb-3" open>
+          <summary class="text-sm font-semibold text-amber-300 cursor-pointer">⚠️ Nisbah penyu / telur pelik (${ck.soft.length}) — semak, boleh teruskan</summary>
+          <div class="text-xs opacity-90 space-y-1 mt-2">${ck.soft.map(w => `<div><b>${w.tag}</b> — ${w.why}</div>`).join('')}</div>
+        </details>` : ''
+    ].join('')
     const pc = card(`
       <h2 class="font-display text-lg mb-1">Semakan Import</h2>
       <p class="text-xs opacity-70 mb-3">${ctx.fileName} · ${ctx.island} · ${ctx.yr}</p>
+      ${checksHTML}
       <div class="grid grid-cols-4 gap-2 mb-3">
         ${chip(plan.baru.length, 'Baharu', 'text-emerald-300')}
         ${chip(plan.sama.length, 'Sama', '')}
