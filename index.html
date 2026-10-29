@@ -220,6 +220,13 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const SUPABASE_URL = 'https://oatbghgoxedccxdjwalt.supabase.co'
 const SUPABASE_ANON_KEY = 'sb_publishable_gQIBBbRniU3ixnV8eCDuYw_LeWpu0jK'
 
+// Pautan reset dari emel datang dengan token dalam #hash. Simpan dulu sebelum
+// klien Supabase membaca & memadamkannya.
+const BOOT_HASH = location.hash
+const BOOT_RECOVERY = /[#&]type=recovery(&|$)/.test(BOOT_HASH)
+const BOOT_AUTH_ERROR = !BOOT_RECOVERY && /[#&]error(_code)?=/.test(BOOT_HASH)
+const RECOVERY_FLAG = 'penyu-recovery-pending'
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 const app = document.getElementById('app')
 const ISLANDS = [
@@ -231,7 +238,16 @@ const SPECIES = ['Penyu Agar (Green Turtle)','Penyu Karah (Hawksbill)','Lain-lai
 const MONTH_LABELS = ['Jan','Feb','Mac','Apr','Mei','Jun','Jul','Ogo','Sep','Okt','Nov','Dis']
 const MONTH_SHEET_NAMES = ['JAN','FEB','MAC','APRIL','MEI','JUN','JULAI','OGOS','SEPT','OKTO','NOV','DIS']
 
-let state = { island: sessionStorage.getItem('penyu-island') || null, profile: null, editTarget: null, entriesTab: 'saya' }
+let state = { island: sessionStorage.getItem('penyu-island') || null, profile: null, editTarget: null, entriesTab: 'saya', recovering: false, prefillEmail: '' }
+
+// Klik pautan reset => Supabase log masuk sementara & hantar PASSWORD_RECOVERY.
+// Kita paksa staf ke skrin kata laluan baharu (jangan masuk app tanpa tukar).
+supabase.auth.onAuthStateChange((event) => {
+  if (event !== 'PASSWORD_RECOVERY') return
+  state.recovering = true
+  try { localStorage.setItem(RECOVERY_FLAG, '1') } catch {}
+  setTimeout(() => { if (location.hash.slice(1) !== 'resetpw') go('resetpw') }, 0)
+})
 
 // ---------- Theme ----------
 function toggleTheme() {
@@ -501,6 +517,7 @@ document.addEventListener('keydown', (e) => {
 })
 
 async function render(route) {
+  if (state.recovering && route !== 'resetpw') route = 'resetpw'
   trackRoute(route)
   document.getElementById('navbar').classList.toggle('hidden', !['entry','entries','dashboard','admin'].includes(route))
   if (['entry','entries','monthdetail','dashboard','admin'].includes(route) && !state.profile) {
@@ -519,7 +536,7 @@ async function render(route) {
     const badge = document.getElementById('islandBadge')
     if (badge) badge.textContent = state.island
   }
-  const screens = { splash: screenSplash, island: screenIsland, login: screenLogin, entry: screenEntry,
+  const screens = { splash: screenSplash, island: screenIsland, login: screenLogin, forgot: screenForgot, resetpw: screenResetPw, entry: screenEntry,
     entries: screenEntries, editentry: screenEditEntry, monthdetail: screenMonthDetail, dashboard: screenDashboard, admin: screenAdmin }
   app.innerHTML = ''
   const el = await (screens[route] || screenIsland)()
@@ -620,9 +637,11 @@ function screenLogin() {
       <input type="password" required placeholder="Kata laluan" id="password" />
       <div id="loginError" class="text-sm hidden bg-red-500/10 border border-red-500/30 rounded px-3 py-2"></div>
       <button type="submit" class="btn btn-primary w-full mt-2">Log Masuk</button>
+      <div class="text-center pt-1"><button type="button" id="forgotLink" class="text-sm underline opacity-75 hover:opacity-100">Lupa kata laluan?</button></div>
     </form>
   `, 'max-w-sm mx-auto mt-10')
   c.querySelector('#backToIsland').onclick = () => { sessionStorage.removeItem('penyu-island'); state.island = null; go('island') }
+  c.querySelector('#forgotLink').onclick = () => { state.prefillEmail = c.querySelector('#email').value.trim(); go('forgot') }
   c.querySelector('#loginForm').onsubmit = async (e) => {
     e.preventDefault()
     const email = c.querySelector('#email').value
@@ -636,6 +655,117 @@ function screenLogin() {
     if (!ok) return
     await supabase.from('login_log').insert({ staff_id: data.user.id, island: state.island })
     go('entry')
+  }
+  return c
+}
+
+// ---------- Lupa kata laluan (pautan reset melalui emel) ----------
+// Pautan mesti kembali ke alamat app ini. Alamat ini perlu ada dalam senarai
+// Redirect URLs di Supabase (Authentication → URL Configuration).
+function resetRedirectUrl() { return location.origin + location.pathname.replace(/index\.html$/, '') }
+
+function screenForgot() {
+  const c = card(`
+    <button id="backLogin" class="btn-back">← Kembali log masuk</button>
+    <div class="mb-4 text-center">
+      <h1 class="font-display text-2xl font-semibold">Lupa Kata Laluan</h1>
+      <p class="text-sm opacity-70 mt-2">Masukkan emel akaun anda. Kami hantar pautan untuk tetapkan kata laluan baharu.</p>
+    </div>
+    <form id="forgotForm" class="space-y-3">
+      <input type="email" required placeholder="Emel" id="fEmail" autocomplete="email" />
+      <div id="forgotMsg" class="text-sm hidden rounded px-3 py-2"></div>
+      <button type="submit" id="forgotBtn" class="btn btn-primary w-full mt-2">Hantar pautan reset</button>
+    </form>
+  `, 'max-w-sm mx-auto mt-10')
+  const email = c.querySelector('#fEmail'), msg = c.querySelector('#forgotMsg'), btn = c.querySelector('#forgotBtn')
+  email.value = state.prefillEmail || ''
+  const showMsg = (html, ok) => {
+    msg.className = 'text-sm rounded px-3 py-2 ' + (ok ? 'bg-teal-500/10 border border-teal-500/40' : 'bg-red-500/10 border border-red-500/30')
+    msg.innerHTML = html
+  }
+  c.querySelector('#backLogin').onclick = () => go(state.island ? 'login' : 'island')
+  c.querySelector('#forgotForm').onsubmit = async (e) => {
+    e.preventDefault()
+    const addr = email.value.trim()
+    if (!addr) return
+    btn.disabled = true
+    const { error } = await supabase.auth.resetPasswordForEmail(addr, { redirectTo: resetRedirectUrl() })
+    if (error) {
+      const rate = error.status === 429 || /rate limit|too many|seconds/i.test(error.message || '')
+      showMsg(rate
+        ? 'Terlalu banyak permintaan. Tunggu seminit dua, kemudian cuba lagi.'
+        : `Emel tidak dapat dihantar sekarang. Sila hubungi admin.<div class="text-xs opacity-60 mt-1">${(error.message || '').replace(/</g, '&lt;')}</div>`, false)
+      btn.disabled = false
+      return
+    }
+    // Mesej sama sama ada emel itu berdaftar atau tidak (elak orang teka siapa staf).
+    showMsg('Jika emel itu berdaftar, pautan reset telah dihantar. Semak peti masuk anda (dan folder spam). Pautan hanya sah untuk tempoh singkat dan sekali guna sahaja.', true)
+    let left = 60
+    const tick = () => { btn.textContent = left > 0 ? `Hantar semula (${left}s)` : 'Hantar semula'; if (left-- > 0) setTimeout(tick, 1000); else btn.disabled = false }
+    tick()
+  }
+  return c
+}
+
+// Skrin selepas klik pautan dalam emel: staf tetapkan kata laluan baharu.
+async function screenResetPw() {
+  const { data } = await supabase.auth.getSession()
+  const valid = state.recovering && data && data.session
+  if (!valid) {
+    state.recovering = false
+    try { localStorage.removeItem(RECOVERY_FLAG) } catch {}
+    const c = card(`
+      <div class="text-center">
+        <h1 class="font-display text-2xl font-semibold mb-2">Pautan tidak sah</h1>
+        <p class="text-sm opacity-70 mb-4">Pautan reset ini sudah tamat tempoh atau sudah digunakan. Sila minta pautan baharu.</p>
+        <button id="askNew" class="btn btn-primary w-full">Minta pautan baharu</button>
+      </div>
+    `, 'max-w-sm mx-auto mt-10')
+    c.querySelector('#askNew').onclick = () => go('forgot')
+    return c
+  }
+  const c = card(`
+    <button id="cancelReset" class="btn-back">← Batal</button>
+    <div class="mb-4 text-center">
+      <h1 class="font-display text-2xl font-semibold">Kata Laluan Baharu</h1>
+      <p class="text-sm opacity-70 mt-2">Tetapkan kata laluan baharu untuk akaun anda (sekurang-kurangnya 8 aksara).</p>
+    </div>
+    <form id="resetForm" class="space-y-3">
+      <input type="password" required minlength="8" placeholder="Kata laluan baharu" id="np1" autocomplete="new-password" />
+      <input type="password" required minlength="8" placeholder="Taip semula kata laluan baharu" id="np2" autocomplete="new-password" />
+      <label class="flex items-center gap-2 text-sm opacity-80"><input type="checkbox" id="showPw" style="width:auto" /> Tunjuk kata laluan</label>
+      <div id="resetErr" class="text-sm hidden bg-red-500/10 border border-red-500/30 rounded px-3 py-2"></div>
+      <button type="submit" id="resetBtn" class="btn btn-primary w-full mt-2">Simpan Kata Laluan</button>
+    </form>
+  `, 'max-w-sm mx-auto mt-10')
+  const p1 = c.querySelector('#np1'), p2 = c.querySelector('#np2'), err = c.querySelector('#resetErr'), btn = c.querySelector('#resetBtn')
+  const finish = async () => {
+    state.recovering = false
+    try { localStorage.removeItem(RECOVERY_FLAG) } catch {}
+    try { await supabase.auth.signOut() } catch {}
+    state.profile = null
+  }
+  c.querySelector('#showPw').onchange = (e) => { p1.type = p2.type = e.target.checked ? 'text' : 'password' }
+  c.querySelector('#cancelReset').onclick = async () => { await finish(); go(state.island ? 'login' : 'island') }
+  c.querySelector('#resetForm').onsubmit = async (e) => {
+    e.preventDefault()
+    err.classList.add('hidden')
+    const showErr = (t) => { err.textContent = t; err.classList.remove('hidden') }
+    if (p1.value.length < 8) return showErr('Kata laluan mesti sekurang-kurangnya 8 aksara.')
+    if (p1.value !== p2.value) return showErr('Kedua-dua kata laluan tidak sama. Taip semula.')
+    btn.disabled = true
+    const { error } = await supabase.auth.updateUser({ password: p1.value })
+    if (error) {
+      btn.disabled = false
+      const m = error.message || ''
+      return showErr(/different from the old/i.test(m) ? 'Kata laluan baharu mesti berbeza daripada yang lama.'
+        : /weak|least|characters/i.test(m) ? 'Kata laluan terlalu lemah. Cuba yang lebih panjang atau campur huruf dan nombor.'
+        : /session|expired|not authenticated|missing/i.test(m) ? 'Sesi reset sudah tamat. Sila minta pautan baharu.'
+        : m)
+    }
+    await finish()
+    toast('Kata laluan berjaya ditukar. Sila log masuk dengan kata laluan baharu.', 'success')
+    go(state.island ? 'login' : 'island')
   }
   return c
 }
@@ -5139,7 +5269,30 @@ async function openPresentation(opts = {}) {
 window.openPresentation = openPresentation
 
 // ---------- Init ----------
-render(location.hash.slice(1) || 'splash')
+;(async () => {
+  let first = location.hash.slice(1) || 'splash'
+  if (BOOT_RECOVERY || BOOT_AUTH_ERROR) {
+    // Datang dari pautan emel. Tunggu klien Supabase siap baca token dulu.
+    if (BOOT_RECOVERY) { state.recovering = true; try { localStorage.setItem(RECOVERY_FLAG, '1') } catch {} }
+    try { await supabase.auth.getSession() } catch {}
+    first = 'resetpw'
+    if (location.hash.slice(1) !== 'resetpw') { go('resetpw'); return }
+  } else if (first !== 'resetpw') {
+    // Staf tidak habiskan tukar kata laluan dulu => jangan biar sesi sementara kekal.
+    let pending = null
+    try { pending = localStorage.getItem(RECOVERY_FLAG) } catch {}
+    if (pending) {
+      try { await supabase.auth.signOut() } catch {}
+      try { localStorage.removeItem(RECOVERY_FLAG) } catch {}
+    }
+  } else {
+    // Refresh semasa di skrin kata laluan baharu: kekal jika sesi reset masih ada.
+    let pending = null
+    try { pending = localStorage.getItem(RECOVERY_FLAG) } catch {}
+    if (pending) state.recovering = true
+  }
+  render(first)
+})()
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
