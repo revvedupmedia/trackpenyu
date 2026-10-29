@@ -699,7 +699,7 @@ function screenForgot() {
       return
     }
     // Mesej sama sama ada emel itu berdaftar atau tidak (elak orang teka siapa staf).
-    showMsg('Jika emel itu berdaftar, pautan reset telah dihantar. Semak peti masuk anda (dan folder spam). Pautan hanya sah untuk tempoh singkat dan sekali guna sahaja.', true)
+    showMsg('Jika emel itu berdaftar, pautan reset telah dihantar. Semak peti masuk anda (dan folder spam). Pautan hanya sah untuk tempoh singkat dan sekali guna sahaja.<div class="text-xs opacity-75 mt-2">Tak terima dalam 5 minit? Semak ejaan emel dan folder spam, atau hubungi admin.</div>', true)
     let left = 60
     const tick = () => { btn.textContent = left > 0 ? `Hantar semula (${left}s)` : 'Hantar semula'; if (left-- > 0) setTimeout(tick, 1000); else btn.disabled = false }
     tick()
