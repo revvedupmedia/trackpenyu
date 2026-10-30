@@ -221,8 +221,55 @@ async function refreshLegacyStatus(){
     const list=await legacyEntries();
     st.textContent=list.length?`${list.length} resit belum dipindah.`:'Semua resit sudah dipindah ✓';
     btn.disabled=!list.length;
+    document.getElementById('legacyFolderBtn').disabled=!list.length;
   }catch(err){st.textContent='Gagal semak: '+err.message;}
 }
+
+// Upload satu fail resit ke receipt_path entri, kemudian tanda entri sudah dipindah.
+async function migrateReceipt(entry,blob){
+  const {error:upE}=await sb.storage.from(RECEIPT_BUCKET).upload(entry.receipt_path,blob,{upsert:true,contentType:blob.type||undefined});
+  if(upE)throw new Error(upE.message);
+  const {error:updE}=await sb.from('minyak_entries').update({receipt_url:null}).eq('id',entry.id);
+  if(updE)throw new Error(updE.message);
+}
+
+// Dari folder backup storage: receipts/<user-id>/<fail>. Padan ikut laluan
+// selepas "receipts/" (sama dengan receipt_path), atau ikut nama fail.
+const legacyFolder=document.getElementById('legacyFolder');
+document.getElementById('legacyFolderBtn').addEventListener('click',()=>legacyFolder.click());
+legacyFolder.addEventListener('change',async()=>{
+  const files=[...legacyFolder.files];
+  legacyFolder.value='';
+  if(!files.length)return;
+  const btn=document.getElementById('legacyFolderBtn');
+  const st=document.getElementById('legacyStatus');
+  const msg=document.getElementById('legacyMsg');
+  msg.hidden=true; btn.disabled=true;
+  let ok=0; const failed=[];
+  try{
+    const list=await legacyEntries();
+    const byPath=new Map(list.map(e=>[e.receipt_path,e]));
+    const byName=new Map(list.map(e=>[e.receipt_path.split('/').pop(),e]));
+    const matches=[];
+    for(const f of files){
+      const rel=(f.webkitRelativePath||f.name).replace(/\\/g,'/');
+      const i=rel.lastIndexOf('receipts/');
+      const e=byPath.get(i>=0?rel.slice(i+9):rel)||byName.get(f.name);
+      if(e&&!matches.some(m=>m.e===e))matches.push({e,f});
+    }
+    if(!matches.length)throw new Error('Tiada fail yang sepadan. Pastikan anda pilih folder "receipts" dari backup.');
+    for(const [n,{e,f}] of matches.entries()){
+      st.textContent=`Memindah ${n+1} / ${matches.length}...`;
+      try{await migrateReceipt(e,f);ok++;}catch(err){failed.push(err.message);}
+    }
+  }catch(err){failed.push(err.message);}
+  if(failed.length){
+    msg.textContent=`${ok} berjaya, ${failed.length} gagal (${failed[0]}).`;
+    msg.hidden=false;
+  } else showToast(`${ok} resit dipindah ✓`);
+  await refreshLegacyStatus();
+  loadEntries();
+});
 
 document.getElementById('legacyBtn').addEventListener('click',async()=>{
   const btn=document.getElementById('legacyBtn');
@@ -237,11 +284,7 @@ document.getElementById('legacyBtn').addEventListener('click',async()=>{
       try{
         const res=await fetch(e.receipt_url);
         if(!res.ok)throw new Error(`HTTP ${res.status}`);
-        const blob=await res.blob();
-        const {error:upE}=await sb.storage.from(RECEIPT_BUCKET).upload(e.receipt_path,blob,{upsert:true,contentType:blob.type||undefined});
-        if(upE)throw new Error(upE.message);
-        const {error:updE}=await sb.from('minyak_entries').update({receipt_url:null}).eq('id',e.id);
-        if(updE)throw new Error(updE.message);
+        await migrateReceipt(e,await res.blob());
         ok++;
       }catch(err){failed.push(err.message);}
     }

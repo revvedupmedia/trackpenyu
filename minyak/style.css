@@ -552,3 +552,7 @@ dialog.sheet-dialog .checkbox-field { color: rgba(255,255,255,0.85) !important; 
 .yr-total { grid-area: total; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
 .yr-n { grid-area: n; font-size: 11px; color: var(--text-muted); text-align: right; }
 .history-month { font-size: 12px; font-weight: 700; color: var(--text-soft); text-transform: uppercase; letter-spacing: .06em; padding: 10px 4px 2px; }
+
+/* Atribut hidden mesti menang ke atas display:flex/grid kelas lain. */
+[hidden] { display: none !important; }
+#bgRemoveBtn, #bgRefreshBtn { width: auto; }

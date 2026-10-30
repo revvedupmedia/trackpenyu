@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="Minyak" />
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
 <link rel="icon" href="icons/icon-192.png" />
-<link rel="stylesheet" href="style.css?v=8" />
+<link rel="stylesheet" href="style.css?v=9" />
 </head>
 <body>
 
@@ -61,9 +61,13 @@
       </div>
       <div class="admin-section" id="legacySection">
         <h3>📦 Pindah Resit Lama</h3>
-        <p class="admin-hint">Resit dari projek Supabase lama (minyak-tracker) disalin ke storan baharu. Projek lama mesti di-<em>resume</em> dulu. Selamat untuk diulang.</p>
+        <p class="admin-hint">Resit dari projek Supabase lama (minyak-tracker) disalin ke storan baharu. Selamat untuk diulang.</p>
         <div id="legacyStatus" class="admin-hint"></div>
-        <button type="button" id="legacyBtn" class="submit-btn">Mula Pindah</button>
+        <p class="admin-hint"><strong>Dari backup (disyorkan):</strong> Download backups → storage, extract zip, kemudian pilih folder <code>receipts</code>. Guna komputer (Chrome/Edge/Brave).</p>
+        <input type="file" id="legacyFolder" webkitdirectory multiple hidden />
+        <button type="button" id="legacyFolderBtn" class="submit-btn">📁 Pilih folder receipts</button>
+        <p class="admin-hint" style="margin-top:12px;"><strong>Atau terus dari projek lama</strong> (projek lama mesti di-<em>resume</em> dulu):</p>
+        <button type="button" id="legacyBtn" class="logout-btn" style="padding:8px 14px;">Mula Pindah dari projek lama</button>
         <div id="legacyMsg" class="form-error" hidden style="margin-top:8px;"></div>
       </div>
     </div>
@@ -245,6 +249,6 @@
   <div id="toast" class="toast" hidden></div>
 </div>
 
-<script type="module" src="app.js?v=8"></script>
+<script type="module" src="app.js?v=9"></script>
 </body>
 </html>
