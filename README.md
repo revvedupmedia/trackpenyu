@@ -1,19 +1,40 @@
-# Penyu Tracker
+# Portal LPP
 
-Sistem rekod pendaratan penyu dan kutipan telur untuk tiga pulau:
-**PTB**, **PTK** dan **PSB**.
+Portal aplikasi staf Lembaga Pengurusan Penyu. Staf log masuk sekali, kemudian
+pilih app yang dibenarkan untuk peranan mereka.
 
-Seluruh app ada dalam satu fail `index.html`. Tiada npm dan tiada build step.
-Library dimuat dari CDN, dan data disimpan dalam Supabase. Deploy dengan
-push ke GitHub sahaja.
+```
+Landing (index.html) → Log masuk (login.html) → Portal (portal.html) → Penyu Tracker / Minyak Tracker / ...
+```
 
-## Ciri-ciri
+Setiap halaman ialah fail HTML sendiri. Tiada npm dan tiada build step.
+Library dimuat dari CDN, data disimpan dalam **satu** projek Supabase, dan
+laman di-host di GitHub Pages. Deploy dengan push ke GitHub sahaja.
 
-- **Login ikut pulau** dengan tiga peranan:
-  - `staff`: lihat dan masukkan data pulau sendiri sahaja
+## Aplikasi & akses
+
+| App | Folder | Peranan yang boleh guna |
+|---|---|---|
+| Penyu Tracker | `penyu/` | `staff`, `kerani`, `admin` |
+| Minyak Tracker | `minyak/` | `kerani`, `admin` |
+
+Senarai ini ditetapkan dalam `shared/auth.js` (`APPS`). Portal hanya
+memaparkan app yang dibenarkan. Sekatan data sebenar dibuat oleh **RLS dalam
+Supabase**, jadi staf yang buka `/minyak/` terus tetap tidak dapat apa-apa data.
+Staf yang hanya ada satu app akan terus dibawa ke app tersebut selepas log masuk.
+
+### Penyu Tracker
+
+Rekod pendaratan penyu dan kutipan telur untuk tiga pulau: **PTB**, **PTK**
+dan **PSB**.
+
+- **Peranan:**
+  - `staff`: lihat dan masukkan data pulau yang ditugaskan dalam profil sahaja
   - `admin`: semua pulau, tukar sasaran, tab Admin
   - `kerani`: lihat-sahaja semua pulau dan boleh eksport, tapi tak boleh
     tambah, ubah atau padam data
+- Admin dan kerani pilih pulau selepas masuk app. Ketik lencana pulau di bar
+  bawah untuk tukar pulau.
 - **Entri**: Entri Harian (jumlah sehari ikut RAM LPP/SFC, sama format
   dengan template Excel) dan Entri Individu (satu rekod setiap penyu atau
   sarang). Ada ringkasan sebelum hantar, kawalan anti-pendua, dan semakan
@@ -24,34 +45,41 @@ push ke GitHub sahaja.
   kadar menetas, telur buruk, graf bulanan (Chart.js), perbandingan dengan
   mana-mana tahun, dan paparan tahun lama. Ada pilihan Gabung LPP + SFC.
 - **Import Data Lama** (1990–2025) dari Excel: pratonton sebelum import,
-  amaran tarikh tak wujud, dan undo ikut batch. Rekod app yang tiada dalam
-  fail akan dipadam supaya jumlah tidak berganda.
+  amaran tarikh tak wujud, dan undo ikut batch.
 - **Export Excel** ikut template setiap pulau (`assets/template-*.xlsx`).
-- **Mod Pembentangan**: slaid interaktif dengan animasi penyu, 5 jenis
-  peralihan dan label angka pada graf. Teks pembentangan diedit di tab
-  Admin, dan slaid boleh dieksport ke **PowerPoint** (PptxGenJS).
-- **Lupa kata laluan**: reset melalui emel, kemudian skrin untuk set kata
-  laluan baharu.
-- **Offline**: kalau line putus, entri disimpan dalam browser dan dihantar
-  bila online semula. App boleh dipasang ke skrin telefon (PWA melalui
-  `manifest.json` dan `sw.js`).
-- **Admin**: sasaran tahunan dan bulanan ikut pulau, upload video latar,
-  sejarah login staf.
-- Mod gelap/cerah, video latar belakang, gambar setiap pulau.
+- **Mod Pembentangan**: slaid interaktif dengan animasi penyu dan label
+  angka pada graf. Boleh dieksport ke **PowerPoint** (PptxGenJS).
+- **Admin**: sasaran tahunan dan bulanan ikut pulau, sejarah login staf.
+
+### Minyak Tracker
+
+Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
+
+- Dashboard gauge (pecahan Diesel vs RON95), jumlah mileage, jumlah belum claim.
+- Tambah entri: odometer mula/akhir (jarak dikira automatik), amount, resit
+  (gambar/PDF), tanda perlu claim.
+- Sejarah ikut bulan, butiran entri, tandakan dah claim.
+- Kerani boleh ubah/padam entri sendiri; admin boleh ubah/padam semua.
+- Resit disimpan dalam bucket **private** `minyak-receipts` dan dibuka guna
+  pautan sementara (1 jam).
+- **Admin** (butang ⚙️): video latar, dan **Pindah Resit Lama** dari projek
+  Supabase lama.
 
 ## Struktur fail
 
 | Fail | Fungsi |
 |---|---|
-| `index.html` | Seluruh app: HTML, CSS (Tailwind CDN) dan JavaScript |
-| `manifest.json`, `sw.js` | PWA: ikon app dan cache untuk guna offline |
-| `schema.sql` | Struktur asal database Supabase |
-| `migration-*.sql` | Perubahan database yang ditambah kemudian |
-| `fix-*.sql` | Pembaikan polisi RLS dan storage |
-| `assets/` | Logo, ikon, gambar pulau, `background.mp4`, template Excel |
-
-Library CDN: Supabase JS, Tailwind, Chart.js, SheetJS (`xlsx`), PptxGenJS
-dan JSZip.
+| `index.html` | Landing page |
+| `login.html` | Log masuk, lupa kata laluan, tetapkan kata laluan baharu |
+| `portal.html` | Pilih app selepas log masuk |
+| `shared/auth.js` | Klien Supabase, senarai app & peranan, semakan akses |
+| `shared/portal.css` | Gaya landing, login dan portal |
+| `penyu/` | Penyu Tracker (`index.html`, `manifest.json`) |
+| `minyak/` | Minyak Tracker (`index.html`, `app.js`, `style.css`, `manifest.json`, `icons/`) |
+| `sw.js` | Satu service worker untuk seluruh laman (network-first) |
+| `manifest.json` | PWA portal (setiap app juga ada manifest sendiri) |
+| `schema.sql`, `migration-*.sql`, `fix-*.sql` | Struktur database Supabase |
+| `assets/` | Logo, ikon, video latar, template Excel |
 
 ## Setup (sekali sahaja)
 
@@ -74,27 +102,33 @@ Dalam Supabase → SQL Editor, run fail-fail ini **ikut urutan**:
 13. `migration-kerani-step2.sql`
 14. `migration-legacy-and-undo.sql`
 15. `migration-monthly-penyu.sql`
+16. `migration-minyak.sql`
 
 Kemudian:
 
 1. Authentication → Add User → cipta akaun login.
 2. Table Editor → `staff_profiles` → tambah baris dengan `id` pengguna
    tersebut, nama, pulau, dan `role` (`staff`, `admin` atau `kerani`).
+3. Authentication → URL Configuration → **Redirect URLs** → tambah
+   `https://revvedupmedia.github.io/trackpenyu/login.html` (pautan reset
+   kata laluan kembali ke halaman ini).
 
-URL dan anon key Supabase diletakkan di bahagian atas blok
-`<script type="module">` dalam `index.html` (`SUPABASE_URL` dan
-`SUPABASE_ANON_KEY`).
+URL dan anon key Supabase ada dalam `shared/auth.js`.
 
 ### 2. Deploy ke GitHub Pages
 
 Repo → Settings → Pages → Source → **Deploy from a branch** → Branch
 `main`, folder `/ (root)` → Save.
 
-App akan live dalam ~1 minit di `https://revvedupmedia.github.io/trackpenyu/`.
+Laman live dalam ~1 minit:
+
+- Landing: `https://revvedupmedia.github.io/trackpenyu/`
+- Penyu Tracker: `https://revvedupmedia.github.io/trackpenyu/penyu/`
+- Minyak Tracker: `https://revvedupmedia.github.io/trackpenyu/minyak/`
 
 ### 3. Kemas kini
 
-Edit `index.html` (di GitHub web editor atau secara lokal), kemudian:
+Edit fail (di GitHub web editor atau secara lokal), kemudian:
 
 ```bash
 git add .
@@ -105,7 +139,17 @@ git push
 Tiada build. Push dan terus live. Kalau ada perubahan database, tambah
 fail `migration-*.sql` baharu dan run dalam Supabase SQL Editor.
 
+## Tambah app baharu
+
+1. Cipta folder, cth `inventori/index.html`.
+2. Tambah app dalam `APPS` di `shared/auth.js` (nama, ikon, peranan).
+3. Di atas skrip app: `const { user, profile } = await requireApp('inventori')`.
+4. Jadual baharu dalam Supabase mesti ada RLS yang semak peranan (rujuk
+   `can_use_minyak()` dalam `migration-minyak.sql`).
+
 ## Had semasa
 
 - Pengurusan staf (tambah akaun, tukar pulau atau peranan) masih dibuat
   melalui dashboard Supabase, bukan dalam app.
+- Jangan commit fail backup database atau fail import data ke repo. Fail
+  tersebut ada emel dan password hash pengguna.

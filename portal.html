@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Portal LPP</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="assets/icon-192.png" />
+<link rel="apple-touch-icon" href="assets/icon-192.png" />
+<meta name="theme-color" content="#0A1F2B" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<script>try { document.documentElement.classList.add(localStorage.getItem('penyu-theme') || 'dark') } catch { document.documentElement.classList.add('dark') }</script>
+<link rel="stylesheet" href="shared/portal.css" />
+<style>
+  .greet { padding: 28px 0 22px; }
+  .greet h1 { font-size: clamp(28px, 5vw, 40px); }
+  .greet p { margin: 6px 0 0; color: var(--muted); }
+  .actions { display: flex; gap: 8px; align-items: center; }
+</style>
+</head>
+<body>
+<video class="bg-video" src="assets/background.mp4" autoplay muted loop playsinline aria-hidden="true"></video>
+<div class="bg-tint"></div>
+
+<div class="wrap">
+  <header class="topbar">
+    <a class="brand" href="./"><img src="assets/logo.png" alt="" onerror="this.remove()" /><span class="brand-name">Portal LPP</span></a>
+    <div class="actions">
+      <button class="icon-toggle" id="theme" title="Tukar mod gelap/cerah">🌙</button>
+      <button class="btn btn-ghost" id="logout">Log Keluar</button>
+    </div>
+  </header>
+
+  <main id="main" hidden>
+    <section class="greet rise">
+      <h1 id="hello">Selamat datang</h1>
+      <p id="who"></p>
+    </section>
+    <div id="notice" class="msg msg-err" hidden></div>
+    <div class="app-grid rise" id="apps"></div>
+  </main>
+</div>
+
+<script type="module">
+import { currentUser, appsFor, APPS, loginUrl, logout, ROOT } from './shared/auth.js'
+
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+const ROLE_LABEL = { staff: 'Staf', kerani: 'Kerani', admin: 'Admin' }
+
+document.getElementById('logout').onclick = logout
+
+const themeBtn = document.getElementById('theme')
+const setThemeIcon = () => { themeBtn.textContent = document.documentElement.classList.contains('light') ? '☀️' : '🌙' }
+themeBtn.onclick = () => {
+  const html = document.documentElement
+  const toLight = !html.classList.contains('light')
+  html.classList.toggle('light', toLight)
+  html.classList.toggle('dark', !toLight)
+  try { localStorage.setItem('penyu-theme', toLight ? 'light' : 'dark') } catch {}
+  setThemeIcon()
+}
+setThemeIcon()
+
+const { user, profile } = await currentUser()
+if (!user) location.replace(loginUrl())
+else {
+  const main = document.getElementById('main')
+  const notice = document.getElementById('notice')
+  main.hidden = false
+
+  if (!profile) {
+    document.getElementById('who').textContent = user.email
+    notice.textContent = 'Akaun anda belum didaftarkan sebagai staf. Sila hubungi admin.'
+    notice.hidden = false
+  } else {
+    document.getElementById('hello').textContent = `Selamat datang, ${profile.full_name}`
+    document.getElementById('who').textContent = `${ROLE_LABEL[profile.role] || profile.role} · ${profile.island} · ${user.email}`
+
+    const denied = APPS.find(a => a.id === new URLSearchParams(location.search).get('denied'))
+    if (denied) {
+      notice.textContent = `Akaun anda tiada akses ke ${denied.name}.`
+      notice.hidden = false
+    }
+
+    const apps = appsFor(profile)
+    // Hanya satu app? Terus masuk (kecuali baru ditolak dari app lain).
+    if (apps.length === 1 && !denied) location.replace(ROOT + apps[0].href)
+
+    document.getElementById('apps').innerHTML = apps.length
+      ? apps.map(a => `
+        <a class="card app-card" href="${a.href}">
+          <div class="app-icon">${a.icon}</div>
+          <h3>${esc(a.name)}</h3>
+          <p>${esc(a.desc)}</p>
+          <span class="app-go">Buka →</span>
+        </a>`).join('')
+      : '<div class="card muted">Tiada aplikasi untuk peranan akaun anda.</div>'
+  }
+}
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {})
+</script>
+</body>
+</html>

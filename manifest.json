@@ -1,8 +1,8 @@
 {
-  "name": "Penyu Tracker",
-  "short_name": "Penyu Tracker",
-  "description": "Sistem rekod pendaratan penyu dan kutipan telur",
-  "start_url": "./",
+  "name": "Portal LPP",
+  "short_name": "Portal LPP",
+  "description": "Portal aplikasi staf Lembaga Pengurusan Penyu",
+  "start_url": "./portal.html",
   "scope": "./",
   "display": "standalone",
   "background_color": "#0A1F2B",

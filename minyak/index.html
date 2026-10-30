@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Minyak Tracker — Lembaga Pengurusan Penyu</title>
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#0E6E6E" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Minyak" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="stylesheet" href="style.css?v=7" />
+</head>
+<body>
+
+<!-- BG VIDEO -->
+<div id="bgWrap">
+  <video id="bgVideo" autoplay loop muted playsinline></video>
+  <div id="bgFallback"></div>
+</div>
+
+<!-- ADMIN DIALOG -->
+<dialog id="adminDialog" class="sheet-dialog admin-dialog">
+  <div class="sheet-handle"></div>
+  <div class="sheet-head">
+    <h2>🔐 Admin Panel</h2>
+    <button type="button" id="adminDialogClose" class="icon-btn">✕</button>
+  </div>
+  <div class="admin-body">
+    <!-- Admin tools (role admin sahaja) -->
+    <div id="adminToolSection">
+      <div class="admin-section">
+        <h3>🎬 Background Video</h3>
+        <p class="admin-hint">Upload video (MP4, max 50MB) untuk jadi wallpaper app.</p>
+        <div id="videoDrop" class="drop-zone">
+          <input type="file" id="bgVideoFile" accept="video/mp4,video/webm,video/ogg" hidden />
+          <div id="videoDropEmpty" class="drop-zone-empty">
+            <span class="drop-icon">🎬</span>
+            <span>Tap untuk pilih video</span>
+          </div>
+          <div id="videoDropPreview" class="drop-zone-preview" hidden>
+            <span class="drop-icon">✅</span>
+            <span id="videoFileName">video.mp4</span>
+          </div>
+        </div>
+        <div id="bgUploadProgress" class="progress-wrap" hidden>
+          <div id="bgUploadBar" class="progress-bar"></div>
+          <span id="bgUploadLabel">0%</span>
+        </div>
+        <div id="bgCurrentUrl" class="current-bg-url" hidden>
+          <span>Sekarang: </span><span id="bgUrlText"></span>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:8px;">
+          <button type="button" id="bgUploadBtn" class="submit-btn" style="flex:1" disabled>Upload Video</button>
+          <button type="button" id="bgRefreshBtn" class="logout-btn" style="flex:0 0 auto;padding:10px 14px;border-radius:var(--r-sm);" title="Load semula video dari database">↺</button>
+          <button type="button" id="bgRemoveBtn" class="danger-btn" style="flex:0 0 auto;padding:10px 14px;" title="Buang video">✕</button>
+        </div>
+        <div id="bgMsg" class="form-error" hidden style="margin-top:8px;"></div>
+      </div>
+      <div class="admin-section" id="legacySection">
+        <h3>📦 Pindah Resit Lama</h3>
+        <p class="admin-hint">Resit dari projek Supabase lama (minyak-tracker) disalin ke storan baharu. Projek lama mesti di-<em>resume</em> dulu. Selamat untuk diulang.</p>
+        <div id="legacyStatus" class="admin-hint"></div>
+        <button type="button" id="legacyBtn" class="submit-btn">Mula Pindah</button>
+        <div id="legacyMsg" class="form-error" hidden style="margin-top:8px;"></div>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<!-- MAIN APP -->
+<div id="app" hidden>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span id="appLogo" class="brand-mark">⛽</span>
+        <span class="brand-name">Minyak Tracker</span>
+        <span id="adminBadge" class="admin-badge" hidden>ADMIN</span>
+      </div>
+      <div class="month-switcher">
+        <button type="button" class="chev" data-dir="-1">‹</button>
+        <span id="monthText">Jul 2026</span>
+        <button type="button" class="chev" data-dir="1">›</button>
+      </div>
+    </div>
+    <div class="user-bar">
+      <span id="userEmailDisplay" class="user-email"></span>
+      <span style="display:flex;gap:6px;">
+        <button type="button" id="adminBtn" class="logout-btn" hidden>⚙️ Admin</button>
+        <a href="../portal.html" class="logout-btn" style="text-decoration:none;">🏠 Portal</a>
+        <button type="button" id="logoutBtn" class="logout-btn">Log Keluar</button>
+      </span>
+    </div>
+  </header>
+
+  <main class="content">
+    <section class="hero-card">
+      <div class="gauge-wrap">
+        <svg id="gaugeSvg" viewBox="0 0 240 150" class="gauge-svg">
+          <path id="gaugeTrack" d="" class="gauge-track"/>
+          <path id="gaugeDiesel" d="" class="gauge-seg gauge-diesel"/>
+          <path id="gaugeRon" d="" class="gauge-seg gauge-ron"/>
+        </svg>
+        <div class="gauge-center">
+          <div class="gauge-total" id="gaugeTotal">RM0</div>
+          <div class="gauge-sub">jumlah bulan ini</div>
+        </div>
+      </div>
+      <div class="legend">
+        <div class="legend-item">
+          <span class="legend-label"><span class="dot dot-diesel"></span> Diesel</span>
+          <span class="legend-value" id="dieselTotal">RM0</span>
+        </div>
+        <div class="legend-item">
+          <span class="legend-label"><span class="dot dot-ron"></span> RON95 (Boat)</span>
+          <span class="legend-value" id="ronTotal">RM0</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-label">Jumlah Mileage</div>
+        <div class="stat-value mono" id="statMileage">0 <span class="unit">km</span></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Belum Claim</div>
+        <div class="stat-value mono" id="statPending">RM0</div>
+      </div>
+    </section>
+
+    <section class="history-section">
+      <div class="history-head">
+        <h2>Rekod</h2>
+        <span class="history-count" id="historyCount"></span>
+      </div>
+      <div id="emptyState" class="empty-state" hidden>
+        <div class="empty-icon">🐢</div>
+        <p class="empty-title">Takde rekod bulan ni</p>
+        <p class="empty-sub">Tekan + untuk tambah entry pertama.</p>
+      </div>
+      <ul id="historyList" class="history-list"></ul>
+    </section>
+  </main>
+
+  <button id="fabAdd" type="button" class="fab">+</button>
+
+  <!-- Add Entry Dialog -->
+  <dialog id="addDialog" class="sheet-dialog">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head">
+      <h2>Tambah Entry</h2>
+      <button type="button" id="addDialogClose" class="icon-btn">✕</button>
+    </div>
+    <form id="entryForm" class="entry-form" method="dialog">
+      <div class="field">
+        <label for="entryDate">Tarikh</label>
+        <input type="date" id="entryDate" required />
+      </div>
+      <div class="field">
+        <label>Jenis Minyak</label>
+        <div class="fuel-toggle" id="fuelToggle">
+          <button type="button" class="fuel-opt fuel-opt-diesel active" data-fuel="diesel">
+            <span class="fuel-dot dot-diesel"></span> Diesel
+          </button>
+          <button type="button" class="fuel-opt fuel-opt-ron" data-fuel="ron95">
+            <span class="fuel-dot dot-ron"></span> RON95 (Boat)
+          </button>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="odoStart">Odo Mula <span class="optional">(km)</span></label>
+          <input type="number" id="odoStart" inputmode="decimal" step="0.1" placeholder="12345" />
+        </div>
+        <div class="field">
+          <label for="odoEnd">Odo Akhir <span class="optional">(km)</span></label>
+          <input type="number" id="odoEnd" inputmode="decimal" step="0.1" placeholder="12400" />
+        </div>
+      </div>
+      <div class="distance-preview" id="distancePreview" hidden>
+        Jarak: <strong id="distanceValue">0</strong> km
+      </div>
+      <div class="field">
+        <label for="entryAmount">Amount (RM)</label>
+        <input type="number" id="entryAmount" inputmode="decimal" step="0.01" placeholder="0.00" required />
+      </div>
+      <div class="field">
+        <label class="checkbox-field">
+          <input type="checkbox" id="needsClaim" />
+          <span>Perlu claim balik</span>
+        </label>
+      </div>
+      <div class="field">
+        <label for="entryNotes">Nota <span class="optional">(pilihan)</span></label>
+        <input type="text" id="entryNotes" placeholder="cth: trip ke pelabuhan" />
+      </div>
+      <div class="field">
+        <label>Resit <span class="optional">(gambar / PDF)</span></label>
+        <div id="dropZone" class="drop-zone">
+          <input type="file" id="receiptFile" accept="image/*,application/pdf" hidden />
+          <div id="dropZoneEmpty" class="drop-zone-empty">
+            <span class="drop-icon">📎</span><span>Tap untuk upload resit</span>
+          </div>
+          <div id="dropZonePreview" class="drop-zone-preview" hidden>
+            <img id="previewImg" hidden alt="Preview" />
+            <div id="previewPdf" class="preview-pdf" hidden>📄 <span id="previewPdfName"></span></div>
+            <button type="button" id="removeFile" class="remove-file">✕</button>
+          </div>
+        </div>
+      </div>
+      <div id="formError" class="form-error" hidden></div>
+      <button type="button" id="submitBtn" class="submit-btn">Simpan Entry</button>
+    </form>
+  </dialog>
+
+  <!-- Detail Dialog -->
+  <dialog id="detailDialog" class="sheet-dialog">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head">
+      <h2>Butiran Entry</h2>
+      <button type="button" id="detailDialogClose" class="icon-btn">✕</button>
+    </div>
+    <div id="detailBody" class="detail-body"></div>
+    <div class="detail-actions" id="detailActions"></div>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+</div>
+
+<script type="module" src="app.js?v=7"></script>
+</body>
+</html>

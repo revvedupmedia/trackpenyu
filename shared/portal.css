@@ -1,0 +1,120 @@
+/* Gaya bersama untuk landing, login dan portal. Warna ikut Penyu Tracker. */
+:root {
+  --bg: #0A1F2B;
+  --bg-2: #0E2A38;
+  --card: rgba(18, 50, 68, .62);
+  --card-border: rgba(247, 242, 231, .12);
+  --text: #F7F2E7;
+  --muted: rgba(247, 242, 231, .68);
+  --accent: #6EE7B7;
+  --accent-strong: #10B981;
+  --accent-ink: #062A1F;
+  --danger: #FCA5A5;
+  --danger-bg: rgba(239, 68, 68, .12);
+  --ok-bg: rgba(20, 184, 166, .12);
+  --tint: rgba(10, 31, 43, .72);
+  --shadow: 0 18px 50px rgba(0, 0, 0, .35);
+  color-scheme: dark;
+}
+html.light {
+  --bg: #EDE3CF;
+  --bg-2: #E4D7BD;
+  --card: rgba(255, 252, 245, .78);
+  --card-border: rgba(10, 31, 43, .12);
+  --text: #0A1F2B;
+  --muted: rgba(10, 31, 43, .66);
+  --accent: #0F766E;
+  --accent-strong: #0F766E;
+  --accent-ink: #F7F2E7;
+  --danger: #B91C1C;
+  --danger-bg: rgba(220, 38, 38, .08);
+  --ok-bg: rgba(15, 118, 110, .1);
+  --tint: rgba(237, 227, 207, .78);
+  --shadow: 0 18px 40px rgba(10, 31, 43, .14);
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  letter-spacing: -.01em;
+  line-height: 1.5;
+}
+h1, h2, h3 { font-family: 'Fraunces', Georgia, serif; font-weight: 600; margin: 0; letter-spacing: -.02em; }
+a { color: inherit; }
+img { max-width: 100%; display: block; }
+
+/* Latar video + tint, sama macam Penyu Tracker */
+.bg-video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: -2; }
+.bg-tint { position: fixed; inset: 0; background: var(--tint); z-index: -1; }
+
+.wrap { width: 100%; max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+.narrow { max-width: 440px; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  padding: 24px;
+}
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 44px; padding: 10px 20px; border-radius: 12px;
+  font: 600 15px/1 'Inter', sans-serif; text-decoration: none; cursor: pointer;
+  border: 1px solid transparent; transition: transform .15s ease, opacity .15s ease, background .2s ease;
+}
+.btn:active { transform: scale(.98); }
+.btn:disabled { opacity: .55; cursor: default; }
+.btn-primary { background: var(--accent); color: var(--accent-ink); }
+.btn-ghost { background: transparent; color: var(--text); border-color: var(--card-border); }
+.btn-block { width: 100%; }
+.link-btn { background: none; border: 0; color: var(--muted); text-decoration: underline; cursor: pointer; font: inherit; font-size: 14px; padding: 4px; }
+.link-btn:hover { color: var(--text); }
+
+input[type=email], input[type=password], input[type=text] {
+  width: 100%; min-height: 46px; padding: 10px 14px; border-radius: 12px;
+  border: 1px solid var(--card-border); background: rgba(0, 0, 0, .18); color: var(--text);
+  font: 400 16px 'Inter', sans-serif;
+}
+html.light input[type=email], html.light input[type=password], html.light input[type=text] { background: rgba(255, 255, 255, .7); }
+input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.field { display: grid; gap: 6px; margin-bottom: 12px; }
+.field label { font-size: 13px; color: var(--muted); font-weight: 500; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); margin-bottom: 12px; }
+
+.msg { font-size: 14px; border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+.msg-err { background: var(--danger-bg); border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent); color: var(--danger); }
+.msg-ok { background: var(--ok-bg); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.center { text-align: center; }
+[hidden] { display: none !important; }
+
+.brand { display: flex; align-items: center; gap: 12px; text-decoration: none; }
+.brand img { width: 40px; height: 40px; border-radius: 10px; object-fit: contain; }
+.brand-name { font-family: 'Fraunces', serif; font-weight: 600; font-size: 18px; }
+
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 0; }
+.icon-toggle { background: none; border: 1px solid var(--card-border); color: var(--text); border-radius: 10px; width: 40px; height: 40px; cursor: pointer; font-size: 18px; }
+
+/* Kad app (landing & portal) */
+.app-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.app-card { display: flex; flex-direction: column; gap: 10px; text-decoration: none; transition: transform .2s ease, border-color .2s ease; }
+a.app-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+.app-icon { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; font-size: 28px; background: var(--ok-bg); }
+.app-card h3 { font-size: 22px; }
+.app-card p { margin: 0; color: var(--muted); font-size: 15px; }
+.app-go { margin-top: auto; padding-top: 6px; font-weight: 600; color: var(--accent); }
+.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: var(--ok-bg); color: var(--accent); }
+
+@keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.rise { animation: rise .5s ease both; }
+@media (prefers-reduced-motion: reduce) { .rise { animation: none; } * { transition: none !important; } }

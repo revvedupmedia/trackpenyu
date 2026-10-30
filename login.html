@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Log Masuk · Portal LPP</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="assets/icon-192.png" />
+<meta name="theme-color" content="#0A1F2B" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<script>try { document.documentElement.classList.add(localStorage.getItem('penyu-theme') || 'dark') } catch { document.documentElement.classList.add('dark') }</script>
+<link rel="stylesheet" href="shared/portal.css" />
+<style>
+  main { min-height: calc(100vh - 80px); display: grid; align-content: center; padding: 16px 0 48px; }
+  .head { text-align: center; margin-bottom: 20px; }
+  .head img { width: 72px; height: 72px; margin: 0 auto 12px; border-radius: 18px; object-fit: contain; }
+  .head h1 { font-size: 26px; }
+  .head p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<video class="bg-video" src="assets/background.mp4" autoplay muted loop playsinline aria-hidden="true"></video>
+<div class="bg-tint"></div>
+
+<div class="wrap narrow">
+  <header class="topbar">
+    <a class="brand" href="./"><span class="brand-name">← Portal LPP</span></a>
+  </header>
+  <main><div class="card rise" id="view"></div></main>
+</div>
+
+<script type="module">
+import { supabase, ROOT, BOOT_RECOVERY, BOOT_AUTH_ERROR, RECOVERY_FLAG } from './shared/auth.js'
+
+const view = document.getElementById('view')
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+
+// Selepas log masuk: ke app yang diminta (cth "penyu/"), atau portal.
+function nextUrl() {
+  const n = new URLSearchParams(location.search).get('next') || ''
+  return /^[a-z0-9-]+\/$/.test(n) ? ROOT + n : ROOT + 'portal.html'
+}
+// Pautan reset mesti kembali ke halaman ini. Alamat ini perlu ada dalam senarai
+// Redirect URLs di Supabase (Authentication → URL Configuration).
+const resetRedirectUrl = () => ROOT + 'login.html'
+
+const head = (title, sub) => `
+  <div class="head">
+    <img src="assets/logo.png" alt="" onerror="this.remove()" />
+    <h1>${title}</h1>${sub ? `<p>${sub}</p>` : ''}
+  </div>`
+
+function showLogin(prefill = '') {
+  view.innerHTML = `${head('Log Masuk Staf', 'Satu akaun untuk semua aplikasi.')}
+    <form id="f">
+      <div class="field"><label for="email">Emel</label><input type="email" id="email" required autocomplete="email" value="${esc(prefill)}" /></div>
+      <div class="field"><label for="pw">Kata laluan</label><input type="password" id="pw" required autocomplete="current-password" /></div>
+      <div id="err" class="msg msg-err" hidden></div>
+      <button class="btn btn-primary btn-block" id="btn">Log Masuk</button>
+      <div class="center" style="margin-top:10px"><button type="button" class="link-btn" id="forgot">Lupa kata laluan?</button></div>
+    </form>`
+  const err = view.querySelector('#err'), btn = view.querySelector('#btn')
+  view.querySelector('#forgot').onclick = () => showForgot(view.querySelector('#email').value.trim())
+  view.querySelector('#f').onsubmit = async (e) => {
+    e.preventDefault()
+    err.hidden = true
+    btn.disabled = true
+    btn.textContent = 'Log masuk...'
+    const { error } = await supabase.auth.signInWithPassword({
+      email: view.querySelector('#email').value.trim(),
+      password: view.querySelector('#pw').value
+    })
+    if (error) {
+      err.textContent = /invalid login/i.test(error.message) ? 'Emel atau kata laluan salah.' : error.message
+      err.hidden = false
+      btn.disabled = false
+      btn.textContent = 'Log Masuk'
+      return
+    }
+    location.replace(nextUrl())
+  }
+}
+
+function showForgot(prefill = '') {
+  view.innerHTML = `
+    <button type="button" class="link-btn" id="back">← Kembali log masuk</button>
+    ${head('Lupa Kata Laluan', 'Masukkan emel akaun anda. Kami hantar pautan untuk tetapkan kata laluan baharu.')}
+    <form id="f">
+      <div class="field"><label for="email">Emel</label><input type="email" id="email" required autocomplete="email" value="${esc(prefill)}" /></div>
+      <div id="msg" class="msg" hidden></div>
+      <button class="btn btn-primary btn-block" id="btn">Hantar pautan reset</button>
+    </form>`
+  const msg = view.querySelector('#msg'), btn = view.querySelector('#btn'), email = view.querySelector('#email')
+  const show = (html, ok) => { msg.className = 'msg ' + (ok ? 'msg-ok' : 'msg-err'); msg.innerHTML = html; msg.hidden = false }
+  view.querySelector('#back').onclick = () => showLogin(email.value.trim())
+  view.querySelector('#f').onsubmit = async (e) => {
+    e.preventDefault()
+    const addr = email.value.trim()
+    if (!addr) return
+    btn.disabled = true
+    const { error } = await supabase.auth.resetPasswordForEmail(addr, { redirectTo: resetRedirectUrl() })
+    if (error) {
+      const rate = error.status === 429 || /rate limit|too many|seconds/i.test(error.message || '')
+      show(rate
+        ? 'Terlalu banyak permintaan. Tunggu seminit dua, kemudian cuba lagi.'
+        : `Emel tidak dapat dihantar sekarang. Sila hubungi admin.<div class="small muted" style="margin-top:4px">${esc(error.message)}</div>`, false)
+      btn.disabled = false
+      return
+    }
+    // Mesej sama sama ada emel itu berdaftar atau tidak (elak orang teka siapa staf).
+    show('Jika emel itu berdaftar, pautan reset telah dihantar. Semak peti masuk anda (dan folder spam). Pautan hanya sah untuk tempoh singkat dan sekali guna sahaja.<div class="small" style="margin-top:6px">Tak terima dalam 5 minit? Semak ejaan emel dan folder spam, atau hubungi admin.</div>', true)
+    let left = 60
+    const tick = () => { btn.textContent = left > 0 ? `Hantar semula (${left}s)` : 'Hantar semula'; if (left-- > 0) setTimeout(tick, 1000); else btn.disabled = false }
+    tick()
+  }
+}
+
+function clearRecovery() {
+  try { localStorage.removeItem(RECOVERY_FLAG) } catch {}
+  try { sessionStorage.removeItem(RECOVERY_FLAG) } catch {}
+}
+
+function showInvalidLink() {
+  clearRecovery()
+  view.innerHTML = `${head('Pautan tidak sah', 'Pautan reset ini sudah tamat tempoh atau sudah digunakan. Sila minta pautan baharu.')}
+    <button class="btn btn-primary btn-block" id="ask">Minta pautan baharu</button>`
+  view.querySelector('#ask').onclick = () => showForgot()
+}
+
+// Skrin selepas klik pautan dalam emel: staf tetapkan kata laluan baharu.
+async function showReset() {
+  const { data } = await supabase.auth.getSession()
+  if (!data?.session) return showInvalidLink()
+  view.innerHTML = `
+    <button type="button" class="link-btn" id="cancel">← Batal</button>
+    ${head('Kata Laluan Baharu', 'Tetapkan kata laluan baharu untuk akaun anda (sekurang-kurangnya 8 aksara).')}
+    <form id="f">
+      <div class="field"><input type="password" id="p1" required minlength="8" placeholder="Kata laluan baharu" autocomplete="new-password" /></div>
+      <div class="field"><input type="password" id="p2" required minlength="8" placeholder="Taip semula kata laluan baharu" autocomplete="new-password" /></div>
+      <label class="check"><input type="checkbox" id="showPw" /> Tunjuk kata laluan</label>
+      <div id="err" class="msg msg-err" hidden></div>
+      <button class="btn btn-primary btn-block" id="btn">Simpan Kata Laluan</button>
+    </form>`
+  const p1 = view.querySelector('#p1'), p2 = view.querySelector('#p2'), err = view.querySelector('#err'), btn = view.querySelector('#btn')
+  const finish = async () => {
+    clearRecovery()
+    try { await supabase.auth.signOut() } catch {}
+    history.replaceState(null, '', location.pathname)
+  }
+  const showErr = (t) => { err.textContent = t; err.hidden = false }
+  view.querySelector('#showPw').onchange = (e) => { p1.type = p2.type = e.target.checked ? 'text' : 'password' }
+  view.querySelector('#cancel').onclick = async () => { await finish(); showLogin() }
+  view.querySelector('#f').onsubmit = async (e) => {
+    e.preventDefault()
+    err.hidden = true
+    if (p1.value.length < 8) return showErr('Kata laluan mesti sekurang-kurangnya 8 aksara.')
+    if (p1.value !== p2.value) return showErr('Kedua-dua kata laluan tidak sama. Taip semula.')
+    btn.disabled = true
+    const { error } = await supabase.auth.updateUser({ password: p1.value })
+    if (error) {
+      btn.disabled = false
+      const m = error.message || ''
+      return showErr(/different from the old/i.test(m) ? 'Kata laluan baharu mesti berbeza daripada yang lama.'
+        : /weak|least|characters/i.test(m) ? 'Kata laluan terlalu lemah. Cuba yang lebih panjang atau campur huruf dan nombor.'
+        : /session|expired|not authenticated|missing/i.test(m) ? 'Sesi reset sudah tamat. Sila minta pautan baharu.'
+        : m)
+    }
+    const email = data.session.user?.email || ''
+    await finish()
+    showLogin(email)
+    const ok = document.createElement('div')
+    ok.className = 'msg msg-ok'
+    ok.textContent = 'Kata laluan berjaya ditukar. Sila log masuk dengan kata laluan baharu.'
+    view.querySelector('form').prepend(ok)
+  }
+}
+
+// ---------- Mula ----------
+if (BOOT_RECOVERY) {
+  // Datang dari pautan emel. Klien Supabase log masuk sementara; paksa tukar kata laluan dulu.
+  try { localStorage.setItem(RECOVERY_FLAG, '1'); sessionStorage.setItem(RECOVERY_FLAG, '1') } catch {}
+  await supabase.auth.getSession()
+  await showReset()
+} else if (BOOT_AUTH_ERROR) {
+  showInvalidLink()
+} else {
+  let pending = null, sameTab = null
+  try { pending = localStorage.getItem(RECOVERY_FLAG); sameTab = sessionStorage.getItem(RECOVERY_FLAG) } catch {}
+  if (pending && sameTab) {
+    // Refresh semasa di skrin kata laluan baharu: kekal jika sesi reset masih ada.
+    await showReset()
+  } else {
+    // Tukar kata laluan tidak dihabiskan => jangan biar sesi sementara kekal.
+    if (pending) { clearRecovery(); try { await supabase.auth.signOut() } catch {} }
+    const { data } = await supabase.auth.getSession()
+    if (data?.session) location.replace(nextUrl())
+    else showLogin()
+  }
+}
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {})
+</script>
+</body>
+</html>

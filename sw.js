@@ -1,5 +1,7 @@
-const CACHE_NAME = 'penyu-tracker-v1'
-const APP_SHELL = ['./', './index.html', './manifest.json']
+// Satu service worker untuk seluruh laman (landing, portal & semua app).
+const CACHE_NAME = 'portal-v2'
+const APP_SHELL = ['./', './index.html', './login.html', './portal.html', './manifest.json',
+  './shared/auth.js', './shared/portal.css', './penyu/', './minyak/']
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
