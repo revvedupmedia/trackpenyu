@@ -58,12 +58,18 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
 - Dashboard gauge (pecahan Diesel vs RON95), jumlah mileage, jumlah belum claim.
 - Tambah entri: odometer mula/akhir (jarak dikira automatik), amount, resit
   (gambar/PDF), tanda perlu claim.
+- Paparan **Bulan / Tahun**: paparan Tahun tunjuk ringkasan setiap bulan.
+- **Import resit Setel (PDF)**: pilih banyak PDF sekali gus; app baca tarikh,
+  jenis minyak, jumlah dibayar, liter, stesen dan subsidi BUDI. Semua dipapar
+  untuk disemak dahulu (anti-pendua ikut nombor invois, amaran "mungkin pendua"
+  jika entri tarikh/jenis/jumlah sama sudah ada, tanda "Perlu claim"), kemudian
+  sahkan dengan kiraan undur 5 saat. Pembaca: `minyak/setel.js`.
 - Sejarah ikut bulan, butiran entri, tandakan dah claim.
 - Kerani boleh ubah/padam entri sendiri; admin boleh ubah/padam semua.
 - Resit disimpan dalam bucket **private** `minyak-receipts` dan dibuka guna
   pautan sementara (1 jam).
-- **Admin** (butang ⚙️): video latar, dan **Pindah Resit Lama** dari projek
-  Supabase lama.
+- **Admin** (butang ⚙️): video latar, dan **Pindah Resit Lama** dari folder
+  backup storage atau terus dari projek Supabase lama.
 
 ## Struktur fail
 
@@ -75,7 +81,8 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
 | `shared/auth.js` | Klien Supabase, senarai app & peranan, semakan akses |
 | `shared/portal.css` | Gaya landing, login dan portal |
 | `penyu/` | Penyu Tracker (`index.html`, `manifest.json`) |
-| `minyak/` | Minyak Tracker (`index.html`, `app.js`, `style.css`, `manifest.json`, `icons/`) |
+| `minyak/` | Minyak Tracker (`index.html`, `app.js`, `setel.js`, `style.css`, `manifest.json`, `icons/`) |
+| `vendor/` | Library pihak ketiga yang disimpan dalam repo dengan versi tetap (pdf.js 4.10.38) |
 | `sw.js` | Satu service worker untuk seluruh laman (network-first) |
 | `manifest.json` | PWA portal (setiap app juga ada manifest sendiri) |
 | `schema.sql`, `migration-*.sql`, `fix-*.sql` | Struktur database Supabase |
@@ -103,6 +110,7 @@ Dalam Supabase → SQL Editor, run fail-fail ini **ikut urutan**:
 14. `migration-legacy-and-undo.sql`
 15. `migration-monthly-penyu.sql`
 16. `migration-minyak.sql`
+17. `migration-minyak-setel.sql`
 
 Kemudian:
 

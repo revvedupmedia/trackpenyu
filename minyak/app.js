@@ -535,6 +535,247 @@ submitBtn.addEventListener('click',async()=>{
   finally{submitBtn.disabled=false;submitBtn.textContent='Simpan Entry';}
 });
 
+// ── Import resit Setel (PDF) ──────────────────────
+// Aliran sama macam Penyu Tracker: baca → semak (anti-pendua, amaran) →
+// sahkan dengan kiraan undur → simpan. Tiada apa disimpan sebelum disahkan.
+const importDialog=document.getElementById('importDialog');
+const importFiles=document.getElementById('importFiles');
+const importList=document.getElementById('importList');
+const importSave=document.getElementById('importSave');
+const importBack=document.getElementById('importBack');
+const FUEL_LABEL={diesel:'Diesel',ron95:'RON95 (Boat)'};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let imp={rows:[],stage:'review',timer:null,seq:0};
+
+document.getElementById('importOpen').addEventListener('click',openImport);
+document.getElementById('importClose').addEventListener('click',()=>importDialog.close());
+document.getElementById('importDrop').addEventListener('click',()=>importFiles.click());
+importDialog.addEventListener('close',()=>{clearInterval(imp.timer);if(imp.stage==='done')loadEntries();});
+importFiles.addEventListener('change',()=>{const f=[...importFiles.files];importFiles.value='';if(f.length)addImportFiles(f);});
+document.getElementById('importClaimAll').addEventListener('change',e=>{
+  imp.rows.forEach(r=>{if(r.status!=='fail'&&r.status!=='dup')r.claim=e.target.checked;});
+  renderImport();
+});
+importBack.addEventListener('click',()=>{
+  if(imp.stage==='confirm'){setImportStage('review');return;}
+  importFiles.click();
+});
+importSave.addEventListener('click',()=>{
+  if(imp.stage==='review')setImportStage('confirm');
+  else if(imp.stage==='confirm')saveImport();
+  else if(imp.stage==='done')importDialog.close();
+});
+
+function openImport(){
+  if(addDialog.open)addDialog.close();
+  if(detailDialog.open)detailDialog.close();
+  imp={rows:[],stage:'review',timer:null,seq:0};
+  document.getElementById('importPick').hidden=false;
+  document.getElementById('importReview').hidden=true;
+  document.getElementById('importFooter').hidden=true;
+  document.getElementById('importClaimAll').checked=false;
+  importList.innerHTML='';
+  importDialog.showModal();
+}
+
+async function addImportFiles(files){
+  if(imp.stage!=='review')return;
+  document.getElementById('importPick').hidden=true;
+  document.getElementById('importReview').hidden=false;
+  document.getElementById('importFooter').hidden=false;
+  const prog=document.getElementById('importProgress');
+  importSave.disabled=true;
+  // pdf.js hanya dimuat bila perlu (fail besar).
+  const {readSetelPdf}=await import('./setel.js');
+  for(const [n,file] of files.entries()){
+    prog.textContent=`Membaca PDF ${n+1} / ${files.length}...`;
+    const parsed=await readSetelPdf(file);
+    const d=parsed.ok?parsed.data:{};
+    imp.rows.push({id:++imp.seq,file,parsed,status:parsed.ok?'new':'fail',include:parsed.ok,
+      date:d.date||'',fuel:d.fuel||'',amount:d.amount??'',claim:document.getElementById('importClaimAll').checked,
+      notes:d.notes||'',reason:'',result:null});
+  }
+  prog.textContent='Menyemak pendua...';
+  await classifyImport();
+  prog.textContent='Semak setiap resit di bawah. Betulkan jika perlu, kemudian tekan Simpan.';
+  renderImport();
+}
+
+// Pendua: (1) nombor invois sudah ada dalam sistem; (2) PDF sama dipilih
+// lebih sekali; (3) "mungkin pendua": entri lain dengan tarikh, jenis dan
+// jumlah sama (cth pernah key in manual) — tidak dimasukkan kecuali ditanda.
+async function classifyImport(){
+  const ok=imp.rows.filter(r=>r.parsed.ok);
+  const refs=[...new Set(ok.map(r=>r.parsed.data.ref))];
+  const dates=[...new Set(ok.map(r=>r.parsed.data.date))];
+  let byRef=new Map(),sameDay=[];
+  if(refs.length){
+    const [a,b]=await Promise.all([
+      sb.from('minyak_entries').select('receipt_ref,entry_date,user_email').in('receipt_ref',refs),
+      sb.from('minyak_entries').select('entry_date,fuel_type,amount,user_email,receipt_ref').in('entry_date',dates),
+    ]);
+    const err=a.error||b.error;
+    if(err){
+      for(const r of ok){r.status='fail';r.include=false;r.reason=/receipt_ref/.test(err.message)
+        ?'Database belum dikemas kini. Admin perlu run migration-minyak-setel.sql dalam Supabase.'
+        :'Gagal semak pendua: '+err.message;}
+      return;
+    }
+    byRef=new Map((a.data||[]).map(e=>[e.receipt_ref,e]));
+    sameDay=b.data||[];
+  }
+  const seen=new Set();
+  for(const r of imp.rows){
+    if(!r.parsed.ok){r.reason=r.parsed.error;continue;}
+    if(r.result)continue;
+    const d=r.parsed.data,hit=byRef.get(d.ref);
+    if(hit){r.status='dup';r.include=false;r.reason=`Sudah ada dalam sistem (${fmtDateShort(hit.entry_date)}, oleh ${hit.user_email||'?'}).`;}
+    else if(seen.has(d.ref)){r.status='dup';r.include=false;r.reason='PDF yang sama dipilih lebih sekali.';}
+    else{
+      const like=sameDay.find(e=>!e.receipt_ref&&e.entry_date===d.date&&e.fuel_type===d.fuel&&Math.abs(Number(e.amount)-d.amount)<0.005);
+      if(like&&r.status!=='maybe'){r.status='maybe';r.include=false;r.reason=`Mungkin sama dengan entri ${fmtRM(like.amount)} pada ${fmtDateShort(like.entry_date)} oleh ${like.user_email||'?'}. Tanda kotak jika ini resit berbeza.`;}
+      else if(!like){r.status='new';r.reason='';}
+    }
+    seen.add(d.ref);
+  }
+}
+
+const STATUS_CHIP={new:['Baharu','ok'],maybe:['Mungkin pendua','warn'],dup:['Pendua','bad'],fail:['Gagal baca','bad']};
+
+function renderImport(){
+  const locked=imp.stage!=='review';
+  importList.innerHTML='';
+  imp.rows.forEach(r=>{
+    const li=document.createElement('li');
+    const [chip,tone]=r.result==='ok'?['✓ Disimpan','ok']:r.result?['✗ Gagal simpan','bad']:STATUS_CHIP[r.status];
+    const canInclude=r.status==='new'||r.status==='maybe';
+    li.className=`imp-item imp-${tone}${r.include?'':' imp-off'}`;
+    const d=r.parsed.data||{};
+    const warns=[...(r.parsed.warnings||[]),r.reason,typeof r.result==='string'&&r.result!=='ok'?r.result:''].filter(Boolean);
+    li.innerHTML=`
+      <div class="imp-head">
+        <label class="imp-include"><input type="checkbox" data-k="include" ${r.include?'checked':''} ${canInclude&&!locked?'':'disabled'} />
+          <span class="imp-file">${esc(r.file.name)}</span></label>
+        <span class="imp-chip imp-chip-${tone}">${chip}</span>
+      </div>
+      ${r.parsed.ok?`
+      <div class="imp-grid">
+        <label class="imp-f"><span>Tarikh</span><input type="date" data-k="date" value="${esc(r.date)}" ${locked?'disabled':''} /></label>
+        <label class="imp-f"><span>Jenis</span><select data-k="fuel" ${locked?'disabled':''}>
+          <option value="" ${r.fuel?'':'selected'}>— Pilih —</option>
+          <option value="diesel" ${r.fuel==='diesel'?'selected':''}>Diesel</option>
+          <option value="ron95" ${r.fuel==='ron95'?'selected':''}>RON95 (Boat)</option></select></label>
+        <label class="imp-f"><span>Amount (RM)</span><input type="number" step="0.01" inputmode="decimal" data-k="amount" value="${esc(r.amount)}" ${locked?'disabled':''} /></label>
+        <label class="imp-f imp-claim"><input type="checkbox" data-k="claim" ${r.claim?'checked':''} ${locked?'disabled':''} /><span>Perlu claim</span></label>
+        <label class="imp-f imp-notes"><span>Nota</span><input type="text" data-k="notes" value="${esc(r.notes)}" ${locked?'disabled':''} /></label>
+      </div>
+      <div class="imp-meta">${esc(d.itemName||'')} · ${esc(d.time||'')}${d.gross!=null&&d.subsidy?` · Harga pam ${fmtRM(d.gross)} − subsidi ${fmtRM(d.subsidy)}`:''}</div>`:''}
+      ${warns.length?`<div class="imp-warn">${warns.map(w=>`<div>⚠ ${esc(w)}</div>`).join('')}</div>`:''}`;
+    li.querySelectorAll('[data-k]').forEach(el=>{
+      const k=el.dataset.k;
+      el.addEventListener(el.type==='checkbox'||el.tagName==='SELECT'?'change':'input',()=>{
+        r[k]=el.type==='checkbox'?el.checked:k==='amount'?(el.value===''?'':Number(el.value)):el.value;
+        if(k==='include')li.classList.toggle('imp-off',!r.include);
+        updateImportSummary();
+      });
+    });
+    importList.appendChild(li);
+  });
+  updateImportSummary();
+}
+
+function importProblems(rows){
+  const p=[];
+  rows.forEach(r=>{
+    const n=r.file.name;
+    if(!r.fuel)p.push(`${n}: pilih jenis minyak.`);
+    if(!(Number(r.amount)>0))p.push(`${n}: amount tidak sah.`);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(r.date))p.push(`${n}: tarikh tidak sah.`);
+    else if(r.date>toLocalDateStr(new Date()))p.push(`${n}: tarikh pada masa depan.`);
+  });
+  return p;
+}
+
+function updateImportSummary(){
+  const rows=imp.rows.filter(r=>r.include&&!r.result);
+  const sumBy=f=>rows.filter(r=>r.fuel===f).reduce((a,r)=>a+Number(r.amount||0),0);
+  const tot=rows.reduce((a,r)=>a+Number(r.amount||0),0);
+  const claims=rows.filter(r=>r.claim).length;
+  const skipped=imp.rows.filter(r=>!r.include&&!r.result).length;
+  const saved=imp.rows.filter(r=>r.result==='ok').length;
+  const sum=document.getElementById('importSummary');
+  const errBox=document.getElementById('importError');
+  if(imp.stage==='done'){
+    sum.innerHTML=`<strong>${saved} entri disimpan.</strong>${imp.rows.some(r=>r.result&&r.result!=='ok')?' Ada yang gagal — lihat tanda ✗.':''}`;
+    errBox.hidden=true;
+    importSave.disabled=false; importSave.textContent='Tutup';
+    importBack.hidden=true;
+    return;
+  }
+  sum.className='import-summary'+(imp.stage==='confirm'?' confirm':'');
+  sum.innerHTML=`${imp.stage==='confirm'?'<div class="imp-confirm-title">Sahkan sebelum simpan</div>':''}
+    <div><strong>${rows.length} entri</strong> · ${fmtRM(tot)}</div>
+    <div class="imp-sum-sub">Diesel ${fmtRM(sumBy('diesel'))} · RON95 ${fmtRM(sumBy('ron95'))} · ${claims} perlu claim${skipped?` · ${skipped} tidak dimasukkan`:''}</div>`;
+  const probs=importProblems(rows);
+  errBox.hidden=!probs.length;
+  errBox.innerHTML=probs.map(esc).join('<br>');
+  importBack.hidden=false;
+  importBack.textContent=imp.stage==='confirm'?'← Betulkan':'+ PDF lain';
+  if(imp.stage==='review'){
+    importSave.disabled=!rows.length||!!probs.length;
+    importSave.textContent=rows.length?`Semak & Simpan ${rows.length} entri`:'Tiada entri untuk disimpan';
+  }
+}
+
+function setImportStage(stage){
+  clearInterval(imp.timer);
+  imp.stage=stage;
+  renderImport();
+  if(stage!=='confirm')return;
+  // Kiraan undur 5 saat (macam Penyu Tracker) supaya sempat semak semula.
+  let left=5;
+  const n=imp.rows.filter(r=>r.include&&!r.result).length;
+  const tick=()=>{
+    if(left>0){importSave.disabled=true;importSave.textContent=`Sahkan (${left})`;left--;}
+    else{clearInterval(imp.timer);importSave.disabled=false;importSave.textContent=`✓ Sahkan & Simpan ${n} entri`;}
+  };
+  tick(); imp.timer=setInterval(tick,1000);
+}
+
+async function saveImport(){
+  imp.stage='saving';
+  importSave.disabled=true; importBack.hidden=true;
+  const rows=imp.rows.filter(r=>r.include&&!r.result);
+  const prog=document.getElementById('importProgress');
+  for(const [n,r] of rows.entries()){
+    importSave.textContent=`Menyimpan ${n+1} / ${rows.length}...`;
+    const d=r.parsed.data;
+    const path=`${state.currentUser.id}/setel_${d.ref}.pdf`;
+    try{
+      // upsert:false (kerani tiada kebenaran update). Fail sama dari cubaan
+      // yang gagal sebelum ini (laluan ikut nombor invois) boleh diguna semula.
+      const{error:upE}=await sb.storage.from(RECEIPT_BUCKET).upload(path,r.file,{contentType:'application/pdf'});
+      if(upE&&!/exists|duplicate/i.test(upE.message||''))throw new Error('Gagal upload PDF: '+upE.message);
+      const{error:insE}=await sb.from('minyak_entries').insert({
+        entry_date:r.date,fuel_type:r.fuel,amount:Number(r.amount),
+        needs_claim:!!r.claim,claim_status:r.claim?'pending':'not_applicable',
+        notes:r.notes.trim()||null,receipt_path:path,receipt_ref:d.ref,
+        user_id:state.currentUser.id,user_email:state.currentUser.email,
+      });
+      if(insE){
+        await sb.storage.from(RECEIPT_BUCKET).remove([path]);
+        throw new Error(insE.code==='23505'?'Pendua: resit ini baru sahaja dimasukkan oleh orang lain.':insE.message);
+      }
+      r.result='ok';
+    }catch(err){r.result=err.message||'Ralat.';}
+  }
+  imp.stage='done';
+  prog.textContent='Selesai.';
+  renderImport();
+  const ok=rows.filter(r=>r.result==='ok').length;
+  showToast(`${ok} entri Setel disimpan ✓`);
+}
+
 // ── Detail ────────────────────────────────────────
 const detailBody=document.getElementById('detailBody');
 const detailActions=document.getElementById('detailActions');

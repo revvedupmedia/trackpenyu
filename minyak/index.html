@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="Minyak" />
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
 <link rel="icon" href="icons/icon-192.png" />
-<link rel="stylesheet" href="style.css?v=9" />
+<link rel="stylesheet" href="style.css?v=10" />
 </head>
 <body>
 
@@ -150,6 +150,8 @@
       <div class="year-table" id="yearTable"></div>
     </section>
 
+    <button type="button" id="importOpen" class="import-open">📥 Import resit Setel (PDF)</button>
+
     <section class="history-section">
       <div class="history-head">
         <h2>Rekod</h2>
@@ -235,6 +237,37 @@
     </form>
   </dialog>
 
+  <!-- Import Setel Dialog -->
+  <dialog id="importDialog" class="sheet-dialog import-dialog">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head">
+      <h2>📥 Import Resit Setel</h2>
+      <button type="button" id="importClose" class="icon-btn">✕</button>
+    </div>
+    <div class="import-body">
+      <input type="file" id="importFiles" accept="application/pdf,.pdf" multiple hidden />
+      <div id="importPick">
+        <p class="admin-hint">Pilih satu atau lebih PDF resit dari app Setel. App akan baca tarikh, jenis minyak dan jumlah. <strong>Tiada apa disimpan</strong> sehingga anda semak dan sahkan.</p>
+        <div id="importDrop" class="drop-zone">
+          <div class="drop-zone-empty"><span class="drop-icon">📄</span><span>Tap untuk pilih PDF Setel</span></div>
+        </div>
+      </div>
+      <div id="importReview" hidden>
+        <div id="importProgress" class="admin-hint"></div>
+        <label class="checkbox-field import-claim-all"><input type="checkbox" id="importClaimAll" /><span>Tanda semua "Perlu claim"</span></label>
+        <ul id="importList" class="import-list"></ul>
+      </div>
+    </div>
+    <div id="importFooter" class="import-footer" hidden>
+      <div id="importSummary" class="import-summary"></div>
+      <div id="importError" class="form-error" hidden></div>
+      <div class="import-actions">
+        <button type="button" id="importBack" class="logout-btn import-secondary">+ PDF lain</button>
+        <button type="button" id="importSave" class="submit-btn">Simpan</button>
+      </div>
+    </div>
+  </dialog>
+
   <!-- Detail Dialog -->
   <dialog id="detailDialog" class="sheet-dialog">
     <div class="sheet-handle"></div>
@@ -249,6 +282,6 @@
   <div id="toast" class="toast" hidden></div>
 </div>
 
-<script type="module" src="app.js?v=9"></script>
+<script type="module" src="app.js?v=10"></script>
 </body>
 </html>
