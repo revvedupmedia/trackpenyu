@@ -12,6 +12,7 @@ const BG_BUCKET = 'app-assets';            // bucket awam Penyu, folder minyak/
 
 let state = {
   viewDate: new Date(),
+  view: 'month',       // 'month' | 'year'
   entries: [],
   selectedFuel: 'diesel',
   pendingFile: null,
@@ -254,8 +255,13 @@ document.getElementById('legacyBtn').addEventListener('click',async()=>{
 });
 
 // ── Data ──────────────────────────────────────────
+function periodRange(){
+  if(state.view==='year'){const y=state.viewDate.getFullYear();return{start:`${y}-01-01`,end:`${y}-12-31`};}
+  return monthRange(state.viewDate);
+}
+
 async function loadEntries() {
-  const {start,end}=monthRange(state.viewDate);
+  const {start,end}=periodRange();
   const {data,error}=await sb.from('minyak_entries').select('*')
     .gte('entry_date',start).lte('entry_date',end)
     .order('entry_date',{ascending:false}).order('created_at',{ascending:false});
@@ -265,8 +271,46 @@ async function loadEntries() {
 }
 
 function render(){
-  document.getElementById('monthText').textContent=`${MONTH_NAMES[state.viewDate.getMonth()]} ${state.viewDate.getFullYear()}`;
-  renderGauge(); renderStats(); renderHistory();
+  const isYear=state.view==='year';
+  document.getElementById('monthText').textContent=isYear
+    ?`${state.viewDate.getFullYear()}`
+    :`${MONTH_NAMES[state.viewDate.getMonth()]} ${state.viewDate.getFullYear()}`;
+  document.getElementById('gaugeSub').textContent=isYear?'jumlah tahun ini':'jumlah bulan ini';
+  document.getElementById('emptyTitle').textContent=isYear?'Takde rekod tahun ni':'Takde rekod bulan ni';
+  document.querySelectorAll('#viewToggle button').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view));
+  renderGauge(); renderStats(); renderYear(); renderHistory();
+}
+
+// Paparan Tahun: ringkasan setiap bulan (Diesel vs RON95). Tekan bulan => paparan Bulan.
+function renderYear(){
+  const sec=document.getElementById('yearSection');
+  sec.hidden=state.view!=='year';
+  if(sec.hidden)return;
+  const months=MONTH_NAMES.map(()=>({diesel:0,ron95:0,n:0}));
+  for(const e of state.entries){
+    const m=months[Number(e.entry_date.slice(5,7))-1];
+    m[e.fuel_type]+=Number(e.amount||0); m.n++;
+  }
+  const max=Math.max(1,...months.map(m=>m.diesel+m.ron95));
+  const table=document.getElementById('yearTable');
+  table.innerHTML='';
+  months.forEach((m,i)=>{
+    const tot=m.diesel+m.ron95;
+    const btn=document.createElement('button');
+    btn.type='button'; btn.className='year-row'+(m.n?'':' empty');
+    btn.innerHTML=`
+      <span class="yr-month">${MONTH_NAMES[i].slice(0,3)}</span>
+      <span class="yr-bar"><span class="yr-seg yr-diesel" style="width:${m.diesel/max*100}%"></span><span class="yr-seg yr-ron" style="width:${m.ron95/max*100}%"></span></span>
+      <span class="yr-total">${m.n?fmtRM(tot):'—'}</span>
+      <span class="yr-n">${m.n?`${m.n} entry`:''}</span>`;
+    btn.title=m.n?`Diesel ${fmtRM(m.diesel)} · RON95 ${fmtRM(m.ron95)}`:'';
+    btn.addEventListener('click',()=>{
+      state.view='month';
+      state.viewDate=new Date(state.viewDate.getFullYear(),i,1);
+      loadEntries();
+    });
+    table.appendChild(btn);
+  });
 }
 
 function renderGauge(){
@@ -303,7 +347,17 @@ function renderHistory(){
   if(!state.entries.length){empty.hidden=false;document.getElementById('historyCount').textContent='';return;}
   empty.hidden=true;
   document.getElementById('historyCount').textContent=`${state.entries.length} entry`;
+  let lastMonth=null;
   for(const entry of state.entries){
+    // Paparan Tahun: tajuk setiap bulan dalam senarai.
+    const mo=entry.entry_date.slice(0,7);
+    if(state.view==='year'&&mo!==lastMonth){
+      lastMonth=mo;
+      const h=document.createElement('li');
+      h.className='history-month';
+      h.textContent=`${MONTH_NAMES[Number(mo.slice(5,7))-1]} ${mo.slice(0,4)}`;
+      list.appendChild(h);
+    }
     const li=document.createElement('li');
     const isD=entry.fuel_type==='diesel';
     const isOwner=state.currentUser&&entry.user_id===state.currentUser.id;
@@ -336,9 +390,18 @@ function renderHistory(){
 document.querySelectorAll('.chev').forEach(c=>{
   c.addEventListener('click',()=>{
     const d=parseInt(c.dataset.dir,10);
-    state.viewDate=new Date(state.viewDate.getFullYear(),state.viewDate.getMonth()+d,1);
+    state.viewDate=state.view==='year'
+      ?new Date(state.viewDate.getFullYear()+d,state.viewDate.getMonth(),1)
+      :new Date(state.viewDate.getFullYear(),state.viewDate.getMonth()+d,1);
     loadEntries();
   });
+});
+
+document.getElementById('viewToggle').addEventListener('click',e=>{
+  const b=e.target.closest('button[data-view]');
+  if(!b||b.dataset.view===state.view)return;
+  state.view=b.dataset.view;
+  loadEntries();
 });
 
 // ── Add Entry ─────────────────────────────────────

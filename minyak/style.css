@@ -532,3 +532,23 @@ dialog.sheet-dialog .checkbox-field { color: rgba(255,255,255,0.85) !important; 
   dialog.sheet-dialog,.toast,.success-turtle,.login-card { animation: none; transition: none; }
   .gauge-seg { transition: none; }
 }
+
+/* ── Paparan Bulan / Tahun ────────────────────── */
+.period-ctl { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.view-toggle { display: flex; background: var(--glass-light); border: 1px solid var(--glass-border); border-radius: 999px; padding: 3px; }
+.view-toggle button { font-size: 12px; font-weight: 600; color: var(--text-soft); padding: 4px 12px; border-radius: 999px; }
+.view-toggle button.active { background: var(--primary); color: #fff; }
+
+.year-section { margin-top: 20px; }
+.year-table { display: flex; flex-direction: column; gap: 4px; background: var(--glass-dark); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: 1px solid var(--glass-border); border-radius: var(--r-md); padding: 8px; }
+.year-row { display: grid; grid-template-columns: 36px 1fr auto; grid-template-areas: "m bar total" "m bar n"; column-gap: 12px; align-items: center; text-align: left; padding: 8px 10px; border-radius: var(--r-sm); color: var(--text); }
+.year-row:hover { background: var(--glass-light); }
+.year-row.empty { opacity: .45; }
+.yr-month { grid-area: m; font-size: 13px; font-weight: 600; }
+.yr-bar { grid-area: bar; display: flex; height: 10px; border-radius: 999px; background: var(--glass-light); overflow: hidden; }
+.yr-seg { height: 100%; }
+.yr-diesel { background: #2AEAEA; }
+.yr-ron { background: #2AEA8A; }
+.yr-total { grid-area: total; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.yr-n { grid-area: n; font-size: 11px; color: var(--text-muted); text-align: right; }
+.history-month { font-size: 12px; font-weight: 700; color: var(--text-soft); text-transform: uppercase; letter-spacing: .06em; padding: 10px 4px 2px; }

@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="Minyak" />
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
 <link rel="icon" href="icons/icon-192.png" />
-<link rel="stylesheet" href="style.css?v=7" />
+<link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
 
@@ -80,10 +80,16 @@
         <span class="brand-name">Minyak Tracker</span>
         <span id="adminBadge" class="admin-badge" hidden>ADMIN</span>
       </div>
-      <div class="month-switcher">
-        <button type="button" class="chev" data-dir="-1">‹</button>
-        <span id="monthText">Jul 2026</span>
-        <button type="button" class="chev" data-dir="1">›</button>
+      <div class="period-ctl">
+        <div class="view-toggle" id="viewToggle">
+          <button type="button" data-view="month" class="active">Bulan</button>
+          <button type="button" data-view="year">Tahun</button>
+        </div>
+        <div class="month-switcher">
+          <button type="button" class="chev" data-dir="-1">‹</button>
+          <span id="monthText">Jul 2026</span>
+          <button type="button" class="chev" data-dir="1">›</button>
+        </div>
       </div>
     </div>
     <div class="user-bar">
@@ -106,7 +112,7 @@
         </svg>
         <div class="gauge-center">
           <div class="gauge-total" id="gaugeTotal">RM0</div>
-          <div class="gauge-sub">jumlah bulan ini</div>
+          <div class="gauge-sub" id="gaugeSub">jumlah bulan ini</div>
         </div>
       </div>
       <div class="legend">
@@ -132,6 +138,14 @@
       </div>
     </section>
 
+    <section class="year-section" id="yearSection" hidden>
+      <div class="history-head">
+        <h2>Ikut Bulan</h2>
+        <span class="history-count">Tekan bulan untuk butiran</span>
+      </div>
+      <div class="year-table" id="yearTable"></div>
+    </section>
+
     <section class="history-section">
       <div class="history-head">
         <h2>Rekod</h2>
@@ -139,7 +153,7 @@
       </div>
       <div id="emptyState" class="empty-state" hidden>
         <div class="empty-icon">🐢</div>
-        <p class="empty-title">Takde rekod bulan ni</p>
+        <p class="empty-title" id="emptyTitle">Takde rekod bulan ni</p>
         <p class="empty-sub">Tekan + untuk tambah entry pertama.</p>
       </div>
       <ul id="historyList" class="history-list"></ul>
@@ -231,6 +245,6 @@
   <div id="toast" class="toast" hidden></div>
 </div>
 
-<script type="module" src="app.js?v=7"></script>
+<script type="module" src="app.js?v=8"></script>
 </body>
 </html>
