@@ -2,21 +2,28 @@
 <html lang="ms">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Log Masuk · Portal LPP</title>
 <link rel="manifest" href="manifest.json" />
 <link rel="icon" href="assets/icon-192.png" />
 <meta name="theme-color" content="#0A1F2B" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <script>try { document.documentElement.classList.add(localStorage.getItem('penyu-theme') || 'dark') } catch { document.documentElement.classList.add('dark') }</script>
 <link rel="stylesheet" href="shared/portal.css" />
 <style>
-  main { min-height: calc(100vh - 80px); display: grid; align-content: center; padding: 16px 0 48px; }
-  .head { text-align: center; margin-bottom: 20px; }
-  .head img { width: 72px; height: 72px; margin: 0 auto 12px; border-radius: 18px; object-fit: contain; }
-  .head h1 { font-size: 26px; }
-  .head p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+  main { min-height: calc(100svh - 80px); display: grid; align-content: center; padding: 8px 0 48px; }
+  .card { padding: 30px 24px 26px; border-radius: 28px; }
+  .head { text-align: center; margin-bottom: 24px; }
+  .head img { width: 92px; height: 92px; margin: 0 auto 16px; border-radius: 26px; object-fit: contain; background: #fff; box-shadow: 0 14px 40px rgba(0,0,0,.45), 0 0 60px rgba(110,231,183,.15); }
+  .head .eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .28em; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+  .head h1 { font-size: clamp(30px, 8vw, 38px); line-height: 1.05; letter-spacing: -.03em; }
+  .head p { margin: 8px 0 0; color: var(--muted); font-size: 15px; }
+  #view .btn-primary { min-height: 54px; font-size: 17px; border-radius: 16px; box-shadow: 0 12px 32px rgba(110,231,183,.25); }
+  #view input { min-height: 52px; }
+  .bg-video { filter: blur(3px) saturate(1.1); transform: scale(1.04); }
+  .bg-tint { background: radial-gradient(ellipse at 50% 40%, rgba(10,31,43,.6), rgba(10,31,43,.93) 75%); }
+  html.light .bg-tint { background: radial-gradient(ellipse at 50% 40%, rgba(237,227,207,.6), rgba(237,227,207,.94) 75%); }
 </style>
 </head>
 <body>
@@ -48,6 +55,7 @@ const resetRedirectUrl = () => ROOT + 'login.html'
 const head = (title, sub) => `
   <div class="head">
     <img src="assets/logo.png" alt="" onerror="this.remove()" />
+    <div class="eyebrow">Portal LPP</div>
     <h1>${title}</h1>${sub ? `<p>${sub}</p>` : ''}
   </div>`
 
