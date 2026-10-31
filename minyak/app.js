@@ -346,14 +346,25 @@ function render(){
   renderGauge(); renderStats(); renderYear(); renderHistory();
 }
 
-// Kad muncul satu demi satu: 30ms antara kad, maksimum ~0.45s supaya senarai
-// panjang pun cepat siap. Hanya transform + opacity (licin di telefon).
+// Kad muncul bila masuk ke skrin semasa scroll. Kad yang masuk serentak
+// muncul berturutan (90ms antara satu sama lain). Hanya transform + opacity.
 const REDUCED_MOTION=matchMedia('(prefers-reduced-motion: reduce)').matches;
 let animSeq=0;
+const revealer=REDUCED_MOTION?null:new IntersectionObserver(items=>{
+  items.filter(i=>i.isIntersecting)
+    .sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top)
+    .forEach((i,n)=>{
+      i.target.style.setProperty('--d',`${Math.min(n,6)*90}ms`);
+      i.target.classList.add('in');
+      revealer.unobserve(i.target);
+    });
+},{rootMargin:'0px 0px -6% 0px',threshold:0.12});
 function animIn(el){
-  if(REDUCED_MOTION)return;
-  el.style.setProperty('--d',`${Math.min(animSeq++,15)*30}ms`);
-  el.classList.remove('card-in'); void el.offsetWidth; el.classList.add('card-in');
+  if(!revealer)return;
+  revealer.unobserve(el);
+  el.classList.remove('in');
+  el.classList.add('reveal');
+  revealer.observe(el);
 }
 
 // Jumlah RM naik dari 0 (kira naik) bersama lukisan gauge.
