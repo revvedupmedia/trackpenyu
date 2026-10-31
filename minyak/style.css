@@ -202,8 +202,8 @@ input  { font-family: inherit; }
 .gauge-svg  { width: 100%; height: auto; display: block; }
 .gauge-track  { fill:none; stroke:rgba(255,255,255,0.12); stroke-width:14; stroke-linecap:round; }
 .gauge-seg    { fill:none; stroke-width:14; stroke-linecap:round; transition:stroke-dasharray .6s cubic-bezier(.4,0,.2,1); }
-.gauge-diesel { stroke: #E8F5F5; }
-.gauge-ron    { stroke: rgba(255,255,255,0.5); }
+.gauge-diesel { stroke: var(--c-diesel); }
+.gauge-ron    { stroke: var(--c-ron); }
 .gauge-center { position:absolute; left:50%; bottom:4px; transform:translateX(-50%); text-align:center; }
 .gauge-total  { font-family:var(--font-mono); font-size:clamp(20px,5vw,26px); font-weight:700; letter-spacing:-.02em; }
 .gauge-sub    { font-size:11px; color:rgba(255,255,255,0.6); margin-top:1px; }
@@ -547,8 +547,8 @@ dialog.sheet-dialog .checkbox-field { color: rgba(255,255,255,0.85) !important; 
 .yr-month { grid-area: m; font-size: 13px; font-weight: 600; }
 .yr-bar { grid-area: bar; display: flex; height: 10px; border-radius: 999px; background: var(--glass-light); overflow: hidden; }
 .yr-seg { height: 100%; }
-.yr-diesel { background: #2AEAEA; }
-.yr-ron { background: #2AEA8A; }
+.yr-diesel { background: var(--c-diesel); }
+.yr-ron { background: var(--c-ron); }
 .yr-total { grid-area: total; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
 .yr-n { grid-area: n; font-size: 11px; color: var(--text-muted); text-align: right; }
 .history-month { font-size: 12px; font-weight: 700; color: var(--text-soft); text-transform: uppercase; letter-spacing: .06em; padding: 10px 4px 2px; }
@@ -644,3 +644,23 @@ dialog.sheet-dialog .checkbox-field { color: rgba(255,255,255,0.85) !important; 
 .chk-actions .logout-btn { padding: 7px 12px; font-size: 12px; }
 .check-h3 { font-size: 13px; font-weight: 700; color: rgba(255,255,255,.75); margin: 18px 0 8px; }
 .imp-off-soft { opacity: .75; padding: 6px; }
+
+/* ── Warna jenis minyak (sama di kad, gauge, bar) & penapis ── */
+:root { --c-diesel: #2AEAEA; --c-ron: #2AEA8A; }
+.history-item.fuel-diesel { --fc: 42,234,234; }
+.history-item.fuel-ron { --fc: 42,234,138; }
+.history-item.fuel-diesel, .history-item.fuel-ron {
+  border-left: 4px solid rgb(var(--fc));
+  background: linear-gradient(90deg, rgba(var(--fc),.16), rgba(var(--fc),0) 65%), var(--glass-dark);
+}
+.history-item.fuel-diesel .h-fuel-badge, .history-item.fuel-ron .h-fuel-badge { background: rgba(var(--fc),.2); box-shadow: inset 0 0 0 1px rgba(var(--fc),.45); }
+.history-item.fuel-diesel .h-fuel-name, .history-item.fuel-ron .h-fuel-name { color: rgb(var(--fc)) !important; }
+.gauge-seg { transition: opacity .3s ease; }
+.gauge-seg.dim, .legend-item.dim { opacity: .22; }
+.legend-item { transition: opacity .3s ease; }
+
+.fuel-filter { display: flex; gap: 6px; margin: 14px 0 2px; padding: 4px; border-radius: 999px; background: var(--glass-dark); border: 1px solid var(--glass-border); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); }
+.fuel-filter button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 6px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--text-soft); white-space: nowrap; transition: background .2s, color .2s; }
+.fuel-filter button.active { background: rgba(255,255,255,.12); color: #fff; }
+.fuel-filter button[data-f=diesel].active { background: rgba(42,234,234,.2); color: var(--c-diesel); }
+.fuel-filter button[data-f=ron95].active { background: rgba(42,234,138,.2); color: var(--c-ron); }

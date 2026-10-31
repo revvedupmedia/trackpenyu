@@ -21,7 +21,12 @@ let state = {
   pendingBgFile: null,
   semakan: false,       // lajur migration-minyak-semakan.sql wujud?
   dupConfirmKey: null,  // entri manual: pendua yang pengguna sudah sahkan "berbeza"
+  fuelFilter: (()=>{try{return localStorage.getItem('minyak-fuel-filter')||'all'}catch{return 'all'}})(),
 };
+
+// Entri ikut penapis jenis minyak (Semua / Diesel / RON95).
+const shown=()=>state.fuelFilter==='all'?state.entries:state.entries.filter(e=>e.fuel_type===state.fuelFilter);
+const FUEL_NAME={diesel:'Diesel',ron95:'RON95'};
 
 // ── Helpers ──────────────────────────────────────
 function toLocalDateStr(d) {
@@ -341,6 +346,8 @@ function render(){
   document.getElementById('gaugeSub').textContent=isYear?'jumlah tahun ini':'jumlah bulan ini';
   document.getElementById('emptyTitle').textContent=isYear?'Takde rekod tahun ni':'Takde rekod bulan ni';
   document.querySelectorAll('#viewToggle button').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view));
+  document.querySelectorAll('#fuelFilter button').forEach(b=>b.classList.toggle('active',b.dataset.f===state.fuelFilter));
+  document.getElementById('emptyTitle').textContent=(state.fuelFilter==='all'?'Takde rekod':`Takde rekod ${FUEL_NAME[state.fuelFilter]}`)+(isYear?' tahun ni':' bulan ni');
   animSeq=0;
   document.querySelectorAll('.hero-card, .stat-card, .import-open').forEach(animIn);
   renderGauge(); renderStats(); renderYear(); renderHistory();
@@ -401,7 +408,7 @@ function renderYear(){
   sec.hidden=state.view!=='year';
   if(sec.hidden)return;
   const months=MONTH_NAMES.map(()=>({diesel:0,ron95:0,n:0}));
-  for(const e of state.entries){
+  for(const e of shown()){
     const m=months[Number(e.entry_date.slice(5,7))-1];
     m[e.fuel_type]+=Number(e.amount||0); m.n++;
   }
@@ -428,8 +435,12 @@ function renderYear(){
 }
 
 function renderGauge(){
-  const dT=sum('diesel'),rT=sum('ron95'),tot=dT+rT;
-  countUp(document.getElementById('gaugeTotal'),tot);
+  const dT=sum('diesel'),rT=sum('ron95'),tot=dT+rT,f=state.fuelFilter;
+  countUp(document.getElementById('gaugeTotal'),f==='all'?tot:sum(f));
+  document.getElementById('gaugeSub').textContent=`${f==='all'?'jumlah':FUEL_NAME[f]} ${state.view==='year'?'tahun':'bulan'} ini`;
+  document.getElementById('gaugeDiesel').classList.toggle('dim',f==='ron95');
+  document.getElementById('gaugeRon').classList.toggle('dim',f==='diesel');
+  document.querySelectorAll('.legend-item').forEach((el,i)=>el.classList.toggle('dim',f!=='all'&&f!==(i?'ron95':'diesel')));
   document.getElementById('dieselTotal').textContent=fmtRM(dT);
   document.getElementById('ronTotal').textContent=fmtRM(rT);
   const cx=120,cy=130,r=90;
@@ -450,9 +461,9 @@ function arc(cx,cy,r,sa,ea){
 }
 
 function renderStats(){
-  const km=state.entries.reduce((a,e)=>a+Number(e.distance_km||0),0);
+  const km=shown().reduce((a,e)=>a+Number(e.distance_km||0),0);
   document.getElementById('statMileage').innerHTML=`${fmtKm(km)} <span class="unit">km</span>`;
-  const pend=state.entries.filter(e=>e.needs_claim&&e.claim_status==='pending').reduce((a,e)=>a+Number(e.amount||0),0);
+  const pend=shown().filter(e=>e.needs_claim&&e.claim_status==='pending').reduce((a,e)=>a+Number(e.amount||0),0);
   document.getElementById('statPending').textContent=fmtRM(pend);
 }
 
@@ -460,11 +471,12 @@ function renderHistory(){
   const list=document.getElementById('historyList');
   const empty=document.getElementById('emptyState');
   forget(list);
-  if(!state.entries.length){empty.hidden=false;document.getElementById('historyCount').textContent='';return;}
+  const rows=shown();
+  if(!rows.length){empty.hidden=false;document.getElementById('historyCount').textContent='';return;}
   empty.hidden=true;
-  document.getElementById('historyCount').textContent=`${state.entries.length} entry`;
+  document.getElementById('historyCount').textContent=`${rows.length} entry`;
   let lastMonth=null;
-  for(const entry of state.entries){
+  for(const entry of rows){
     // Paparan Tahun: tajuk setiap bulan dalam senarai.
     const mo=entry.entry_date.slice(0,7);
     if(state.view==='year'&&mo!==lastMonth){
@@ -481,7 +493,7 @@ function renderHistory(){
     const clH=entry.needs_claim?`<span class="h-claim-pill ${entry.claim_status==='claimed'?'claimed':'pending'}">${entry.claim_status==='claimed'?'Dah Claim':'Pending'}</span>`:'';
     const recH=(entry.receipt_path||entry.receipt_url)?'<span class="h-receipt-dot">📎</span>':'';
     const btn=document.createElement('button');
-    btn.type='button'; btn.className='history-item';
+    btn.type='button'; btn.className=`history-item fuel-${isD?'diesel':'ron'}`;
     btn.innerHTML=`
       <div class="h-fuel-badge ${isD?'diesel':'ron'}">${isD?'🚗':'🚤'}</div>
       <div class="h-main">
@@ -511,6 +523,14 @@ document.querySelectorAll('.chev').forEach(c=>{
       :new Date(state.viewDate.getFullYear(),state.viewDate.getMonth()+d,1);
     loadEntries();
   });
+});
+
+document.getElementById('fuelFilter').addEventListener('click',e=>{
+  const b=e.target.closest('button[data-f]');
+  if(!b||b.dataset.f===state.fuelFilter)return;
+  state.fuelFilter=b.dataset.f;
+  try{localStorage.setItem('minyak-fuel-filter',state.fuelFilter)}catch{}
+  render();
 });
 
 document.getElementById('viewToggle').addEventListener('click',e=>{

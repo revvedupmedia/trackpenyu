@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="Minyak" />
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
 <link rel="icon" href="icons/icon-192.png" />
-<link rel="stylesheet" href="style.css?v=14" />
+<link rel="stylesheet" href="style.css?v=15" />
 </head>
 <body>
 
@@ -130,6 +130,12 @@
         </div>
       </div>
     </section>
+
+    <div class="fuel-filter" id="fuelFilter" role="group" aria-label="Tapis jenis minyak">
+      <button type="button" data-f="all" class="active">Semua</button>
+      <button type="button" data-f="diesel"><span class="dot dot-diesel"></span> Diesel</button>
+      <button type="button" data-f="ron95"><span class="dot dot-ron"></span> RON95 (Boat)</button>
+    </div>
 
     <section class="stat-grid">
       <div class="stat-card">
@@ -303,6 +309,6 @@
   <div id="toast" class="toast" hidden></div>
 </div>
 
-<script type="module" src="app.js?v=14"></script>
+<script type="module" src="app.js?v=15"></script>
 </body>
 </html>
