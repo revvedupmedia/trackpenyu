@@ -14,10 +14,10 @@
 <meta name="apple-mobile-web-app-title" content="Penyu Tracker" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@600&display=swap" rel="stylesheet" />
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+<!-- Library disimpan dalam repo (vendor/) dengan versi tetap. Lihat vendor/README.md. -->
+<script src="../vendor/chartjs-4.4.4/chart.umd.js"></script>
+<script src="../vendor/sheetjs-0.20.3/xlsx.full.min.js"></script>
+<script src="../vendor/pptxgenjs-3.12.0/pptxgen.bundle.js"></script>
 <style>
   :root { --text-color:#F7F2E7; --text-outline:#061319; }
   html.dark { color-scheme: dark; }
@@ -192,6 +192,8 @@
   .stagger > *:nth-child(7) { animation-delay:.39s; }
   .stagger > *:nth-child(8) { animation-delay:.45s; }
 </style>
+<!-- Selepas <style> di atas, sama kedudukan dengan Tailwind CDN dahulu (utiliti menang). -->
+<link rel="stylesheet" href="tailwind.css" />
 </head>
 <body class="dark">
 <video id="bgvideo" autoplay muted loop playsinline></video>
@@ -1661,6 +1663,12 @@ function destroyCharts() { chartInstances.forEach(c => c.destroy()); chartInstan
 // Lets hover/touch trigger the tooltip anywhere along a column, not just
 // exactly on top of a point/bar — much easier to hit with a finger.
 const CHART_INTERACTION = { mode: 'index', intersect: false }
+// Kad masuk dengan animasi skala (.screen); carta yang dicipta semasa animasi
+// diukur sedikit kecil. Ukur semula semua carta bila animasi kad tamat.
+document.addEventListener('animationend', (e) => {
+  if (!e.target.classList || !e.target.classList.contains('screen') && !e.target.closest('.stagger')) return
+  if (window.Chart) Object.values(Chart.instances).forEach(c => c.resize())
+})
 
 // Vertical line that follows the active (hovered/touched) point so the
 // eye has something to track across the chart, mouse or finger alike.
@@ -3845,9 +3853,9 @@ async function loadJSZip() {
   if (window.JSZip) return window.JSZip
   await new Promise((resolve, reject) => {
     const s = document.createElement('script')
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'
+    s.src = '../vendor/jszip-3.10.1/jszip.min.js'
     s.onload = resolve
-    s.onerror = () => reject(new Error('Gagal muat JSZip — semak internet'))
+    s.onerror = () => reject(new Error('Gagal muat JSZip'))
     document.head.appendChild(s)
   })
   return window.JSZip

@@ -8,7 +8,7 @@ Landing (index.html) → Log masuk (login.html) → Portal (portal.html) → Pen
 ```
 
 Setiap halaman ialah fail HTML sendiri. Tiada npm dan tiada build step.
-Library dimuat dari CDN, data disimpan dalam **satu** projek Supabase, dan
+Library disimpan dalam repo (`vendor/`, versi tetap), data disimpan dalam **satu** projek Supabase, dan
 laman di-host di GitHub Pages. Deploy dengan push ke GitHub sahaja.
 
 ## Aplikasi & akses
@@ -82,7 +82,8 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
 | `shared/portal.css` | Gaya landing, login dan portal |
 | `penyu/` | Penyu Tracker (`index.html`, `manifest.json`) |
 | `minyak/` | Minyak Tracker (`index.html`, `app.js`, `setel.js`, `style.css`, `manifest.json`, `icons/`) |
-| `vendor/` | Library pihak ketiga yang disimpan dalam repo dengan versi tetap (pdf.js 4.10.38) |
+| `vendor/` | Semua library pihak ketiga, versi tetap (lihat `vendor/README.md` untuk versi & cara kemas kini) |
+| `penyu/tailwind.css` | CSS Tailwind statik untuk Penyu (bina semula selepas tambah kelas baharu) |
 | `sw.js` | Satu service worker untuk seluruh laman (network-first) |
 | `manifest.json` | PWA portal (setiap app juga ada manifest sendiri) |
 | `schema.sql`, `migration-*.sql`, `fix-*.sql` | Struktur database Supabase |

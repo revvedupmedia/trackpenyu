@@ -1,6 +1,7 @@
 // Dikongsi oleh semua halaman: landing, login, portal dan setiap app.
 // Satu projek Supabase = satu login untuk semua app.
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// Disimpan dalam repo dengan versi tetap (vendor/README.md), bukan dari CDN.
+import { createClient } from '../vendor/supabase-js-2.117.3/supabase-js.min.mjs'
 
 export const SUPABASE_URL = 'https://oatbghgoxedccxdjwalt.supabase.co'
 const SUPABASE_ANON_KEY = 'sb_publishable_gQIBBbRniU3ixnV8eCDuYw_LeWpu0jK'
