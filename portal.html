@@ -17,6 +17,12 @@
   .greet h1 { font-size: clamp(28px, 5vw, 40px); }
   .greet p { margin: 6px 0 0; color: var(--muted); }
   .actions { display: flex; gap: 8px; align-items: center; }
+  .admin-zone { margin-top: 36px; }
+  .admin-zone h2 { font-size: 24px; margin-bottom: 14px; }
+  .admin-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .admin-grid h3 { font-size: 19px; margin-bottom: 6px; }
+  .err-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; }
+  .err-list li { display: flex; flex-direction: column; gap: 2px; font-size: 13px; padding: 8px 10px; border-radius: 10px; background: rgba(0,0,0,.18); word-break: break-word; }
 </style>
 </head>
 <body>
@@ -39,11 +45,31 @@
     </section>
     <div id="notice" class="msg msg-err" hidden></div>
     <div class="app-grid rise" id="apps"></div>
+
+    <section id="adminZone" class="admin-zone" hidden>
+      <h2>🛠 Pentadbiran</h2>
+      <div class="admin-grid">
+        <div class="card">
+          <h3>💾 Backup Data</h3>
+          <p class="muted small">Muat turun semua jadual database (Excel untuk dibaca + JSON lengkap) dalam satu fail ZIP. Simpan di Google Drive atau komputer pejabat. Gambar resit tidak termasuk.</p>
+          <div id="backupStatus" class="msg" hidden></div>
+          <button class="btn btn-primary btn-block" id="backupBtn">Muat Turun Backup</button>
+          <p class="small muted" id="backupProgress" style="margin:8px 0 0"></p>
+        </div>
+        <div class="card">
+          <h3>🐞 Log Ralat</h3>
+          <p class="muted small">Ralat yang berlaku pada telefon atau komputer staf, 30 terkini.</p>
+          <ul id="errList" class="err-list"><li class="muted small">Memuatkan...</li></ul>
+        </div>
+      </div>
+    </section>
   </main>
+  <footer class="center small muted" style="padding:28px 0 24px" id="ver"></footer>
 </div>
 
 <script type="module">
-import { currentUser, appsFor, APPS, loginUrl, logout, ROOT } from './shared/auth.js'
+import { supabase, currentUser, appsFor, APPS, loginUrl, logout, ROOT, APP_VERSION, startIdleWatch } from './shared/auth.js'
+document.getElementById('ver').textContent = `Portal LPP · versi ${APP_VERSION}`
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 const ROLE_LABEL = { staff: 'Staf', kerani: 'Kerani', admin: 'Admin' }
@@ -62,9 +88,11 @@ themeBtn.onclick = () => {
 }
 setThemeIcon()
 
-const { user, profile } = await currentUser()
+const { user, profile, mfaPending } = await currentUser()
 if (!user) location.replace(loginUrl())
+else if (mfaPending) location.replace(loginUrl('', 'mfa=1'))
 else {
+  startIdleWatch()
   const main = document.getElementById('main')
   const notice = document.getElementById('notice')
   main.hidden = false
@@ -96,7 +124,98 @@ else {
           <span class="app-go">Buka →</span>
         </a>`).join('')
       : '<div class="card muted">Tiada aplikasi untuk peranan akaun anda.</div>'
+    if (profile.role === 'admin') setupAdmin()
   }
+}
+
+// ---------- Pentadbiran (admin sahaja; RLS juga hadkan kepada admin) ----------
+// Semua jadual app. Jadual yang tiada/tidak boleh dibaca dilangkau dan dicatat.
+const BACKUP_TABLES = ['staff_profiles','daily_entries','nest_records','monthly_summaries','monthly_hatch',
+  'monthly_targets','targets','minyak_entries','minyak_settings','app_settings','notification_rules',
+  'import_log','import_undo','login_log','daily_entries_audit','nest_records_audit','minyak_entries_audit','client_errors']
+
+function loadScript(src) {
+  return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('Gagal muat ' + src)); document.head.appendChild(s) })
+}
+async function fetchAll(table) {
+  const out = []
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.from(table).select('*').range(from, from + 999)
+    if (error) throw error
+    out.push(...data)
+    if (data.length < 1000) return out
+  }
+}
+const daysAgo = (iso) => Math.floor((Date.now() - new Date(iso)) / 864e5)
+
+async function setupAdmin() {
+  document.getElementById('adminZone').hidden = false
+  const status = document.getElementById('backupStatus')
+  const showLast = async () => {
+    const { data } = await supabase.from('app_settings').select('value').eq('key', 'last_backup').maybeSingle()
+    const last = data?.value
+    const d = last?.at ? daysAgo(last.at) : null
+    status.hidden = false
+    status.className = 'msg ' + (d === null || d > 30 ? 'msg-err' : 'msg-ok')
+    status.innerHTML = d === null ? '⚠️ Belum pernah backup.'
+      : `${d > 30 ? '⚠️ ' : '✓ '}Backup terakhir ${d === 0 ? 'hari ini' : d + ' hari lalu'} oleh ${esc(last.by || '?')} (${(last.rows || 0).toLocaleString()} baris).${d > 30 ? ' Disyorkan sebulan sekali.' : ''}`
+  }
+  showLast()
+
+  const btn = document.getElementById('backupBtn'), prog = document.getElementById('backupProgress')
+  btn.onclick = async () => {
+    btn.disabled = true
+    try {
+      prog.textContent = 'Memuat alat...'
+      if (!window.XLSX) await loadScript('vendor/sheetjs-0.20.3/xlsx.full.min.js')
+      if (!window.JSZip) await loadScript('vendor/jszip-3.10.1/jszip.min.js')
+      const dump = {}, info = [['Jadual', 'Bilangan baris', 'Catatan']]
+      let rows = 0
+      for (const [i, t] of BACKUP_TABLES.entries()) {
+        prog.textContent = `Membaca ${t} (${i + 1}/${BACKUP_TABLES.length})...`
+        try { dump[t] = await fetchAll(t); rows += dump[t].length; info.push([t, dump[t].length, '']) }
+        catch (e) { info.push([t, 0, 'Dilangkau: ' + (e.message || e)]) }
+      }
+      prog.textContent = 'Membina fail...'
+      const stamp = new Date()
+      const meta = { app: 'Portal LPP', version: APP_VERSION, created_at: stamp.toISOString(), created_by: user.email, tables: info.slice(1) }
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Backup Portal LPP'], ['Dijana', stamp.toLocaleString('ms-MY')], ['Oleh', user.email], ['Versi app', APP_VERSION], [], ...info]), 'Maklumat')
+      // Excel untuk dibaca; JSON = salinan lengkap (sel Excel dihadkan 32,767 aksara).
+      const cell = (v) => v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v).slice(0, 32000) : v
+      for (const [t, data] of Object.entries(dump)) {
+        const cols = [...new Set(data.flatMap(r => Object.keys(r)))]
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([cols, ...data.map(r => cols.map(c => cell(r[c])))]), t.slice(0, 31))
+      }
+      const tag = stamp.toISOString().slice(0, 10)
+      const zip = new JSZip()
+      zip.file(`backup-${tag}.json`, JSON.stringify({ meta, data: dump }, null, 1))
+      zip.file(`backup-${tag}.xlsx`, XLSX.write(wb, { type: 'array', bookType: 'xlsx' }))
+      zip.file('BACA-SAYA.txt', `Backup Portal LPP ${stamp.toLocaleString('ms-MY')} oleh ${user.email}\n\n` +
+        `backup-${tag}.xlsx : semua jadual, satu sheet setiap jadual (untuk dibaca)\n` +
+        `backup-${tag}.json : salinan lengkap data (untuk dipulihkan oleh pentadbir sistem)\n\n` +
+        `Struktur database: schema-snapshot-*.sql dalam repo GitHub.\nGambar resit TIDAK termasuk (ada dalam Supabase Storage).\n`)
+      const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob); a.download = `Backup_PortalLPP_${tag}.zip`
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(a.href), 60e3)
+      await supabase.from('app_settings').upsert({ key: 'last_backup', value: { at: stamp.toISOString(), by: user.email, rows } }, { onConflict: 'key' })
+      prog.textContent = `Siap: ${rows.toLocaleString()} baris, ${(blob.size / 1048576).toFixed(1)} MB.`
+      showLast()
+    } catch (e) {
+      prog.textContent = 'Gagal: ' + (e.message || e)
+    } finally { btn.disabled = false }
+  }
+
+  const list = document.getElementById('errList')
+  const { data: errs, error } = await supabase.from('client_errors').select('*').order('created_at', { ascending: false }).limit(30)
+  if (error) { list.innerHTML = `<li class="muted small">${/client_errors/.test(error.message) ? 'Belum dipasang: run migration-log-ralat.sql dalam Supabase.' : esc(error.message)}</li>`; return }
+  if (!errs.length) { list.innerHTML = '<li class="small">✓ Tiada ralat direkod.</li>'; return }
+  const ids = [...new Set(errs.map(e => e.user_id).filter(Boolean))]
+  const { data: people } = await supabase.from('staff_profiles').select('id,full_name').in('id', ids)
+  const who = new Map((people || []).map(p => [p.id, p.full_name]))
+  list.innerHTML = errs.map(e => `<li><b>${esc(e.message)}</b><span class="small muted">${esc(e.page || '')} · ${esc(who.get(e.user_id) || '?')} · ${new Date(e.created_at).toLocaleString('ms-MY', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · v${esc(e.app_version || '?')}</span></li>`).join('')
 }
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {})

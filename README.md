@@ -77,8 +77,31 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
 - Kerani boleh ubah/padam entri sendiri; admin boleh ubah/padam semua.
 - Resit disimpan dalam bucket **private** `minyak-receipts` dan dibuka guna
   pautan sementara (1 jam).
-- **Admin** (butang ⚙️): video latar, dan **Pindah Resit Lama** dari folder
-  backup storage atau terus dari projek Supabase lama.
+- **⬇ Excel**: eksport rekod tempoh semasa (bulan/tahun & penapis) dengan
+  sheet Ringkasan ikut bulan dan sheet Rekod, sedia untuk proses claim.
+- Gambar resit dari kamera dikecilkan sebelum upload (sisi panjang 2000px,
+  JPEG 85%; ~3–5 MB → ~150–500 KB, teks kekal jelas). PDF tidak diubah.
+- **Admin** (butang ⚙️): video latar, **📜 Log Perubahan** (siapa tambah,
+  ubah, padam atau pulihkan entri), dan **Pindah Resit Lama**.
+
+### Portal: Pentadbiran (admin sahaja)
+
+- **💾 Backup Data**: satu fail ZIP mengandungi semua jadual dalam Excel
+  (untuk dibaca) dan JSON (salinan lengkap). Portal ingatkan jika backup
+  terakhir lebih 30 hari. Gambar resit tidak termasuk.
+- **🐞 Log Ralat**: ralat JavaScript dari peranti staf (30 terkini).
+
+### Keselamatan
+
+- **MFA admin**: akaun admin perlu kod 6 digit dari app Authenticator
+  (Google/Microsoft Authenticator, percuma) selepas kata laluan. Kali pertama,
+  app tunjuk kod QR untuk didaftarkan. Tetapan: `MFA_WAJIB_ADMIN` dalam
+  `shared/auth.js`. **Hilang telefon:** admin lain buang faktor MFA akaun itu di
+  Supabase → Authentication → Users → (pengguna) → MFA, kemudian pengguna
+  daftar semula semasa log masuk. Sebab itu, sekurang-kurangnya 2 admin.
+- **Log keluar automatik** selepas 30 minit tanpa aktiviti (amaran 1 minit
+  sebelum). Tetapan: `IDLE_MINUTES` dalam `shared/auth.js`.
+- Nombor versi app: `APP_VERSION` dalam `shared/auth.js` (naikkan setiap deploy).
 
 ## Struktur fail
 
@@ -108,6 +131,11 @@ migration yang lebih baru daripada snapshot itu:
 
 1. `schema-snapshot-2026-10-31.sql` — struktur lengkap database sebenar
 2. `migration-fix-audit-dan-akses.sql`
+3. `migration-minyak-audit.sql` — Log Perubahan Minyak
+4. `migration-log-ralat.sql` — Log Ralat
+5. `migration-mfa-admin-wajib.sql` — **hanya selepas semua admin sudah
+   sediakan app Authenticator**: database sendiri hanya beri kuasa admin
+   kepada sesi yang lepasi MFA
 
 Fail `schema.sql`, `migration-*.sql` dan `fix-*.sql` yang lain ialah
 **sejarah** perubahan. Ia tidak lengkap (beberapa jadual & fungsi dahulu

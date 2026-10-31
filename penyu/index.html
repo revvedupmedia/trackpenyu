@@ -219,7 +219,7 @@
 
 <script type="module">
 // Login, lupa kata laluan & reset kini di ../login.html (dikongsi semua app).
-import { supabase, requireApp, appsFor, logout as portalLogout } from '../shared/auth.js'
+import { supabase, requireApp, appsFor, logout as portalLogout, APP_VERSION } from '../shared/auth.js'
 const app = document.getElementById('app')
 const ISLANDS = [
   { code:'PTB', name:'Pulau Talang-Talang Besar' },
@@ -3464,6 +3464,7 @@ git push</pre>
     tabs.querySelectorAll('button').forEach(b => b.onclick = () => showTab(b.dataset.t))
     showTab(state.adminTab === 'pres' ? 'pres' : 'data')
   }
+  wrap.insertAdjacentHTML('beforeend', `<p class="text-center text-xs opacity-60 mt-6">Penyu Tracker · versi ${APP_VERSION}</p>`)
   return wrap
 }
 

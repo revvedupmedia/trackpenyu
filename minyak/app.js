@@ -4,7 +4,7 @@
 // menyekat data untuk peranan lain.
 // ===========================================
 
-import { supabase as sb, requireApp, logout } from '../shared/auth.js';
+import { supabase as sb, requireApp, logout, APP_VERSION } from '../shared/auth.js';
 
 const MONTH_NAMES = ['Januari','Februari','Mac','April','Mei','Jun','Julai','Ogos','September','Oktober','November','Disember'];
 const RECEIPT_BUCKET = 'minyak-receipts';  // private: buka guna signed URL
@@ -115,6 +115,7 @@ async function initAuth() {
   document.getElementById('adminBadge').hidden = !state.isAdmin;
   document.getElementById('adminBtn').hidden = !state.isAdmin;
   document.getElementById('app').hidden = false;
+  document.getElementById('appVersion').textContent = `Minyak Tracker · versi ${APP_VERSION}`;
   loadBackgroundVideo();
   state.semakan = await hasSemakanColumns();
   if(!state.semakan&&state.isAdmin)showToast('Admin: run migration-minyak-semakan.sql dalam Supabase');
@@ -149,7 +150,94 @@ function openAdminDialog() {
   if(detailDialog.open)detailDialog.close();
   adminDialog.showModal();
   refreshLegacyStatus();
+  loadAudit();
 }
+
+// ── Admin: Log Perubahan ──────────────────────────
+const AUDIT_FIELDS={entry_date:'Tarikh',fuel_type:'Jenis',amount:'Jumlah',odometer_start:'Odo mula',odometer_end:'Odo akhir',
+  needs_claim:'Perlu claim',claim_status:'Status claim',notes:'Nota',receipt_path:'Resit',dup_ok:'Bukan pendua'};
+async function loadAudit(){
+  const ul=document.getElementById('auditList');
+  ul.innerHTML='<li class="admin-hint">Memuatkan...</li>';
+  const{data,error}=await sb.from('minyak_entries_audit').select('*').order('changed_at',{ascending:false}).limit(50);
+  if(error){ul.innerHTML=`<li class="admin-hint">${/minyak_entries_audit/.test(error.message)?'Belum dipasang: run migration-minyak-audit.sql dalam Supabase.':esc(error.message)}</li>`;return;}
+  if(!data.length){ul.innerHTML='<li class="admin-hint">Tiada perubahan direkod lagi.</li>';return;}
+  const ids=[...new Set(data.map(a=>a.changed_by).filter(Boolean))];
+  const{data:people}=await sb.from('staff_profiles').select('id,full_name').in('id',ids);
+  const who=new Map((people||[]).map(p=>[p.id,p.full_name]));
+  ul.innerHTML='';
+  for(const a of data){
+    const e=a.after||a.before||{},b=a.before||{},n=a.after||{};
+    let act=a.action==='insert'?'Tambah':a.action==='delete'?'Padam kekal':'Ubah',detail='';
+    if(a.action==='update'){
+      if(!b.deleted_at&&n.deleted_at)act='Padam';
+      else if(b.deleted_at&&!n.deleted_at)act='Pulih';
+      else detail=Object.keys(AUDIT_FIELDS).filter(k=>JSON.stringify(b[k])!==JSON.stringify(n[k])).map(k=>AUDIT_FIELDS[k]).join(', ');
+      if(!detail&&act==='Ubah')detail=b.receipt_hash!==n.receipt_hash?'Cap jari resit':'—';
+    }
+    const li=document.createElement('li');
+    li.className='audit-item';
+    li.innerHTML=`<span class="audit-act audit-${act==='Tambah'?'add':act.startsWith('Padam')?'del':act==='Pulih'?'add':'upd'}">${act}</span>
+      <span class="audit-main">${e.entry_date?fmtDateShort(e.entry_date):'?'} · ${e.fuel_type==='diesel'?'Diesel':'RON95'} · ${fmtRM(e.amount)}${detail?` <span class="audit-det">(${esc(detail)})</span>`:''}</span>
+      <span class="audit-sub">${esc(who.get(a.changed_by)||e.user_email||'Sistem')} · ${new Date(a.changed_at).toLocaleString('ms-MY',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>`;
+    ul.appendChild(li);
+  }
+}
+
+// ── Export Excel (tempoh & penapis semasa) ────────
+// SheetJS hanya dimuat bila perlu (fail besar), dari vendor/ dalam repo.
+let xlsxReady=null;
+function loadXLSX(){
+  return xlsxReady||=new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='../vendor/sheetjs-0.20.3/xlsx.full.min.js';
+    s.onload=()=>res(window.XLSX); s.onerror=()=>{xlsxReady=null;rej(new Error('Gagal muat pembina Excel.'));};
+    document.head.appendChild(s);
+  });
+}
+document.getElementById('exportBtn').addEventListener('click',async()=>{
+  const btn=document.getElementById('exportBtn');
+  const rows=shown();
+  if(!rows.length){showToast('Tiada rekod untuk dieksport.');return;}
+  btn.disabled=true; btn.textContent='Menyedia...';
+  try{
+    const XLSX=await loadXLSX();
+    const y=state.viewDate.getFullYear(),m=state.viewDate.getMonth();
+    const period=state.view==='year'?`${y}`:`${MONTH_NAMES[m]} ${y}`;
+    const fuelLbl=state.fuelFilter==='all'?'Semua jenis':FUEL_NAME[state.fuelFilter];
+    // Tarikh sebagai nombor siri Excel (bukan objek Date) supaya tidak anjak
+    // sehari mengikut zon waktu peranti.
+    const asDate=s=>{const[yy,mm,dd]=s.split('-').map(Number);return{t:'n',v:(Date.UTC(yy,mm-1,dd)-Date.UTC(1899,11,30))/864e5,z:'dd/mm/yyyy'};};
+    const sorted=[...rows].sort((a,b)=>a.entry_date.localeCompare(b.entry_date));
+    const rekod=[['Tarikh','Jenis','Jumlah (RM)','Odo Mula (km)','Odo Akhir (km)','Jarak (km)','Perlu Claim','Status Claim','Nota','Dimasukkan oleh','No. Invois Setel','Resit'],
+      ...sorted.map(e=>[asDate(e.entry_date),e.fuel_type==='diesel'?'Diesel':'RON95 (Boat)',Number(e.amount),
+        e.odometer_start??'',e.odometer_end??'',e.distance_km??'',e.needs_claim?'Ya':'Tidak',
+        e.needs_claim?(e.claim_status==='claimed'?'Dah Claim':'Belum Claim'):'',e.notes||'',e.user_email||'',e.receipt_ref||'',
+        (e.receipt_path||e.receipt_url)?'Ada':'Tiada'])];
+    const tot=f=>sorted.filter(e=>!f||e.fuel_type===f).reduce((a,e)=>a+Number(e.amount),0);
+    rekod.push([],['JUMLAH','',tot()],['Diesel','',tot('diesel')],['RON95 (Boat)','',tot('ron95')],
+      ['Belum claim','',sorted.filter(e=>e.needs_claim&&e.claim_status==='pending').reduce((a,e)=>a+Number(e.amount),0)]);
+    const ws1=XLSX.utils.aoa_to_sheet(rekod);
+    ws1['!cols']=[12,14,12,12,12,10,11,12,30,30,38,8].map(w=>({wch:w}));
+    for(let r=1;r<rekod.length;r++){const c=ws1[XLSX.utils.encode_cell({r,c:2})];if(c&&c.t==='n')c.z='#,##0.00';}
+    const byMonth=MONTH_NAMES.map((name,i)=>{const xs=sorted.filter(e=>Number(e.entry_date.slice(5,7))===i+1);
+      const s=f=>xs.filter(e=>!f||e.fuel_type===f).reduce((a,e)=>a+Number(e.amount),0);
+      return [name,xs.length,s('diesel'),s('ron95'),s(),xs.filter(e=>e.needs_claim&&e.claim_status==='pending').reduce((a,e)=>a+Number(e.amount),0)];}).filter(r=>r[1]);
+    const ring=[[`Minyak Tracker — ${period} — ${fuelLbl}`],[`Dijana: ${new Date().toLocaleString('ms-MY')}`],[],
+      ['Bulan','Bil. Entri','Diesel (RM)','RON95 (RM)','Jumlah (RM)','Belum Claim (RM)'],...byMonth,
+      ['JUMLAH',byMonth.reduce((a,r)=>a+r[1],0),...[2,3,4,5].map(i=>byMonth.reduce((a,r)=>a+r[i],0))]];
+    const ws2=XLSX.utils.aoa_to_sheet(ring);
+    ws2['!cols']=[{wch:14},{wch:10},{wch:14},{wch:14},{wch:14},{wch:16}];
+    for(let r=4;r<ring.length;r++)for(let c=2;c<=5;c++){const cell=ws2[XLSX.utils.encode_cell({r,c})];if(cell&&cell.t==='n')cell.z='#,##0.00';}
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws2,'Ringkasan');
+    XLSX.utils.book_append_sheet(wb,ws1,'Rekod');
+    const tag=state.view==='year'?`${y}`:`${y}-${String(m+1).padStart(2,'0')}`;
+    XLSX.writeFile(wb,`Minyak_${tag}${state.fuelFilter==='all'?'':'_'+FUEL_NAME[state.fuelFilter]}.xlsx`);
+    showToast('Excel dimuat turun ✓');
+  }catch(err){showToast(err.message||'Gagal eksport.');}
+  finally{btn.disabled=false;btn.textContent='⬇ Excel';}
+});
 
 // ── Admin: Background Video Upload ───────────────
 const videoDrop = document.getElementById('videoDrop');
@@ -173,7 +261,7 @@ document.getElementById('bgUploadBtn').addEventListener('click', async()=>{
   const prog=document.getElementById('bgUploadProgress');
   const bar=document.getElementById('bgUploadBar');
   const label=document.getElementById('bgUploadLabel');
-  btn.disabled=true; btn.textContent='Uploading...';
+  btn.disabled=true; btn.textContent='Memuat naik...';
   msg.hidden=true; prog.hidden=false; bar.style.width='0%'; label.textContent='0%';
 
   try {
@@ -201,10 +289,10 @@ document.getElementById('bgUploadBtn').addEventListener('click', async()=>{
     bgVideoFile.value='';
     document.getElementById('videoDropEmpty').hidden=false;
     document.getElementById('videoDropPreview').hidden=true;
-    btn.textContent='Upload Video'; btn.disabled=true;
+    btn.textContent='Muat Naik Video'; btn.disabled=true;
   } catch(err){
-    msg.textContent=err.message||'Upload gagal.'; msg.hidden=false;
-    btn.textContent='Upload Video'; btn.disabled=false;
+    msg.textContent=err.message||'Muat naik gagal.'; msg.hidden=false;
+    btn.textContent='Muat Naik Video'; btn.disabled=false;
   } finally {
     setTimeout(()=>prog.hidden=true,1500);
   }
@@ -423,7 +511,7 @@ function renderYear(){
       <span class="yr-month">${MONTH_NAMES[i].slice(0,3)}</span>
       <span class="yr-bar"><span class="yr-seg yr-diesel" style="width:${m.diesel/max*100}%"></span><span class="yr-seg yr-ron" style="width:${m.ron95/max*100}%"></span></span>
       <span class="yr-total">${m.n?fmtRM(tot):'—'}</span>
-      <span class="yr-n">${m.n?`${m.n} entry`:''}</span>`;
+      <span class="yr-n">${m.n?`${m.n} entri`:''}</span>`;
     btn.title=m.n?`Diesel ${fmtRM(m.diesel)} · RON95 ${fmtRM(m.ron95)}`:'';
     btn.addEventListener('click',()=>{
       state.view='month';
@@ -474,7 +562,7 @@ function renderHistory(){
   const rows=shown();
   if(!rows.length){empty.hidden=false;document.getElementById('historyCount').textContent='';return;}
   empty.hidden=true;
-  document.getElementById('historyCount').textContent=`${rows.length} entry`;
+  document.getElementById('historyCount').textContent=`${rows.length} entri`;
   let lastMonth=null;
   for(const entry of rows){
     // Paparan Tahun: tajuk setiap bulan dalam senarai.
@@ -490,7 +578,7 @@ function renderHistory(){
     const isD=entry.fuel_type==='diesel';
     const isOwner=state.currentUser&&entry.user_id===state.currentUser.id;
     const kmH=entry.distance_km?`<span class="h-km">${fmtKm(entry.distance_km)} km</span>`:'';
-    const clH=entry.needs_claim?`<span class="h-claim-pill ${entry.claim_status==='claimed'?'claimed':'pending'}">${entry.claim_status==='claimed'?'Dah Claim':'Pending'}</span>`:'';
+    const clH=entry.needs_claim?`<span class="h-claim-pill ${entry.claim_status==='claimed'?'claimed':'pending'}">${entry.claim_status==='claimed'?'Dah Claim':'Belum Claim'}</span>`:'';
     const recH=(entry.receipt_path||entry.receipt_url)?'<span class="h-receipt-dot">📎</span>':'';
     const btn=document.createElement('button');
     btn.type='button'; btn.className=`history-item fuel-${isD?'diesel':'ron'}`;
@@ -556,11 +644,11 @@ detailDialog.addEventListener('click',e=>{if(e.target===detailDialog)detailDialo
 
 function openAddDialog(){
   if(detailDialog.open)detailDialog.close();
-  state.pendingFile=null; state.selectedFuel='diesel'; state.dupConfirmKey=null;
+  state.pendingFile=null; state.pendingOriginal=null; state.selectedFuel='diesel'; state.dupConfirmKey=null;
   document.getElementById('entryForm').reset();
   document.getElementById('entryDate').value=toLocalDateStr(new Date());
   setFuel('diesel'); resetDrop(); formError.hidden=true;
-  submitBtn.disabled=false; submitBtn.textContent='Simpan Entry';
+  submitBtn.disabled=false; submitBtn.textContent='Simpan Entri';
   addDialog.showModal();
 }
 function setFuel(f){
@@ -582,8 +670,40 @@ function updateDist(){
 const dropZone=document.getElementById('dropZone');
 const receiptFile=document.getElementById('receiptFile');
 dropZone.addEventListener('click',e=>{if(e.target.id!=='removeFile')receiptFile.click();});
-receiptFile.addEventListener('change',()=>{const f=receiptFile.files[0];if(f){state.pendingFile=f;showFilePrev(f);}});
-document.getElementById('removeFile').addEventListener('click',e=>{e.stopPropagation();state.pendingFile=null;receiptFile.value='';resetDrop();});
+receiptFile.addEventListener('change',async()=>{
+  const f=receiptFile.files[0];if(!f)return;
+  const sizeEl=document.getElementById('previewSize');
+  sizeEl.textContent='Memproses...';
+  state.pendingOriginal=f;
+  state.pendingFile=await compressImage(f);
+  showFilePrev(state.pendingFile);
+  sizeEl.textContent=state.pendingFile===f?fmtSize(f.size):`${fmtSize(f.size)} → ${fmtSize(state.pendingFile.size)}`;
+});
+document.getElementById('removeFile').addEventListener('click',e=>{e.stopPropagation();state.pendingFile=null;state.pendingOriginal=null;receiptFile.value='';resetDrop();});
+
+const fmtSize=b=>b>=1048576?`${(b/1048576).toFixed(1)} MB`:`${Math.max(1,Math.round(b/1024))} KB`;
+
+// Gambar resit dari kamera (~3–5 MB) dikecilkan sebelum upload: sisi panjang
+// maksimum 2000px, JPEG 85%. Teks resit kekal jelas; saiz ~8–10× lebih kecil.
+// PDF dan gambar yang sudah kecil tidak diubah. Putaran ikut EXIF dibetulkan.
+const RESIT_MAX_PX=2000, RESIT_MIN_BYTES=700*1024;
+async function compressImage(file){
+  if(!/^image\//.test(file.type)||/gif|svg/.test(file.type))return file;
+  try{
+    const bmp=await createImageBitmap(file,{imageOrientation:'from-image'});
+    const k=Math.min(1,RESIT_MAX_PX/Math.max(bmp.width,bmp.height));
+    if(k===1&&file.size<=RESIT_MIN_BYTES){bmp.close?.();return file;}
+    const c=document.createElement('canvas');
+    c.width=Math.round(bmp.width*k); c.height=Math.round(bmp.height*k);
+    const g=c.getContext('2d');
+    g.fillStyle='#fff'; g.fillRect(0,0,c.width,c.height);
+    g.imageSmoothingQuality='high';
+    g.drawImage(bmp,0,0,c.width,c.height); bmp.close?.();
+    const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.85));
+    if(!blob||blob.size>=file.size)return file;
+    return new File([blob],file.name.replace(/\.[^.]+$/,'')+'.jpg',{type:'image/jpeg',lastModified:file.lastModified});
+  }catch{return file;}  // cth HEIC yang pelayar tidak boleh baca: upload asal
+}
 function resetDrop(){document.getElementById('dropZoneEmpty').hidden=false;document.getElementById('dropZonePreview').hidden=true;document.getElementById('previewImg').hidden=true;document.getElementById('previewPdf').hidden=true;}
 function showFilePrev(f){
   document.getElementById('dropZoneEmpty').hidden=true;document.getElementById('dropZonePreview').hidden=false;
@@ -602,13 +722,14 @@ submitBtn.addEventListener('click',async()=>{
     const oS=odoStart.value?parseFloat(odoStart.value):null;
     const oE=odoEnd.value?parseFloat(odoEnd.value):null;
     if(!date)throw new Error('Sila pilih tarikh.');
-    if(isNaN(amount)||amount<=0)throw new Error('Sila masukkan amount yang sah.');
+    if(isNaN(amount)||amount<=0)throw new Error('Sila masukkan jumlah yang sah.');
     if(oS!==null&&oE!==null&&oE<oS)throw new Error('Odometer akhir mesti lebih besar.');
     if(date>toLocalDateStr(new Date()))throw new Error('Tarikh tidak boleh pada masa depan.');
     // Pencegahan pendua (1): resit yang sama tidak boleh digunakan dua kali.
     let recHash=null;
     if(state.pendingFile&&state.semakan){
-      recHash=await sha256(state.pendingFile);
+      // Cap jari fail ASAL: gambar sama dari telefon dikesan walaupun dikecilkan.
+      recHash=await sha256(state.pendingOriginal||state.pendingFile);
       const{data:same}=await live(sb.from('minyak_entries').select('entry_date,amount,user_email')).eq('receipt_hash',recHash).limit(1);
       if(same&&same.length)throw new Error(`Resit ini sudah digunakan untuk entri ${fmtDateLong(same[0].entry_date)} (${fmtRM(same[0].amount)}, ${same[0].user_email||'?'}). Satu resit untuk satu entri sahaja.`);
     }
@@ -631,7 +752,7 @@ submitBtn.addEventListener('click',async()=>{
       const f=state.pendingFile,ext=f.name.split('.').pop();
       const path=`${state.currentUser.id}/${Date.now()}_${Math.random().toString(36).slice(2,8)}.${ext}`;
       const{error:upE}=await sb.storage.from(RECEIPT_BUCKET).upload(path,f);
-      if(upE)throw new Error('Gagal upload resit.');
+      if(upE)throw new Error('Gagal muat naik resit.');
       recPath=path;
     }
     const payload={
@@ -646,9 +767,9 @@ submitBtn.addEventListener('click',async()=>{
     if(state.semakan){payload.receipt_hash=recHash;payload.dup_ok=dupOk;}
     const{error:insE}=await sb.from('minyak_entries').insert(payload);
     if(insE)throw new Error(insE.message);
-    addDialog.close();showToast('Entry disimpan ✓');await loadEntries();
+    addDialog.close();showToast('Entri disimpan ✓');await loadEntries();
   }catch(err){formError.textContent=err.message||'Ralat.';formError.classList.toggle('is-warn',!!err.warn);formError.hidden=false;}
-  finally{submitBtn.disabled=false;submitBtn.textContent=state.dupConfirmKey?'Simpan juga (entri berbeza)':'Simpan Entry';}
+  finally{submitBtn.disabled=false;submitBtn.textContent=state.dupConfirmKey?'Simpan juga (entri berbeza)':'Simpan Entri';}
 });
 
 // ── Import resit Setel (PDF) ──────────────────────
@@ -782,7 +903,7 @@ function renderImport(){
           <option value="" ${r.fuel?'':'selected'}>— Pilih —</option>
           <option value="diesel" ${r.fuel==='diesel'?'selected':''}>Diesel</option>
           <option value="ron95" ${r.fuel==='ron95'?'selected':''}>RON95 (Boat)</option></select></label>
-        <label class="imp-f"><span>Amount (RM)</span><input type="number" step="0.01" inputmode="decimal" data-k="amount" value="${esc(r.amount)}" ${locked?'disabled':''} /></label>
+        <label class="imp-f"><span>Jumlah (RM)</span><input type="number" step="0.01" inputmode="decimal" data-k="amount" value="${esc(r.amount)}" ${locked?'disabled':''} /></label>
         <label class="imp-f imp-claim"><input type="checkbox" data-k="claim" ${r.claim?'checked':''} ${locked?'disabled':''} /><span>Perlu claim</span></label>
         <label class="imp-f imp-notes"><span>Nota</span><input type="text" data-k="notes" value="${esc(r.notes)}" ${locked?'disabled':''} /></label>
       </div>
@@ -806,7 +927,7 @@ function importProblems(rows){
   rows.forEach(r=>{
     const n=r.file.name;
     if(!r.fuel)p.push(`${n}: pilih jenis minyak.`);
-    if(!(Number(r.amount)>0))p.push(`${n}: amount tidak sah.`);
+    if(!(Number(r.amount)>0))p.push(`${n}: jumlah tidak sah.`);
     if(!/^\d{4}-\d{2}-\d{2}$/.test(r.date))p.push(`${n}: tarikh tidak sah.`);
     else if(r.date>toLocalDateStr(new Date()))p.push(`${n}: tarikh pada masa depan.`);
   });
@@ -872,7 +993,7 @@ async function saveImport(){
       // upsert:false (kerani tiada kebenaran update). Fail sama dari cubaan
       // yang gagal sebelum ini (laluan ikut nombor invois) boleh diguna semula.
       const{error:upE}=await sb.storage.from(RECEIPT_BUCKET).upload(path,r.file,{contentType:'application/pdf'});
-      if(upE&&!/exists|duplicate/i.test(upE.message||''))throw new Error('Gagal upload PDF: '+upE.message);
+      if(upE&&!/exists|duplicate/i.test(upE.message||''))throw new Error('Gagal muat naik PDF: '+upE.message);
       const{error:insE}=await sb.from('minyak_entries').insert({
         entry_date:r.date,fuel_type:r.fuel,amount:Number(r.amount),
         needs_claim:!!r.claim,claim_status:r.claim?'pending':'not_applicable',
@@ -1076,14 +1197,14 @@ function openDetail(entry,isOwner){
     row('Tarikh',fmtDateLong(entry.entry_date)),
     row('Oleh',entry.user_email||'—'),
     row('Jenis',isD?'Diesel':'RON95 (Boat)'),
-    row('Amount',fmtRM(entry.amount),true),
+    row('Jumlah',fmtRM(entry.amount),true),
   ];
   if(entry.odometer_start!==null&&entry.odometer_end!==null){
     rows.push(row('Odo Mula',fmtKm(entry.odometer_start)+' km',true));
     rows.push(row('Odo Akhir',fmtKm(entry.odometer_end)+' km',true));
     rows.push(row('Jarak',fmtKm(entry.distance_km)+' km',true));
   }
-  if(entry.needs_claim) rows.push(row('Claim',entry.claim_status==='claimed'?'Dah Claim ✓':'Pending'));
+  if(entry.needs_claim) rows.push(row('Claim',entry.claim_status==='claimed'?'Dah Claim ✓':'Belum Claim'));
   if(entry.notes) rows.push(row('Nota',entry.notes));
   detailBody.innerHTML=rows.join('');
   if(entry.receipt_path||entry.receipt_url){
@@ -1104,7 +1225,7 @@ function openDetail(entry,isOwner){
     const isClaimed=entry.claim_status==='claimed';
     const tb=document.createElement('button');tb.type='button';tb.className='detail-receipt-link';
     tb.style.cssText='margin-top:8px;width:100%;border:none;background:rgba(26,122,74,0.2);color:#4ACA7A;cursor:pointer;';
-    tb.textContent=isClaimed?'Tandakan Pending':'Tandakan Dah Claim';
+    tb.textContent=isClaimed?'Tandakan Belum Claim':'Tandakan Dah Claim';
     tb.addEventListener('click',async()=>{
       const{error}=await sb.from('minyak_entries').update({claim_status:isClaimed?'pending':'claimed'}).eq('id',entry.id);
       if(!error){detailDialog.close();showToast('Status dikemaskini ✓');loadEntries();}
@@ -1115,7 +1236,7 @@ function openDetail(entry,isOwner){
   detailActions.innerHTML='';
   if(isOwner||state.isAdmin){
     const db=document.createElement('button');db.type='button';db.className='danger-btn';
-    db.textContent=(state.isAdmin&&!isOwner)?'🔐 Padam (Admin)':'Padam Entry';
+    db.textContent=(state.isAdmin&&!isOwner)?'🔐 Padam (Admin)':'Padam Entri';
     db.addEventListener('click',()=>deleteEntry(entry));
     detailActions.appendChild(db);
   }
@@ -1139,7 +1260,7 @@ async function deleteEntry(entry){
     const{data,error}=await sb.from('minyak_entries').update({deleted_at:new Date().toISOString(),deleted_by:state.currentUser.id}).eq('id',entry.id).select('id');
     if(error||!data?.length){showToast(error?'Gagal padam.':'Tiada kebenaran padam entri ini.');return false;}
   } else {
-    if(!confirm('Padam entry ni?'))return false;
+    if(!confirm('Padam entri ini?'))return false;
     const{error}=await sb.from('minyak_entries').delete().eq('id',entry.id);
     if(!error&&entry.receipt_path&&!entry.receipt_url)await sb.storage.from(RECEIPT_BUCKET).remove([entry.receipt_path]);
     if(error){showToast('Gagal padam.');return false;}

@@ -34,11 +34,12 @@
   <header class="topbar">
     <a class="brand" href="./"><span class="brand-name">← Portal LPP</span></a>
   </header>
-  <main><div class="card rise" id="view"></div></main>
+  <main><div class="card rise" id="view"></div><p class="center small muted" id="ver" style="margin-top:16px"></p></main>
 </div>
 
 <script type="module">
-import { supabase, ROOT, BOOT_RECOVERY, BOOT_AUTH_ERROR, RECOVERY_FLAG } from './shared/auth.js'
+import { supabase, ROOT, BOOT_RECOVERY, BOOT_AUTH_ERROR, RECOVERY_FLAG, APP_VERSION, needsMfa, reportError } from './shared/auth.js'
+document.getElementById('ver').textContent = `versi ${APP_VERSION}`
 
 const view = document.getElementById('view')
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
@@ -64,6 +65,7 @@ function showLogin(prefill = '') {
     <form id="f">
       <div class="field"><label for="email">Emel</label><input type="email" id="email" required autocomplete="email" value="${esc(prefill)}" /></div>
       <div class="field"><label for="pw">Kata laluan</label><input type="password" id="pw" required autocomplete="current-password" /></div>
+      ${new URLSearchParams(location.search).get('sebab') === 'tidak-aktif' ? '<div class="msg msg-ok">Anda telah dilog keluar kerana tiada aktiviti. Sila log masuk semula.</div>' : ''}
       <div id="err" class="msg msg-err" hidden></div>
       <button class="btn btn-primary btn-block" id="btn">Log Masuk</button>
       <div class="center" style="margin-top:10px"><button type="button" class="link-btn" id="forgot">Lupa kata laluan?</button></div>
@@ -86,8 +88,78 @@ function showLogin(prefill = '') {
       btn.textContent = 'Log Masuk'
       return
     }
-    location.replace(nextUrl())
+    await afterLogin()
   }
+}
+
+// Selepas kata laluan: admin mesti lepasi MFA (kod 6 digit) sebelum masuk.
+async function afterLogin() {
+  const { data: s } = await supabase.auth.getSession()
+  const uid = s?.session?.user?.id
+  const { data: profile } = uid ? await supabase.from('staff_profiles').select('role').eq('id', uid).maybeSingle() : { data: null }
+  if (!(await needsMfa(profile))) { location.replace(nextUrl()); return }
+  const { data: f, error } = await supabase.auth.mfa.listFactors()
+  if (error) { reportError('MFA listFactors: ' + error.message); location.replace(nextUrl()); return }
+  const verified = (f.totp || []).filter(x => x.status === 'verified')
+  if (verified.length) showMfaChallenge(verified[0].id)
+  else showMfaEnroll((f.all || []).filter(x => x.factor_type === 'totp' && x.status !== 'verified'))
+}
+
+const mfaCancel = `<div class="center" style="margin-top:12px"><button type="button" class="link-btn" id="mfaOut">Log keluar</button></div>`
+function bindMfaCommon(onCode) {
+  view.querySelector('#mfaOut').onclick = async () => { await supabase.auth.signOut(); showLogin() }
+  const code = view.querySelector('#code'), err = view.querySelector('#err'), btn = view.querySelector('#btn')
+  code.focus()
+  code.oninput = () => { code.value = code.value.replace(/\D/g, '').slice(0, 6) }
+  view.querySelector('#f').onsubmit = async (e) => {
+    e.preventDefault()
+    if (code.value.length !== 6) { err.textContent = 'Masukkan 6 digit kod.'; err.hidden = false; return }
+    err.hidden = true; btn.disabled = true
+    const msg = await onCode(code.value)
+    if (msg) { err.textContent = msg; err.hidden = false; btn.disabled = false; code.select() }
+  }
+}
+const codeField = `<div class="field"><label for="code">Kod 6 digit</label><input type="text" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" style="text-align:center;font-size:24px;letter-spacing:.4em" /></div>`
+const badCode = (e) => /invalid|expired|code/i.test(e?.message || '') ? 'Kod salah atau sudah tamat. Cuba kod terbaru dalam app Authenticator.' : (e?.message || 'Ralat.')
+
+function showMfaChallenge(factorId) {
+  view.innerHTML = `${head('Pengesahan Admin', 'Buka app Authenticator di telefon anda dan masukkan kod 6 digit untuk Portal LPP.')}
+    <form id="f">${codeField}<div id="err" class="msg msg-err" hidden></div>
+      <button class="btn btn-primary btn-block" id="btn">Sahkan</button></form>${mfaCancel}
+    <p class="small muted center" style="margin-top:14px">Hilang telefon? Minta admin lain buang MFA akaun anda di Supabase (Authentication → Users).</p>`
+  bindMfaCommon(async (code) => {
+    const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code })
+    if (error) return badCode(error)
+    location.replace(nextUrl())
+  })
+}
+
+// Kali pertama: daftar app Authenticator dengan kod QR, kemudian sahkan satu kod.
+async function showMfaEnroll(stale) {
+  for (const x of stale) { try { await supabase.auth.mfa.unenroll({ factorId: x.id }) } catch {} }
+  const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'Authenticator ' + new Date().toISOString().slice(0, 16) })
+  if (error) {
+    // Jangan kunci admin keluar jika MFA tidak dapat dipasang (cth dimatikan dalam tetapan Supabase).
+    reportError('MFA enroll: ' + error.message)
+    view.innerHTML = `${head('MFA belum tersedia', 'Pengesahan dua langkah tidak dapat disediakan sekarang. Anda boleh teruskan; sila maklumkan kepada pentadbir sistem.')}
+      <div class="msg msg-err small">${esc(error.message)}</div><button class="btn btn-primary btn-block" id="go">Teruskan</button>`
+    view.querySelector('#go').onclick = () => location.replace(nextUrl())
+    return
+  }
+  view.innerHTML = `${head('Sediakan Pengesahan Admin', 'Akaun admin perlukan kod 6 digit setiap kali log masuk. Sediakan sekali sahaja:')}
+    <ol class="small" style="margin:0 0 14px;padding-left:20px;line-height:1.7">
+      <li>Pasang <b>Google Authenticator</b> atau <b>Microsoft Authenticator</b> (percuma) di telefon.</li>
+      <li>Dalam app itu, tekan <b>+</b> → <b>Imbas kod QR</b>, dan imbas kod di bawah.</li>
+      <li>Masukkan kod 6 digit yang dipaparkan.</li></ol>
+    <div style="background:#fff;border-radius:14px;padding:12px;width:200px;margin:0 auto 10px"><img src="${data.totp.qr_code}" alt="Kod QR untuk app Authenticator" style="width:100%" /></div>
+    <p class="small muted center" style="margin:0 0 14px">Tidak boleh imbas? Masukkan kunci ini secara manual:<br><code style="user-select:all;word-break:break-all">${esc(data.totp.secret)}</code></p>
+    <form id="f">${codeField}<div id="err" class="msg msg-err" hidden></div>
+      <button class="btn btn-primary btn-block" id="btn">Sahkan & Teruskan</button></form>${mfaCancel}`
+  bindMfaCommon(async (code) => {
+    const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId: data.id, code })
+    if (error) return badCode(error)
+    location.replace(nextUrl())
+  })
 }
 
 function showForgot(prefill = '') {
@@ -202,7 +274,7 @@ if (BOOT_RECOVERY) {
     // Tukar kata laluan tidak dihabiskan => jangan biar sesi sementara kekal.
     if (pending) { clearRecovery(); try { await supabase.auth.signOut() } catch {} }
     const { data } = await supabase.auth.getSession()
-    if (data?.session) location.replace(nextUrl())
+    if (data?.session) await afterLogin()
     else showLogin()
   }
 }

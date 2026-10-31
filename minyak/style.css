@@ -664,3 +664,18 @@ dialog.sheet-dialog .checkbox-field { color: rgba(255,255,255,0.85) !important; 
 .fuel-filter button.active { background: rgba(255,255,255,.12); color: #fff; }
 .fuel-filter button[data-f=diesel].active { background: rgba(42,234,234,.2); color: var(--c-diesel); }
 .fuel-filter button[data-f=ron95].active { background: rgba(42,234,138,.2); color: var(--c-ron); }
+
+/* ── Export & Log Perubahan ───────────────────── */
+.history-tools { display: inline-flex; align-items: center; gap: 10px; }
+.history-tools .logout-btn { padding: 5px 12px; font-size: 12px; }
+.audit-list { list-style: none; display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow-y: auto; }
+.audit-item { display: grid; grid-template-columns: auto 1fr; grid-template-areas: "act main" "act sub"; gap: 1px 10px; align-items: center; padding: 8px 10px; border-radius: var(--r-sm); background: rgba(255,255,255,.05); }
+.audit-act { grid-area: act; font-size: 10.5px; font-weight: 800; padding: 3px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: .03em; }
+.audit-add { background: rgba(42,234,138,.15); color: #4ACA7A; }
+.audit-upd { background: rgba(42,234,234,.15); color: #5DE0E0; }
+.audit-del { background: rgba(255,107,107,.15); color: #FF8A8A; }
+.audit-main { grid-area: main; font-size: 12.5px; color: #fff; }
+.audit-det { color: rgba(255,255,255,.55); }
+.audit-sub { grid-area: sub; font-size: 11px; color: rgba(255,255,255,.5); }
+
+.preview-size { font-size: 11.5px; color: rgba(255,255,255,.6); margin-left: auto; margin-right: 6px; white-space: nowrap; }

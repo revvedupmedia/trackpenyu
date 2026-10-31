@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Minyak Tracker — Lembaga Pengurusan Penyu</title>
 <link rel="manifest" href="manifest.json" />
-<meta name="theme-color" content="#0E6E6E" />
+<meta name="theme-color" content="#06121C" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Minyak" />
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
 <link rel="icon" href="icons/icon-192.png" />
-<link rel="stylesheet" href="style.css?v=15" />
+<link rel="stylesheet" href="style.css?v=17" />
 </head>
 <body>
 
@@ -25,15 +25,16 @@
 <dialog id="adminDialog" class="sheet-dialog admin-dialog">
   <div class="sheet-handle"></div>
   <div class="sheet-head">
-    <h2>🔐 Admin Panel</h2>
+    <h2>🔐 Panel Admin</h2>
     <button type="button" id="adminDialogClose" class="icon-btn">✕</button>
   </div>
   <div class="admin-body">
     <!-- Admin tools (role admin sahaja) -->
     <div id="adminToolSection">
+      <p class="admin-hint" id="appVersion"></p>
       <div class="admin-section">
-        <h3>🎬 Background Video</h3>
-        <p class="admin-hint">Upload video (MP4, max 50MB) untuk jadi wallpaper app.</p>
+        <h3>🎬 Video Latar</h3>
+        <p class="admin-hint">Muat naik video (MP4, maksimum 50MB) untuk dijadikan latar app.</p>
         <div id="videoDrop" class="drop-zone">
           <input type="file" id="bgVideoFile" accept="video/mp4,video/webm,video/ogg" hidden />
           <div id="videoDropEmpty" class="drop-zone-empty">
@@ -53,11 +54,16 @@
           <span>Sekarang: </span><span id="bgUrlText"></span>
         </div>
         <div style="display:flex;gap:10px;margin-top:8px;">
-          <button type="button" id="bgUploadBtn" class="submit-btn" style="flex:1" disabled>Upload Video</button>
+          <button type="button" id="bgUploadBtn" class="submit-btn" style="flex:1" disabled>Muat Naik Video</button>
           <button type="button" id="bgRefreshBtn" class="logout-btn" style="flex:0 0 auto;padding:10px 14px;border-radius:var(--r-sm);" title="Load semula video dari database">↺</button>
           <button type="button" id="bgRemoveBtn" class="danger-btn" style="flex:0 0 auto;padding:10px 14px;" title="Buang video">✕</button>
         </div>
         <div id="bgMsg" class="form-error" hidden style="margin-top:8px;"></div>
+      </div>
+      <div class="admin-section" id="auditSection">
+        <h3>📜 Log Perubahan</h3>
+        <p class="admin-hint">50 perubahan terkini: siapa tambah, ubah, padam atau pulihkan entri.</p>
+        <ul id="auditList" class="audit-list"></ul>
       </div>
       <div class="admin-section" id="legacySection">
         <h3>📦 Pindah Resit Lama</h3>
@@ -164,12 +170,12 @@
     <section class="history-section">
       <div class="history-head">
         <h2>Rekod</h2>
-        <span class="history-count" id="historyCount"></span>
+        <span class="history-tools"><span class="history-count" id="historyCount"></span><button type="button" id="exportBtn" class="logout-btn">⬇ Excel</button></span>
       </div>
       <div id="emptyState" class="empty-state" hidden>
         <div class="empty-icon">🐢</div>
         <p class="empty-title" id="emptyTitle">Takde rekod bulan ni</p>
-        <p class="empty-sub">Tekan + untuk tambah entry pertama.</p>
+        <p class="empty-sub">Tekan + untuk tambah entri pertama.</p>
       </div>
       <ul id="historyList" class="history-list"></ul>
     </section>
@@ -181,7 +187,7 @@
   <dialog id="addDialog" class="sheet-dialog">
     <div class="sheet-handle"></div>
     <div class="sheet-head">
-      <h2>Tambah Entry</h2>
+      <h2>Tambah Entri</h2>
       <button type="button" id="addDialogClose" class="icon-btn">✕</button>
     </div>
     <form id="entryForm" class="entry-form" method="dialog">
@@ -214,7 +220,7 @@
         Jarak: <strong id="distanceValue">0</strong> km
       </div>
       <div class="field">
-        <label for="entryAmount">Amount (RM)</label>
+        <label for="entryAmount">Jumlah (RM)</label>
         <input type="number" id="entryAmount" inputmode="decimal" step="0.01" placeholder="0.00" required />
       </div>
       <div class="field">
@@ -237,12 +243,13 @@
           <div id="dropZonePreview" class="drop-zone-preview" hidden>
             <img id="previewImg" hidden alt="Preview" />
             <div id="previewPdf" class="preview-pdf" hidden>📄 <span id="previewPdfName"></span></div>
+            <span id="previewSize" class="preview-size"></span>
             <button type="button" id="removeFile" class="remove-file">✕</button>
           </div>
         </div>
       </div>
       <div id="formError" class="form-error" hidden></div>
-      <button type="button" id="submitBtn" class="submit-btn">Simpan Entry</button>
+      <button type="button" id="submitBtn" class="submit-btn">Simpan Entri</button>
     </form>
   </dialog>
 
@@ -299,7 +306,7 @@
   <dialog id="detailDialog" class="sheet-dialog">
     <div class="sheet-handle"></div>
     <div class="sheet-head">
-      <h2>Butiran Entry</h2>
+      <h2>Butiran Entri</h2>
       <button type="button" id="detailDialogClose" class="icon-btn">✕</button>
     </div>
     <div id="detailBody" class="detail-body"></div>
@@ -309,6 +316,6 @@
   <div id="toast" class="toast" hidden></div>
 </div>
 
-<script type="module" src="app.js?v=15"></script>
+<script type="module" src="app.js?v=17"></script>
 </body>
 </html>

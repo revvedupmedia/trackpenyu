@@ -10,6 +10,10 @@ const SUPABASE_ANON_KEY = 'sb_publishable_gQIBBbRniU3ixnV8eCDuYw_LeWpu0jK'
 // ini supaya pautan betul dari mana-mana subfolder (penyu/, minyak/, ...).
 export const ROOT = new URL('../', import.meta.url).href
 
+// Versi app (tarikh keluaran). Naikkan setiap kali deploy perubahan yang
+// pengguna akan nampak; dipaparkan di login, portal dan panel admin.
+export const APP_VERSION = '2026.11.01'
+
 // Pautan reset dari emel datang dengan token dalam #hash. Simpan dulu sebelum
 // klien Supabase membaca & memadamkannya.
 export const BOOT_HASH = location.hash
@@ -49,6 +53,17 @@ async function dropAbandonedRecovery() {
   try { localStorage.removeItem(RECOVERY_FLAG) } catch {}
 }
 
+// MFA (kod 6 digit dari app Authenticator) wajib untuk akaun admin.
+export const MFA_WAJIB_ADMIN = true
+
+// Admin tanpa pengesahan MFA dalam sesi ini (aal1) mesti ke langkah MFA di login.
+export async function needsMfa(profile) {
+  if (!MFA_WAJIB_ADMIN || profile?.role !== 'admin') return false
+  const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+  if (error) return false
+  return data.currentLevel !== 'aal2'
+}
+
 // { user, profile } untuk sesi semasa, atau { user: null } jika belum log masuk.
 export async function currentUser() {
   await dropAbandonedRecovery()
@@ -56,26 +71,89 @@ export async function currentUser() {
   const user = data?.session?.user || null
   if (!user) return { user: null, profile: null }
   const { data: profile } = await supabase.from('staff_profiles').select('*').eq('id', user.id).maybeSingle()
-  return { user, profile: profile || null }
+  return { user, profile: profile || null, mfaPending: await needsMfa(profile) }
 }
 
-export function loginUrl(next) {
-  return ROOT + 'login.html' + (next ? '?next=' + encodeURIComponent(next) : '')
+export function loginUrl(next, extra = '') {
+  const q = [next ? 'next=' + encodeURIComponent(next) : '', extra].filter(Boolean).join('&')
+  return ROOT + 'login.html' + (q ? '?' + q : '')
 }
 
-// Panggil di atas setiap app. Belum log masuk => ke login; tiada akses => ke portal.
+// Panggil di atas setiap app. Belum log masuk => ke login; admin belum MFA =>
+// ke langkah MFA; tiada akses => ke portal.
 export async function requireApp(appId) {
-  const { user, profile } = await currentUser()
+  const { user, profile, mfaPending } = await currentUser()
   if (!user) { location.replace(loginUrl(appId + '/')); return new Promise(() => {}) }
+  if (mfaPending) { location.replace(loginUrl(appId + '/', 'mfa=1')); return new Promise(() => {}) }
   if (!canUse(profile, appId)) { location.replace(ROOT + 'portal.html?denied=' + appId); return new Promise(() => {}) }
   supabase.auth.onAuthStateChange((event) => {
     if (event === 'SIGNED_OUT') location.replace(loginUrl())
   })
+  startIdleWatch()
   return { user, profile }
 }
 
-export async function logout() {
+// reason: 'idle' bila dilog keluar automatik (dipaparkan di halaman login).
+export async function logout(reason) {
   try { await supabase.auth.signOut() } catch {}
   try { sessionStorage.clear() } catch {}
-  location.replace(loginUrl())
+  location.replace(loginUrl('', reason === 'idle' ? 'sebab=tidak-aktif' : ''))
 }
+
+// ---------- Log keluar automatik bila tidak aktif ----------
+// Telefon di stesen dikongsi: sesi tamat selepas IDLE_MINUTES tanpa sentuhan.
+// Masa aktiviti dikongsi antara tab (localStorage). Amaran 60 saat sebelum.
+export const IDLE_MINUTES = 30
+const IDLE_KEY = 'portal-last-active'
+let idleStarted = false
+export function startIdleWatch() {
+  if (idleStarted) return
+  idleStarted = true
+  const limit = IDLE_MINUTES * 60e3
+  const now = () => Date.now()
+  const read = () => { try { return Number(localStorage.getItem(IDLE_KEY)) || 0 } catch { return 0 } }
+  let last = Math.max(read(), now()), lastWrite = 0, banner = null
+  const touch = () => {
+    last = now()
+    if (last - lastWrite > 10e3) { lastWrite = last; try { localStorage.setItem(IDLE_KEY, String(last)) } catch {} }
+    if (banner) { banner.remove(); banner = null }
+  }
+  touch()
+  for (const ev of ['pointerdown', 'keydown', 'touchstart', 'wheel', 'scroll']) addEventListener(ev, touch, { passive: true, capture: true })
+  const check = () => {
+    const idle = now() - Math.max(last, read())
+    if (idle >= limit) { logout('idle'); return }
+    if (idle >= limit - 60e3 && !banner) {
+      banner = document.createElement('div')
+      banner.setAttribute('role', 'alert')
+      banner.style.cssText = 'position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:9999;max-width:92vw;padding:12px 16px;border-radius:14px;background:#3a2a06;color:#F7E7C1;border:1px solid #E8A020;font:600 14px Inter,system-ui,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.5);text-align:center'
+      banner.textContent = 'Tiada aktiviti. Anda akan dilog keluar dalam 1 minit. Sentuh skrin untuk kekal.'
+      document.body.appendChild(banner)
+    }
+  }
+  setInterval(check, 15e3)
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) check() })
+}
+
+// ---------- Log ralat ----------
+// Ralat JavaScript di peranti staf disimpan dalam jadual client_errors supaya
+// admin tahu ada masalah (Portal → Pentadbiran). Maksimum 10 setiap halaman.
+const seenErrors = new Set()
+export async function reportError(message, stack) {
+  try {
+    message = String(message || '').slice(0, 2000)
+    if (!message || /^Script error\.?$|ResizeObserver loop/i.test(message)) return
+    const key = message + '|' + String(stack || '').slice(0, 200)
+    if (seenErrors.has(key) || seenErrors.size >= 10) return
+    seenErrors.add(key)
+    const { data } = await supabase.auth.getSession()
+    if (!data?.session) return
+    await supabase.from('client_errors').insert({
+      message, stack: String(stack || '').slice(0, 8000),
+      page: (location.pathname + location.hash).slice(0, 300),
+      app_version: APP_VERSION, user_agent: navigator.userAgent.slice(0, 300)
+    })
+  } catch {}
+}
+addEventListener('error', (e) => { if (e.error || e.message) reportError(e.message, e.error?.stack) })
+addEventListener('unhandledrejection', (e) => reportError(e.reason?.message || String(e.reason), e.reason?.stack))
