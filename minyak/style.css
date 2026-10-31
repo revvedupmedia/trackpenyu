@@ -558,7 +558,7 @@ dialog.sheet-dialog .checkbox-field { color: rgba(255,255,255,0.85) !important; 
 #bgRemoveBtn, #bgRefreshBtn { width: auto; }
 
 /* ── Import resit Setel ───────────────────────── */
-.import-open { display: block; width: 100%; margin-top: 16px; padding: 12px 14px; border-radius: var(--r-md); border: 1.5px dashed rgba(42,234,234,.35); background: rgba(42,234,234,.06); color: var(--text); font-size: 14px; font-weight: 600; text-align: center; }
+.import-open { display: block; width: 100%; margin-top: 0; padding: 12px 14px; border-radius: var(--r-md); border: 1.5px dashed rgba(42,234,234,.35); background: rgba(42,234,234,.06); color: var(--text); font-size: 14px; font-weight: 600; text-align: center; }
 .import-open:hover { background: rgba(42,234,234,.12); }
 .import-dialog { max-height: 92vh; }
 .import-body { padding: 4px 18px 12px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
@@ -607,3 +607,33 @@ dialog.sheet-dialog .checkbox-field { color: rgba(255,255,255,0.85) !important; 
 @keyframes bar-grow { from { transform: scaleX(0); } to { transform: none; } }
 .year-row.card-in .yr-seg { transform-origin: left center; animation: bar-grow .6s cubic-bezier(.22,1,.36,1) both; animation-delay: calc(var(--d, 0ms) + 120ms); }
 @media (prefers-reduced-motion: reduce) { .year-row.card-in .yr-seg { animation: none; } }
+
+/* ── Butang tindakan & Semakan Data ───────────── */
+.action-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
+.action-row .import-open { padding: 12px 10px; font-size: 13.5px; }
+.check-open { position: relative; border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.05); }
+.check-badge { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; margin-left: 4px; border-radius: 999px; font-size: 11px; font-weight: 800; background: var(--accent); color: #1a1205; vertical-align: 1px; }
+.check-badge.bad { background: #FF6B6B; color: #2a0505; }
+.form-error.is-warn { background: rgba(232,160,32,.12); color: #F2B84B; border-color: rgba(232,160,32,.4); }
+.check-summary { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: var(--r-md); margin-bottom: 10px; font-size: 14px; color: #fff; border: 1px solid var(--glass-border); }
+.check-summary span { font-size: 12px; color: rgba(255,255,255,.6); }
+.check-summary.ok { background: rgba(42,234,138,.1); border-color: rgba(42,234,138,.35); }
+.check-summary.warn { background: rgba(232,160,32,.1); border-color: rgba(232,160,32,.4); }
+.check-summary.bad { background: rgba(255,107,107,.1); border-color: rgba(255,107,107,.4); }
+.check-tools { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.chk-tool { padding: 9px 12px; font-size: 12.5px; text-align: left; }
+.chk-title { font-size: 13.5px; color: #fff; }
+.chk-detail { font-size: 12px; color: rgba(255,255,255,.6); margin-bottom: 8px; }
+.chk-entries { display: flex; flex-direction: column; gap: 6px; }
+.chk-entry { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "main act" "sub act"; gap: 2px 8px; align-items: center; padding: 8px 10px; border-radius: var(--r-sm); background: rgba(255,255,255,.05); }
+.chk-e-main { grid-area: main; font-size: 13px; color: #fff; }
+.chk-e-sub { grid-area: sub; font-size: 11px; color: rgba(255,255,255,.5); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chk-e-act { grid-area: act; display: flex; gap: 6px; }
+.chk-e-act .logout-btn { padding: 5px 10px; font-size: 11.5px; }
+.chk-del:hover { color: #FF6B6B; }
+.chk-more { font-size: 11.5px; color: rgba(255,255,255,.5); padding: 2px 4px; }
+.chk-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.chk-actions:empty { display: none; }
+.chk-actions .logout-btn { padding: 7px 12px; font-size: 12px; }
+.check-h3 { font-size: 13px; font-weight: 700; color: rgba(255,255,255,.75); margin: 18px 0 8px; }
+.imp-off-soft { opacity: .75; padding: 6px; }

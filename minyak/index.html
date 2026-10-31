@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="Minyak" />
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
 <link rel="icon" href="icons/icon-192.png" />
-<link rel="stylesheet" href="style.css?v=11" />
+<link rel="stylesheet" href="style.css?v=12" />
 </head>
 <body>
 
@@ -150,7 +150,10 @@
       <div class="year-table" id="yearTable"></div>
     </section>
 
-    <button type="button" id="importOpen" class="import-open">📥 Import resit Setel (PDF)</button>
+    <div class="action-row">
+      <button type="button" id="importOpen" class="import-open">📥 Import resit Setel</button>
+      <button type="button" id="checkOpen" class="import-open check-open">🩺 Semakan Data <span id="checkBadge" class="check-badge" hidden></span></button>
+    </div>
 
     <section class="history-section">
       <div class="history-head">
@@ -268,6 +271,24 @@
     </div>
   </dialog>
 
+  <!-- Semakan Data Dialog -->
+  <dialog id="checkDialog" class="sheet-dialog import-dialog">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head">
+      <h2>🩺 Semakan Data</h2>
+      <button type="button" id="checkClose" class="icon-btn">✕</button>
+    </div>
+    <div class="import-body">
+      <div id="checkSummary" class="check-summary"></div>
+      <div id="checkTools" class="check-tools"></div>
+      <ul id="checkList" class="import-list"></ul>
+      <div id="checkDeletedWrap" hidden>
+        <h3 class="check-h3">🗑 Dipadam (boleh dipulihkan)</h3>
+        <ul id="checkDeleted" class="import-list"></ul>
+      </div>
+    </div>
+  </dialog>
+
   <!-- Detail Dialog -->
   <dialog id="detailDialog" class="sheet-dialog">
     <div class="sheet-handle"></div>
@@ -282,6 +303,6 @@
   <div id="toast" class="toast" hidden></div>
 </div>
 
-<script type="module" src="app.js?v=11"></script>
+<script type="module" src="app.js?v=12"></script>
 </body>
 </html>

@@ -64,6 +64,15 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
   untuk disemak dahulu (anti-pendua ikut nombor invois, amaran "mungkin pendua"
   jika entri tarikh/jenis/jumlah sama sudah ada, tanda "Perlu claim"), kemudian
   sahkan dengan kiraan undur 5 saat. Pembaca: `minyak/setel.js`.
+- **Pencegahan ralat** semasa simpan: amaran jika entri tarikh/jenis/jumlah sama
+  sudah ada (perlu tekan Simpan sekali lagi untuk sahkan), resit yang sama
+  (cap jari SHA-256) tidak boleh digunakan dua kali, tarikh masa depan ditolak.
+- **🩺 Semakan Data**: imbas semua entri untuk resit sama, kemungkinan pendua,
+  odometer tidak sah, tarikh masa depan, jumlah luar biasa (>3× biasa), claim
+  tertunggak >30 hari, resit lama belum dipindah, entri tanpa resit/pemilik.
+  Lencana pada butang tunjuk bilangan isu. Ada "Bandingkan resit", "Bukan
+  pendua", dan senarai entri dipadam untuk dipulihkan.
+- **Padam boleh dipulihkan**: entri ditanda `deleted_at`, resit disimpan.
 - Sejarah ikut bulan, butiran entri, tandakan dah claim.
 - Kerani boleh ubah/padam entri sendiri; admin boleh ubah/padam semua.
 - Resit disimpan dalam bucket **private** `minyak-receipts` dan dibuka guna
@@ -112,6 +121,7 @@ Dalam Supabase → SQL Editor, run fail-fail ini **ikut urutan**:
 15. `migration-monthly-penyu.sql`
 16. `migration-minyak.sql`
 17. `migration-minyak-setel.sql`
+18. `migration-minyak-semakan.sql`
 
 Kemudian:
 

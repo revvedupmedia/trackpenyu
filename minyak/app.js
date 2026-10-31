@@ -19,6 +19,8 @@ let state = {
   currentUser: null,
   isAdmin: false,
   pendingBgFile: null,
+  semakan: false,       // lajur migration-minyak-semakan.sql wujud?
+  dupConfirmKey: null,  // entri manual: pendua yang pengguna sudah sahkan "berbeza"
 };
 
 // ── Helpers ──────────────────────────────────────
@@ -109,7 +111,24 @@ async function initAuth() {
   document.getElementById('adminBtn').hidden = !state.isAdmin;
   document.getElementById('app').hidden = false;
   loadBackgroundVideo();
+  state.semakan = await hasSemakanColumns();
+  if(!state.semakan&&state.isAdmin)showToast('Admin: run migration-minyak-semakan.sql dalam Supabase');
   loadEntries();
+}
+
+// App tetap berjalan sebelum migration-minyak-semakan.sql dirun (tanpa padam
+// boleh pulih & cap jari resit), supaya kemas kini kod tidak memecahkan app.
+async function hasSemakanColumns(){
+  const{error}=await sb.from('minyak_entries').select('deleted_at,dup_ok,receipt_hash').limit(1);
+  return !error;
+}
+// Hanya entri yang belum dipadam.
+const live=q=>state.semakan?q.is('deleted_at',null):q;
+
+// Cap jari fail (SHA-256): fail resit sama => cap jari sama.
+async function sha256(blob){
+  const b=await crypto.subtle.digest('SHA-256',await blob.arrayBuffer());
+  return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
 }
 
 document.getElementById('logoutBtn').addEventListener('click', logout);
@@ -305,12 +324,13 @@ function periodRange(){
 
 async function loadEntries() {
   const {start,end}=periodRange();
-  const {data,error}=await sb.from('minyak_entries').select('*')
+  const {data,error}=await live(sb.from('minyak_entries').select('*'))
     .gte('entry_date',start).lte('entry_date',end)
     .order('entry_date',{ascending:false}).order('created_at',{ascending:false});
   if(error){showToast('Gagal load data.');return;}
   state.entries=data||[];
   render();
+  runChecks().catch(()=>{});
 }
 
 function render(){
@@ -498,7 +518,7 @@ detailDialog.addEventListener('click',e=>{if(e.target===detailDialog)detailDialo
 
 function openAddDialog(){
   if(detailDialog.open)detailDialog.close();
-  state.pendingFile=null; state.selectedFuel='diesel';
+  state.pendingFile=null; state.selectedFuel='diesel'; state.dupConfirmKey=null;
   document.getElementById('entryForm').reset();
   document.getElementById('entryDate').value=toLocalDateStr(new Date());
   setFuel('diesel'); resetDrop(); formError.hidden=true;
@@ -535,7 +555,7 @@ function showFilePrev(f){
 
 // Submit
 submitBtn.addEventListener('click',async()=>{
-  formError.hidden=true;submitBtn.disabled=true;submitBtn.textContent='Menyimpan...';
+  formError.hidden=true;formError.classList.remove('is-warn');submitBtn.disabled=true;submitBtn.textContent='Menyimpan...';
   try{
     const date=document.getElementById('entryDate').value;
     const amount=parseFloat(document.getElementById('entryAmount').value);
@@ -546,6 +566,28 @@ submitBtn.addEventListener('click',async()=>{
     if(!date)throw new Error('Sila pilih tarikh.');
     if(isNaN(amount)||amount<=0)throw new Error('Sila masukkan amount yang sah.');
     if(oS!==null&&oE!==null&&oE<oS)throw new Error('Odometer akhir mesti lebih besar.');
+    if(date>toLocalDateStr(new Date()))throw new Error('Tarikh tidak boleh pada masa depan.');
+    // Pencegahan pendua (1): resit yang sama tidak boleh digunakan dua kali.
+    let recHash=null;
+    if(state.pendingFile&&state.semakan){
+      recHash=await sha256(state.pendingFile);
+      const{data:same}=await live(sb.from('minyak_entries').select('entry_date,amount,user_email')).eq('receipt_hash',recHash).limit(1);
+      if(same&&same.length)throw new Error(`Resit ini sudah digunakan untuk entri ${fmtDateLong(same[0].entry_date)} (${fmtRM(same[0].amount)}, ${same[0].user_email||'?'}). Satu resit untuk satu entri sahaja.`);
+    }
+    // Pencegahan pendua (2): entri dengan tarikh, jenis & jumlah sama. Amaran
+    // dulu; tekan Simpan sekali lagi untuk sahkan ia pengisian berbeza.
+    const sig=`${date}|${state.selectedFuel}|${amount.toFixed(2)}`;
+    let dupOk=false;
+    const{data:twins}=await live(sb.from('minyak_entries').select('entry_date,amount,user_email,created_at'))
+      .eq('entry_date',date).eq('fuel_type',state.selectedFuel).eq('amount',amount);
+    if(twins&&twins.length){
+      if(state.dupConfirmKey!==sig){
+        state.dupConfirmKey=sig;
+        const w=new Error(`⚠ Entri ${state.selectedFuel==='diesel'?'Diesel':'RON95'} ${fmtRM(amount)} pada ${fmtDateLong(date)} sudah ada (oleh ${twins.map(t=>t.user_email||'?').join(', ')}). Jika ini pengisian BERBEZA, tekan Simpan sekali lagi.`);
+        w.warn=true; throw w;
+      }
+      dupOk=true;
+    }
     let recPath=null;
     if(state.pendingFile){
       const f=state.pendingFile,ext=f.name.split('.').pop();
@@ -563,11 +605,12 @@ submitBtn.addEventListener('click',async()=>{
       notes:notes||null,user_id:state.currentUser.id,user_email:state.currentUser.email,
     };
     if(recPath)payload.receipt_path=recPath;
+    if(state.semakan){payload.receipt_hash=recHash;payload.dup_ok=dupOk;}
     const{error:insE}=await sb.from('minyak_entries').insert(payload);
     if(insE)throw new Error(insE.message);
     addDialog.close();showToast('Entry disimpan ✓');await loadEntries();
-  }catch(err){formError.textContent=err.message||'Ralat.';formError.hidden=false;}
-  finally{submitBtn.disabled=false;submitBtn.textContent='Simpan Entry';}
+  }catch(err){formError.textContent=err.message||'Ralat.';formError.classList.toggle('is-warn',!!err.warn);formError.hidden=false;}
+  finally{submitBtn.disabled=false;submitBtn.textContent=state.dupConfirmKey?'Simpan juga (entri berbeza)':'Simpan Entry';}
 });
 
 // ── Import resit Setel (PDF) ──────────────────────
@@ -625,6 +668,7 @@ async function addImportFiles(files){
   for(const [n,file] of files.entries()){
     prog.textContent=`Membaca PDF ${n+1} / ${files.length}...`;
     const parsed=await readSetelPdf(file);
+    if(parsed.ok&&state.semakan)parsed.data.hash=await sha256(file);
     const d=parsed.ok?parsed.data:{};
     imp.rows.push({id:++imp.seq,file,parsed,status:parsed.ok?'new':'fail',include:parsed.ok,
       date:d.date||'',fuel:d.fuel||'',amount:d.amount??'',claim:document.getElementById('importClaimAll').checked,
@@ -646,8 +690,8 @@ async function classifyImport(){
   let byRef=new Map(),sameDay=[];
   if(refs.length){
     const [a,b]=await Promise.all([
-      sb.from('minyak_entries').select('receipt_ref,entry_date,user_email').in('receipt_ref',refs),
-      sb.from('minyak_entries').select('entry_date,fuel_type,amount,user_email,receipt_ref').in('entry_date',dates),
+      live(sb.from('minyak_entries').select('receipt_ref,entry_date,user_email')).in('receipt_ref',refs),
+      live(sb.from('minyak_entries').select('entry_date,fuel_type,amount,user_email,receipt_ref'+(state.semakan?',receipt_hash':''))).in('entry_date',dates),
     ]);
     const err=a.error||b.error;
     if(err){
@@ -663,7 +707,7 @@ async function classifyImport(){
   for(const r of imp.rows){
     if(!r.parsed.ok){r.reason=r.parsed.error;continue;}
     if(r.result)continue;
-    const d=r.parsed.data,hit=byRef.get(d.ref);
+    const d=r.parsed.data,hit=byRef.get(d.ref)||(d.hash&&sameDay.find(e=>e.receipt_hash===d.hash));
     if(hit){r.status='dup';r.include=false;r.reason=`Sudah ada dalam sistem (${fmtDateShort(hit.entry_date)}, oleh ${hit.user_email||'?'}).`;}
     else if(seen.has(d.ref)){r.status='dup';r.include=false;r.reason='PDF yang sama dipilih lebih sekali.';}
     else{
@@ -796,6 +840,7 @@ async function saveImport(){
         needs_claim:!!r.claim,claim_status:r.claim?'pending':'not_applicable',
         notes:r.notes.trim()||null,receipt_path:path,receipt_ref:d.ref,
         user_id:state.currentUser.id,user_email:state.currentUser.email,
+        ...(state.semakan?{receipt_hash:d.hash||null,dup_ok:r.status==='maybe'}:{}),
       });
       if(insE){
         await sb.storage.from(RECEIPT_BUCKET).remove([path]);
@@ -809,6 +854,175 @@ async function saveImport(){
   renderImport();
   const ok=rows.filter(r=>r.result==='ok').length;
   showToast(`${ok} entri Setel disimpan ✓`);
+}
+
+// ── Semakan Data ──────────────────────────────────
+// Imbas SEMUA entri (bukan bulan semasa sahaja) untuk masalah biasa: pendua,
+// odometer songsang, tarikh masa depan, jumlah luar biasa, resit tiada, claim
+// lama tertunggak. Lencana pada butang = bilangan isu merah + kuning.
+const checkDialog=document.getElementById('checkDialog');
+document.getElementById('checkOpen').addEventListener('click',()=>{checkDialog.showModal();renderChecks();});
+document.getElementById('checkClose').addEventListener('click',()=>checkDialog.close());
+let chk={entries:[],deleted:[],issues:[]};
+
+// PostgREST pulangkan maksimum 1000 baris sekali; ambil semua halaman.
+async function fetchAll(build){
+  const out=[];
+  for(let from=0;;from+=1000){
+    const{data,error}=await build().range(from,from+999);
+    if(error)throw new Error(error.message);
+    out.push(...data);
+    if(data.length<1000)return out;
+  }
+}
+
+const median=a=>{if(!a.length)return 0;const s=[...a].sort((x,y)=>x-y),m=s.length>>1;return s.length%2?s[m]:(s[m-1]+s[m])/2;};
+
+async function runChecks(){
+  const all=await fetchAll(()=>sb.from('minyak_entries').select('*').order('entry_date',{ascending:false}).order('id'));
+  chk.entries=all.filter(e=>!e.deleted_at);
+  chk.deleted=all.filter(e=>e.deleted_at).sort((a,b)=>b.deleted_at.localeCompare(a.deleted_at));
+  const E=chk.entries,issues=[],today=toLocalDateStr(new Date());
+  const groupBy=(arr,key)=>{const m=new Map();arr.forEach(e=>{const k=key(e);if(k==null)return;(m.get(k)||m.set(k,[]).get(k)).push(e);});return m;};
+
+  const sameHash=new Set();
+  for(const g of groupBy(E,e=>e.receipt_hash||null).values()) if(g.length>1){
+    g.forEach(e=>sameHash.add(e.id));
+    issues.push({level:'bad',title:`Resit sama digunakan untuk ${g.length} entri`,detail:'Fail resit sama persis. Hampir pasti pendua: padam yang berlebihan.',entries:g});
+  }
+  for(const g of groupBy(E,e=>`${e.entry_date}|${e.fuel_type}|${Number(e.amount).toFixed(2)}`).values()){
+    if(g.length<2||g.every(e=>sameHash.has(e.id)))continue;
+    if(g.filter(e=>!e.dup_ok).length<2)continue;
+    issues.push({level:'warn',kind:'dup',title:`Mungkin pendua: ${g.length} entri ${g[0].fuel_type==='diesel'?'Diesel':'RON95'} ${fmtRM(g[0].amount)} pada ${fmtDateShort(g[0].entry_date)}`,
+      detail:'Tarikh, jenis dan jumlah sama. Tekan "Bandingkan resit" atau buka setiap entri. Jika memang pengisian berbeza, tekan "Bukan pendua".',entries:g});
+  }
+  const odo=E.filter(e=>e.odometer_start!=null&&e.odometer_end!=null&&(Number(e.odometer_end)<Number(e.odometer_start)||(e.distance_km!=null&&Math.abs(Number(e.odometer_end)-Number(e.odometer_start)-Number(e.distance_km))>0.5)));
+  if(odo.length)issues.push({level:'bad',title:`Odometer tidak sah (${odo.length})`,detail:'Odometer akhir lebih kecil daripada mula, atau jarak tidak sepadan.',entries:odo});
+  const fut=E.filter(e=>e.entry_date>today);
+  if(fut.length)issues.push({level:'bad',title:`Tarikh pada masa depan (${fut.length})`,detail:'Kemungkinan salah taip tarikh.',entries:fut});
+  for(const f of ['diesel','ron95']){
+    const xs=E.filter(e=>e.fuel_type===f),med=median(xs.map(e=>Number(e.amount)));
+    if(xs.length<5)continue;
+    const odd=xs.filter(e=>Number(e.amount)>med*3);
+    if(odd.length)issues.push({level:'warn',title:`Jumlah luar biasa ${f==='diesel'?'Diesel':'RON95'} (${odd.length})`,detail:`Lebih 3× jumlah biasa (${fmtRM(med)}). Semak jika tersalah taip.`,entries:odd});
+  }
+  const old=new Date();old.setDate(old.getDate()-30);
+  const pend=E.filter(e=>e.needs_claim&&e.claim_status==='pending'&&e.entry_date<toLocalDateStr(old));
+  if(pend.length)issues.push({level:'warn',title:`Claim tertunggak lebih 30 hari (${pend.length})`,detail:`Jumlah ${fmtRM(pend.reduce((a,e)=>a+Number(e.amount),0))} belum di-claim.`,entries:pend});
+  const leg=E.filter(e=>e.receipt_url);
+  if(leg.length)issues.push({level:'warn',title:`Resit lama belum dipindah (${leg.length})`,detail:'Resit masih di projek Supabase lama. Admin: ⚙️ Admin → Pindah Resit Lama.',entries:leg});
+  const norec=E.filter(e=>!e.receipt_path&&!e.receipt_url);
+  if(norec.length)issues.push({level:'info',title:`Tiada resit (${norec.length})`,detail:'Entri tanpa resit dilampirkan.',entries:norec});
+  const noown=E.filter(e=>!e.user_id);
+  if(noown.length)issues.push({level:'info',title:`Tiada pemilik akaun (${noown.length})`,detail:'Emel entri tidak sepadan dengan mana-mana akaun; hanya admin boleh ubah.',entries:noown});
+
+  const rank={bad:0,warn:1,info:2};
+  chk.issues=issues.sort((a,b)=>rank[a.level]-rank[b.level]);
+  const n=issues.filter(i=>i.level!=='info').length;
+  const badge=document.getElementById('checkBadge');
+  badge.hidden=!n; badge.textContent=n;
+  badge.classList.toggle('bad',issues.some(i=>i.level==='bad'));
+  if(checkDialog.open)renderChecks();
+}
+
+function checkEntryRow(e){
+  const li=document.createElement('div');
+  li.className='chk-entry';
+  li.innerHTML=`<span class="chk-e-main">${fmtDateShort(e.entry_date)} · ${e.fuel_type==='diesel'?'Diesel':'RON95'} · <b>${fmtRM(e.amount)}</b>${(e.receipt_path||e.receipt_url)?' 📎':''}</span>
+    <span class="chk-e-sub">${esc(e.user_email||'?')}${e.notes?' · '+esc(e.notes):''}</span>
+    <span class="chk-e-act"><button type="button" class="logout-btn" data-a="open">Lihat</button><button type="button" class="logout-btn chk-del" data-a="del">Padam</button></span>`;
+  const own=state.currentUser&&e.user_id===state.currentUser.id;
+  if(!own&&!state.isAdmin)li.querySelector('[data-a=del]').remove();
+  li.querySelector('[data-a=open]').onclick=()=>{checkDialog.close();openDetail(e,own);};
+  li.querySelector('[data-a=del]')?.addEventListener('click',async()=>{if(await deleteEntry(e))renderChecks();});
+  return li;
+}
+
+function renderChecks(){
+  const list=document.getElementById('checkList');
+  const sum=document.getElementById('checkSummary');
+  const tools=document.getElementById('checkTools');
+  const bad=chk.issues.filter(i=>i.level==='bad').length,warn=chk.issues.filter(i=>i.level==='warn').length;
+  sum.className='check-summary '+(bad?'bad':warn?'warn':'ok');
+  sum.innerHTML=bad||warn
+    ?`<b>${bad?`${bad} isu perlu dibetulkan`:''}${bad&&warn?' · ':''}${warn?`${warn} perlu disemak`:''}</b><span>${chk.entries.length} entri diimbas</span>`
+    :`<b>✓ Tiada masalah dijumpai</b><span>${chk.entries.length} entri diimbas</span>`;
+  tools.innerHTML='';
+  if(!state.semakan){
+    tools.innerHTML='<div class="form-error is-warn">Database belum dikemas kini. Admin perlu run <b>migration-minyak-semakan.sql</b> dalam Supabase untuk padam boleh pulih dan semakan resit sama.</div>';
+  } else if(state.isAdmin){
+    const missing=chk.entries.filter(e=>!e.receipt_hash&&(e.receipt_path||e.receipt_url));
+    if(missing.length){
+      const b=document.createElement('button');b.type='button';b.className='logout-btn chk-tool';
+      b.textContent=`🔍 Kira cap jari ${missing.length} resit (cari resit sama)`;
+      b.onclick=()=>fingerprint(missing,b);
+      tools.appendChild(b);
+    }
+  }
+  list.innerHTML='';
+  chk.issues.forEach((it,idx)=>{
+    const li=document.createElement('li');
+    li.className=`imp-item imp-${it.level==='bad'?'bad':it.level==='warn'?'warn':'ok'} chk-item`;
+    li.innerHTML=`<div class="imp-head"><b class="chk-title">${esc(it.title)}</b><span class="imp-chip imp-chip-${it.level==='bad'?'bad':it.level==='warn'?'warn':'ok'}">${it.level==='bad'?'Betulkan':it.level==='warn'?'Semak':'Info'}</span></div>
+      <div class="chk-detail">${esc(it.detail)}</div><div class="chk-entries"></div><div class="chk-actions"></div>`;
+    const box=li.querySelector('.chk-entries');
+    const shown=it.entries.slice(0,it.level==='info'?5:20);
+    shown.forEach(e=>box.appendChild(checkEntryRow(e)));
+    if(it.entries.length>shown.length)box.insertAdjacentHTML('beforeend',`<div class="chk-more">+${it.entries.length-shown.length} lagi</div>`);
+    if(it.kind==='dup'&&state.semakan){
+      const act=li.querySelector('.chk-actions');
+      const cmp=document.createElement('button');cmp.type='button';cmp.className='logout-btn';cmp.textContent='🔍 Bandingkan resit';
+      cmp.onclick=()=>fingerprint(it.entries.filter(e=>!e.receipt_hash&&(e.receipt_path||e.receipt_url)),cmp);
+      const ok=document.createElement('button');ok.type='button';ok.className='logout-btn';ok.textContent='✓ Bukan pendua';
+      ok.onclick=()=>markNotDup(it.entries,ok);
+      act.append(cmp,ok);
+    }
+    animIn(li);
+    list.appendChild(li);
+  });
+  const dw=document.getElementById('checkDeletedWrap'),dl=document.getElementById('checkDeleted');
+  dw.hidden=!chk.deleted.length; dl.innerHTML='';
+  chk.deleted.slice(0,30).forEach(e=>{
+    const li=document.createElement('li');li.className='imp-item chk-item imp-off-soft';
+    li.innerHTML=`<div class="chk-entry"><span class="chk-e-main">${fmtDateShort(e.entry_date)} · ${e.fuel_type==='diesel'?'Diesel':'RON95'} · <b>${fmtRM(e.amount)}</b></span>
+      <span class="chk-e-sub">${esc(e.user_email||'?')} · dipadam ${new Date(e.deleted_at).toLocaleDateString('ms-MY',{day:'numeric',month:'short'})}</span>
+      <span class="chk-e-act"><button type="button" class="logout-btn">↩ Pulihkan</button></span></div>`;
+    li.querySelector('button').onclick=async()=>{
+      const{data,error}=await sb.from('minyak_entries').update({deleted_at:null,deleted_by:null}).eq('id',e.id).select('id');
+      if(error||!data?.length){showToast(error?'Gagal pulihkan: '+error.message:'Tiada kebenaran pulihkan entri ini.');return;}
+      showToast('Entri dipulihkan ✓');await loadEntries();
+    };
+    dl.appendChild(li);
+  });
+}
+
+// Muat turun resit, kira cap jari, simpan. Entri yang pengguna tiada
+// kebenaran ubah tetap dibandingkan dalam sesi ini.
+async function fingerprint(entries,btn){
+  if(!entries.length){showToast('Semua resit sudah ada cap jari ✓');await runChecks();return;}
+  btn.disabled=true;let done=0,fail=0;
+  for(const e of entries){
+    btn.textContent=`Mengira ${done+fail+1} / ${entries.length}...`;
+    try{
+      const url=await receiptLink(e);
+      if(!url)throw 0;
+      const res=await fetch(url);if(!res.ok)throw 0;
+      e.receipt_hash=await sha256(await res.blob());
+      await sb.from('minyak_entries').update({receipt_hash:e.receipt_hash}).eq('id',e.id);
+      done++;
+    }catch{fail++;}
+  }
+  showToast(`${done} cap jari dikira${fail?`, ${fail} gagal (resit tidak dapat dibuka)`:''}`);
+  await runChecks();
+}
+
+async function markNotDup(entries,btn){
+  btn.disabled=true;
+  const{data,error}=await sb.from('minyak_entries').update({dup_ok:true}).in('id',entries.map(e=>e.id)).select('id');
+  if(error){showToast('Gagal: '+error.message);btn.disabled=false;return;}
+  if((data||[]).length<entries.length-1)showToast('Sebahagian entri milik orang lain. Minta admin sahkan.');
+  else showToast('Ditanda bukan pendua ✓');
+  await runChecks();
 }
 
 // ── Detail ────────────────────────────────────────
@@ -881,11 +1095,21 @@ async function receiptLink(entry){
 function row(l,v,m=false){return`<div class="detail-row"><span class="detail-label">${l}</span><span class="detail-value${m?' mono':''}">${v}</span></div>`;}
 
 async function deleteEntry(entry){
-  if(!confirm('Padam entry ni?'))return;
-  const{error}=await sb.from('minyak_entries').delete().eq('id',entry.id);
-  if(!error&&entry.receipt_path&&!entry.receipt_url)await sb.storage.from(RECEIPT_BUCKET).remove([entry.receipt_path]);
-  if(error){showToast('Gagal padam.');return;}
-  detailDialog.close();showToast('Entry dipadam');loadEntries();
+  if(state.semakan){
+    // Padam boleh dipulihkan: tanda sahaja, resit disimpan.
+    if(!confirm(`Padam entri ${fmtRM(entry.amount)} (${fmtDateShort(entry.entry_date)})?\nBoleh dipulihkan dalam Semakan Data.`))return false;
+    const{data,error}=await sb.from('minyak_entries').update({deleted_at:new Date().toISOString(),deleted_by:state.currentUser.id}).eq('id',entry.id).select('id');
+    if(error||!data?.length){showToast(error?'Gagal padam.':'Tiada kebenaran padam entri ini.');return false;}
+  } else {
+    if(!confirm('Padam entry ni?'))return false;
+    const{error}=await sb.from('minyak_entries').delete().eq('id',entry.id);
+    if(!error&&entry.receipt_path&&!entry.receipt_url)await sb.storage.from(RECEIPT_BUCKET).remove([entry.receipt_path]);
+    if(error){showToast('Gagal padam.');return false;}
+  }
+  if(detailDialog.open)detailDialog.close();
+  showToast('Entri dipadam');
+  await loadEntries();
+  return true;
 }
 
 // ── Init ──────────────────────────────────────────
