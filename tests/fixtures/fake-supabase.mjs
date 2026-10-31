@@ -91,7 +91,8 @@ export function createClient() {
         listFactors: async () => ({ data: { totp: (F().factors || []).filter((f) => f.status === 'verified'), all: F().factors || [] } }),
         enroll: async () => {
           calls.push(['enroll'])
-          return { data: { id: 'f-new', totp: { qr_code: 'data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22%3E%3Crect width=%2210%22 height=%2210%22/%3E%3C/svg%3E', secret: 'JBSWY3DPEHPK3PXP' } }, error: null }
+          // Bentuk sama seperti Supabase sebenar: SVG mentah dengan tanda petik dan '#'.
+          return { data: { id: 'f-new', totp: { qr_code: 'data:image/svg+xml;utf-8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 4 4"><path fill="#000000" d="M0 0h2v2H0z"/></svg>', secret: 'JBSWY3DPEHPK3PXP' } }, error: null }
         },
         unenroll: async ({ factorId }) => { calls.push(['unenroll', factorId]); F().factors = (F().factors || []).filter((f) => f.id !== factorId); save(); return {} },
         challengeAndVerify: async ({ factorId, code }) => {

@@ -32,7 +32,9 @@ test('MFA admin kali pertama: daftar QR, kod salah ditolak, kod betul ke portal'
   await page.goto('login.html')
   await page.fill('#email', ADMIN.email); await page.fill('#pw', 'betul'); await page.click('#btn')
   await expect(page.locator('h1')).toHaveText('Sediakan Pengesahan Admin')
-  await expect(page.locator('img[alt^="Kod QR"]')).toBeVisible()
+  // Kod QR dimuat sebagai gambar sah (bukan pecah) dan tiada teks HTML terkeluar.
+  await expect.poll(() => page.locator('#qr').evaluate((i) => i.complete && i.naturalWidth)).toBeGreaterThan(0)
+  await expect(page.locator('#view')).not.toContainText('alt=')
   expect((await calls(page)).filter((c) => c[0] === 'unenroll')).toEqual([['unenroll', 'lama']])
   await page.fill('#code', '111111'); await page.click('#btn')
   await expect(page.locator('#err')).toContainText('Kod salah')

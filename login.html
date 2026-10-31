@@ -151,10 +151,17 @@ async function showMfaEnroll(stale) {
       <li>Pasang <b>Google Authenticator</b> atau <b>Microsoft Authenticator</b> (percuma) di telefon.</li>
       <li>Dalam app itu, tekan <b>+</b> → <b>Imbas kod QR</b>, dan imbas kod di bawah.</li>
       <li>Masukkan kod 6 digit yang dipaparkan.</li></ol>
-    <div style="background:#fff;border-radius:14px;padding:12px;width:200px;margin:0 auto 10px"><img src="${data.totp.qr_code}" alt="Kod QR untuk app Authenticator" style="width:100%" /></div>
+    <div style="background:#fff;border-radius:14px;padding:12px;width:200px;margin:0 auto 10px"><img id="qr" alt="Kod QR untuk app Authenticator" style="width:100%;display:block" /></div>
     <p class="small muted center" style="margin:0 0 14px">Tidak boleh imbas? Masukkan kunci ini secara manual:<br><code style="user-select:all;word-break:break-all">${esc(data.totp.secret)}</code></p>
     <form id="f">${codeField}<div id="err" class="msg msg-err" hidden></div>
       <button class="btn btn-primary btn-block" id="btn">Sahkan & Teruskan</button></form>${mfaCancel}`
+  // Supabase beri SVG mentah ("data:image/svg+xml;utf-8,<svg ...>") yang
+  // mengandungi tanda petik dan '#'. Kod semula supaya menjadi URL data yang sah,
+  // dan tetapkan melalui DOM (bukan dalam HTML) supaya tidak memecahkan atribut.
+  const qr = data.totp.qr_code || ''
+  const comma = qr.indexOf(',')
+  const svg = comma >= 0 && /^data:image\/svg\+xml/i.test(qr) && /^\s*</.test(qr.slice(comma + 1)) ? qr.slice(comma + 1) : null
+  view.querySelector('#qr').src = svg ? 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg) : qr
   bindMfaCommon(async (code) => {
     const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId: data.id, code })
     if (error) return badCode(error)

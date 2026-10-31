@@ -12,7 +12,7 @@ export const ROOT = new URL('../', import.meta.url).href
 
 // Versi app (tarikh keluaran). Naikkan setiap kali deploy perubahan yang
 // pengguna akan nampak; dipaparkan di login, portal dan panel admin.
-export const APP_VERSION = '2026.11.01'
+export const APP_VERSION = '2026.11.01.1'
 
 // Pautan reset dari emel datang dengan token dalam #hash. Simpan dulu sebelum
 // klien Supabase membaca & memadamkannya.
