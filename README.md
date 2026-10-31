@@ -158,6 +158,26 @@ git push
 Tiada build. Push dan terus live. Kalau ada perubahan database, tambah
 fail `migration-*.sql` baharu dan run dalam Supabase SQL Editor.
 
+## Snapshot struktur database
+
+Fail SQL migration dalam repo **tidak lengkap**: beberapa jadual & fungsi
+Penyu (cth `app_settings`, `import_log`, `import_undo`, `monthly_hatch`,
+`delete_entries_with_backup()`, `undo_import()`) dicipta terus dalam Supabase.
+
+`export-schema.sql` membaca struktur database sebenar (baca sahaja) dan
+menghasilkan satu skrip lengkap: enum, jadual, kekangan, indeks, fungsi,
+trigger, RLS, polisi, bucket storage dan kebenaran. Tiada data.
+
+1. Supabase → SQL Editor → tampal `export-schema.sql` → Run.
+2. Salin sel `schema_sql` (atau Export → CSV) dan simpan dalam repo sebagai
+   `schema-snapshot-<tarikh>.sql`.
+3. Ulang selepas setiap perubahan database.
+
+Untuk bina semula di database kosong (Supabase atau PostgreSQL lain), run
+snapshot terkini. PostgreSQL bukan Supabase perlu sediakan dahulu peranan
+`anon`/`authenticated`, skema `auth` (`auth.users`, `auth.uid()`) dan
+skema `storage`.
+
 ## Tambah app baharu
 
 1. Cipta folder, cth `inventori/index.html`.
