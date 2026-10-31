@@ -13,7 +13,7 @@
 -- Run semula bila-bila masa (cth selepas setiap migration) untuk snapshot baru.
 --
 -- Untuk PostgreSQL bukan Supabase: skrip memerlukan peranan "anon" &
--- "authenticated", skema "auth" dengan jadual auth.users dan fungsi
+-- "authenticated" & "service_role", skema "auth" dengan jadual auth.users dan fungsi
 -- auth.uid(), serta skema "storage". Lihat bahagian pertama hasil eksport.
 -- =====================================================================
 
@@ -36,8 +36,12 @@ parts as (
 $h$-- Snapshot struktur database Portal LPP
 -- Dijana: %s  ·  PostgreSQL %s
 -- Bina semula: run fail ini dalam database kosong (Supabase: SQL Editor).
--- Bukan Supabase: sediakan dahulu peranan anon/authenticated, skema auth
--- (auth.users, auth.uid()) dan skema storage (buckets, objects).$h$,
+-- Bukan Supabase: sediakan dahulu peranan anon/authenticated/service_role, skema auth
+-- (auth.users, auth.uid()) dan skema storage (buckets, objects).
+
+-- Fungsi mungkin merujuk fungsi lain yang dicipta kemudian (susunan abjad);
+-- sama seperti pg_dump, jangan semak isi fungsi semasa mencipta.
+set check_function_bodies = off;$h$,
     to_char(now() at time zone 'Asia/Kuching', 'YYYY-MM-DD HH24:MI "MYT"'),
     current_setting('server_version')) as sql
 

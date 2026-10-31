@@ -102,26 +102,17 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
 
 ### 1. Supabase
 
-Dalam Supabase → SQL Editor, run fail-fail ini **ikut urutan**:
+**Bina database baru (cara disyorkan):** dalam Supabase → SQL Editor, run
+**`schema-snapshot-2026-10-31.sql`** (atau snapshot terkini), kemudian
+migration yang lebih baru daripada snapshot itu:
 
-1. `schema.sql`
-2. `fix-rls-recursion.sql`
-3. `fix-storage-upload.sql`
-4. `migration-monthly-and-loginlog.sql`
-5. `migration-daily-entries.sql`
-6. `migration-dashboard-rpc.sql`
-7. `migration-dashboard-per-island.sql`
-8. `fix-rls-recursion-2.sql`
-9. `migration-targets-per-island.sql`
-10. `fix-insert-admin-bypass.sql`
-11. `migration-delete-policies.sql`
-12. `migration-kerani-step1.sql` (run **sendirian**, kemudian baru langkah 2)
-13. `migration-kerani-step2.sql`
-14. `migration-legacy-and-undo.sql`
-15. `migration-monthly-penyu.sql`
-16. `migration-minyak.sql`
-17. `migration-minyak-setel.sql`
-18. `migration-minyak-semakan.sql`
+1. `schema-snapshot-2026-10-31.sql` — struktur lengkap database sebenar
+2. `migration-fix-audit-dan-akses.sql`
+
+Fail `schema.sql`, `migration-*.sql` dan `fix-*.sql` yang lain ialah
+**sejarah** perubahan. Ia tidak lengkap (beberapa jadual & fungsi dahulu
+dicipta terus dalam Supabase) — jangan guna untuk bina database baru.
+Lihat **Snapshot struktur database** di bawah.
 
 Kemudian:
 
@@ -160,9 +151,11 @@ fail `migration-*.sql` baharu dan run dalam Supabase SQL Editor.
 
 ## Snapshot struktur database
 
-Fail SQL migration dalam repo **tidak lengkap**: beberapa jadual & fungsi
-Penyu (cth `app_settings`, `import_log`, `import_undo`, `monthly_hatch`,
-`delete_entries_with_backup()`, `undo_import()`) dicipta terus dalam Supabase.
+Fail migration lama dalam repo **tidak lengkap**: jadual `app_settings`,
+`import_log`, `import_undo`, `monthly_hatch`, fungsi
+`delete_entries_with_backup()`, `undo_import()`, `penyu_month_stats()`, serta
+versi terkini `get_dashboard_totals()` & `get_multi_year_monthly()` dicipta
+terus dalam Supabase. Snapshot 2026-10-31 mengandungi semuanya.
 
 `export-schema.sql` membaca struktur database sebenar (baca sahaja) dan
 menghasilkan satu skrip lengkap: enum, jadual, kekangan, indeks, fungsi,
@@ -171,11 +164,13 @@ trigger, RLS, polisi, bucket storage dan kebenaran. Tiada data.
 1. Supabase → SQL Editor → tampal `export-schema.sql` → Run.
 2. Salin sel `schema_sql` (atau Export → CSV) dan simpan dalam repo sebagai
    `schema-snapshot-<tarikh>.sql`.
-3. Ulang selepas setiap perubahan database.
+3. Ulang selepas setiap perubahan database. Setiap perubahan baharu tetap
+   ditulis sebagai fail `migration-*.sql` dalam repo dahulu, bukan terus
+   dalam SQL Editor.
 
 Untuk bina semula di database kosong (Supabase atau PostgreSQL lain), run
 snapshot terkini. PostgreSQL bukan Supabase perlu sediakan dahulu peranan
-`anon`/`authenticated`, skema `auth` (`auth.users`, `auth.uid()`) dan
+`anon`/`authenticated`/`service_role`, skema `auth` (`auth.users`, `auth.uid()`) dan
 skema `storage`.
 
 ## Tambah app baharu
