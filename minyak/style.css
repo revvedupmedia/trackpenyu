@@ -599,3 +599,11 @@ dialog.sheet-dialog .checkbox-field { color: rgba(255,255,255,0.85) !important; 
 .import-secondary { padding: 10px 14px; border-radius: var(--r-sm); font-size: 13px; color: rgba(255,255,255,.8); }
 .import-claim-all { display: flex; align-items: center; gap: 8px; font-size: 13px; color: rgba(255,255,255,.85); }
 .import-claim-all input { width: 18px; height: 18px; accent-color: var(--primary); }
+
+/* ── Animasi kad satu demi satu ───────────────── */
+@keyframes card-in { from { opacity: 0; transform: translateY(14px) scale(.97); } to { opacity: 1; transform: none; } }
+.card-in { animation: card-in .38s cubic-bezier(.22,1,.36,1) both; animation-delay: var(--d, 0ms); }
+@media (prefers-reduced-motion: reduce) { .card-in { animation: none; } }
+@keyframes bar-grow { from { transform: scaleX(0); } to { transform: none; } }
+.year-row.card-in .yr-seg { transform-origin: left center; animation: bar-grow .6s cubic-bezier(.22,1,.36,1) both; animation-delay: calc(var(--d, 0ms) + 120ms); }
+@media (prefers-reduced-motion: reduce) { .year-row.card-in .yr-seg { animation: none; } }

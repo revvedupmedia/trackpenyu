@@ -321,7 +321,40 @@ function render(){
   document.getElementById('gaugeSub').textContent=isYear?'jumlah tahun ini':'jumlah bulan ini';
   document.getElementById('emptyTitle').textContent=isYear?'Takde rekod tahun ni':'Takde rekod bulan ni';
   document.querySelectorAll('#viewToggle button').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view));
+  animSeq=0;
+  document.querySelectorAll('.hero-card, .stat-card, .import-open').forEach(animIn);
   renderGauge(); renderStats(); renderYear(); renderHistory();
+}
+
+// Kad muncul satu demi satu: 30ms antara kad, maksimum ~0.45s supaya senarai
+// panjang pun cepat siap. Hanya transform + opacity (licin di telefon).
+const REDUCED_MOTION=matchMedia('(prefers-reduced-motion: reduce)').matches;
+let animSeq=0;
+function animIn(el){
+  if(REDUCED_MOTION)return;
+  el.style.setProperty('--d',`${Math.min(animSeq++,15)*30}ms`);
+  el.classList.remove('card-in'); void el.offsetWidth; el.classList.add('card-in');
+}
+
+// Jumlah RM naik dari 0 (kira naik) bersama lukisan gauge.
+function countUp(el,to){
+  if(REDUCED_MOTION||to<=0){el.textContent=fmtRM(to);return;}
+  const t0=performance.now(),dur=700;
+  cancelAnimationFrame(countUp._raf);
+  const step=t=>{const k=Math.min(1,(t-t0)/dur),e=1-Math.pow(1-k,3);el.textContent=fmtRM(to*e);if(k<1)countUp._raf=requestAnimationFrame(step);};
+  countUp._raf=requestAnimationFrame(step);
+}
+
+// Lukis lengkok gauge dari kiri ke kanan.
+function drawArc(path,delay){
+  if(REDUCED_MOTION||!path.getAttribute('d'))return;
+  const L=path.getTotalLength();
+  path.style.transition='none';
+  path.style.strokeDasharray=`${L}`;
+  path.style.strokeDashoffset=`${L}`;
+  void path.getBoundingClientRect();
+  path.style.transition=`stroke-dashoffset .7s cubic-bezier(.22,1,.36,1) ${delay}ms`;
+  path.style.strokeDashoffset='0';
 }
 
 // Paparan Tahun: ringkasan setiap bulan (Diesel vs RON95). Tekan bulan => paparan Bulan.
@@ -352,13 +385,13 @@ function renderYear(){
       state.viewDate=new Date(state.viewDate.getFullYear(),i,1);
       loadEntries();
     });
-    table.appendChild(btn);
+    table.appendChild(btn); animIn(btn);
   });
 }
 
 function renderGauge(){
   const dT=sum('diesel'),rT=sum('ron95'),tot=dT+rT;
-  document.getElementById('gaugeTotal').textContent=fmtRM(tot);
+  countUp(document.getElementById('gaugeTotal'),tot);
   document.getElementById('dieselTotal').textContent=fmtRM(dT);
   document.getElementById('ronTotal').textContent=fmtRM(rT);
   const cx=120,cy=130,r=90;
@@ -367,6 +400,8 @@ function renderGauge(){
   const dEnd=180-(dT/tot*180);
   document.getElementById('gaugeDiesel').setAttribute('d',arc(cx,cy,r,180,dEnd));
   document.getElementById('gaugeRon').setAttribute('d',arc(cx,cy,r,dEnd,0));
+  drawArc(document.getElementById('gaugeDiesel'),80);
+  drawArc(document.getElementById('gaugeRon'),80+Math.round(dT/tot*500));
 }
 function sum(ft){return state.entries.filter(e=>e.fuel_type===ft).reduce((a,e)=>a+Number(e.amount||0),0);}
 function polar(cx,cy,r,a){const rad=a*Math.PI/180;return{x:cx+r*Math.cos(rad),y:cy-r*Math.sin(rad)};}
@@ -399,7 +434,7 @@ function renderHistory(){
       const h=document.createElement('li');
       h.className='history-month';
       h.textContent=`${MONTH_NAMES[Number(mo.slice(5,7))-1]} ${mo.slice(0,4)}`;
-      list.appendChild(h);
+      list.appendChild(h); animIn(h);
     }
     const li=document.createElement('li');
     const isD=entry.fuel_type==='diesel';
@@ -425,7 +460,7 @@ function renderHistory(){
         </div>
       </div>`;
     btn.addEventListener('click',()=>openDetail(entry,isOwner));
-    li.appendChild(btn); list.appendChild(li);
+    li.appendChild(btn); list.appendChild(li); animIn(li);
   }
 }
 
