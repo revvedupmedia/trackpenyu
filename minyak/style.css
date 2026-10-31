@@ -600,13 +600,16 @@ dialog.sheet-dialog .checkbox-field { color: rgba(255,255,255,0.85) !important; 
 .import-claim-all { display: flex; align-items: center; gap: 8px; font-size: 13px; color: rgba(255,255,255,.85); }
 .import-claim-all input { width: 18px; height: 18px; accent-color: var(--primary); }
 
-/* ── Animasi kad muncul semasa scroll ─────────── */
-/* Peralihan hanya pada .in, jadi bila render semula kad terus tersembunyi
-   (tiada pudar keluar) dan muncul semula bila kelihatan. */
-.reveal { opacity: 0; transform: translateY(28px) scale(.97); }
+/* ── Animasi kad ikut scroll (masuk & keluar, kiri/kanan berselang) ── */
+/* Hanya translateX (tiada skala), supaya kedudukan menegak kad tidak berubah
+   dan pemerhati scroll tidak berkelip di sempadan skrin. */
+.reveal { opacity: 0; transform: translateX(var(--x, -56px));
+  transition: opacity .4s ease, transform .55s cubic-bezier(.4,0,.2,1); }
+.reveal[data-side=r] { --x: 56px; }
 .reveal.in { opacity: 1; transform: none;
-  transition: opacity .6s ease, transform .75s cubic-bezier(.22,1,.36,1);
+  transition: opacity .55s ease, transform .7s cubic-bezier(.22,1,.36,1);
   transition-delay: var(--d, 0ms); }
+.content, .import-body { overflow-x: clip; }
 @keyframes bar-grow { from { clip-path: inset(0 100% 0 0 round 999px); } to { clip-path: inset(0 0 0 0 round 999px); } }
 .year-row.reveal .yr-bar { clip-path: inset(0 100% 0 0 round 999px); }
 .year-row.reveal.in .yr-bar { animation: bar-grow .8s cubic-bezier(.22,1,.36,1) both; animation-delay: calc(var(--d, 0ms) + 250ms); }

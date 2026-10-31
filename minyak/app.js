@@ -346,23 +346,30 @@ function render(){
   renderGauge(); renderStats(); renderYear(); renderHistory();
 }
 
-// Kad muncul bila masuk ke skrin semasa scroll. Kad yang masuk serentak
-// muncul berturutan (90ms antara satu sama lain). Hanya transform + opacity.
+// Kad sentiasa beranimasi ikut scroll: masuk bila kelihatan, keluar bila
+// meninggalkan skrin, masuk semula bila scroll balik. Arah berselang-seli:
+// kad pertama dari kiri, kad bawahnya dari kanan, dan seterusnya. Kad yang
+// masuk serentak berturutan (90ms). Hanya transform + opacity.
 const REDUCED_MOTION=matchMedia('(prefers-reduced-motion: reduce)').matches;
 let animSeq=0;
 const revealer=REDUCED_MOTION?null:new IntersectionObserver(items=>{
-  items.filter(i=>i.isIntersecting)
-    .sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top)
-    .forEach((i,n)=>{
-      i.target.style.setProperty('--d',`${Math.min(n,6)*90}ms`);
+  let n=0;
+  items.sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top).forEach(i=>{
+    if(i.isIntersecting){
+      i.target.style.setProperty('--d',`${Math.min(n++,6)*90}ms`);
       i.target.classList.add('in');
-      revealer.unobserve(i.target);
-    });
-},{rootMargin:'0px 0px -6% 0px',threshold:0.12});
+    } else i.target.classList.remove('in');
+  });
+},{rootMargin:'-3% 0px -3% 0px',threshold:0});
+// Kosongkan bekas senarai dan lepaskan kad lamanya dari pemerhati scroll.
+function forget(box){
+  if(revealer)box.querySelectorAll('.reveal').forEach(el=>revealer.unobserve(el));
+  box.innerHTML='';
+}
 function animIn(el){
   if(!revealer)return;
-  revealer.unobserve(el);
-  el.classList.remove('in');
+  el.dataset.side=animSeq++%2?'r':'l';
+  if(el.classList.contains('reveal'))return; // kad tetap (gauge, statistik) sudah diperhati
   el.classList.add('reveal');
   revealer.observe(el);
 }
@@ -400,7 +407,7 @@ function renderYear(){
   }
   const max=Math.max(1,...months.map(m=>m.diesel+m.ron95));
   const table=document.getElementById('yearTable');
-  table.innerHTML='';
+  forget(table);
   months.forEach((m,i)=>{
     const tot=m.diesel+m.ron95;
     const btn=document.createElement('button');
@@ -452,7 +459,7 @@ function renderStats(){
 function renderHistory(){
   const list=document.getElementById('historyList');
   const empty=document.getElementById('emptyState');
-  list.innerHTML='';
+  forget(list);
   if(!state.entries.length){empty.hidden=false;document.getElementById('historyCount').textContent='';return;}
   empty.hidden=true;
   document.getElementById('historyCount').textContent=`${state.entries.length} entry`;
@@ -970,7 +977,7 @@ function renderChecks(){
       tools.appendChild(b);
     }
   }
-  list.innerHTML='';
+  forget(list);
   chk.issues.forEach((it,idx)=>{
     const li=document.createElement('li');
     li.className=`imp-item imp-${it.level==='bad'?'bad':it.level==='warn'?'warn':'ok'} chk-item`;
@@ -992,7 +999,7 @@ function renderChecks(){
     list.appendChild(li);
   });
   const dw=document.getElementById('checkDeletedWrap'),dl=document.getElementById('checkDeleted');
-  dw.hidden=!chk.deleted.length; dl.innerHTML='';
+  dw.hidden=!chk.deleted.length; forget(dl);
   chk.deleted.slice(0,30).forEach(e=>{
     const li=document.createElement('li');li.className='imp-item chk-item imp-off-soft';
     li.innerHTML=`<div class="chk-entry"><span class="chk-e-main">${fmtDateShort(e.entry_date)} · ${e.fuel_type==='diesel'?'Diesel':'RON95'} · <b>${fmtRM(e.amount)}</b></span>
