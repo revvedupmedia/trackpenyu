@@ -1,0 +1,14 @@
+{
+  "name": "portal-lpp-tests",
+  "private": true,
+  "type": "module",
+  "description": "Ujian automatik Portal LPP. App sendiri tiada npm/build; ini untuk ujian sahaja.",
+  "scripts": {
+    "test": "node --test \"unit/*.test.mjs\" && playwright test",
+    "unit": "node --test \"unit/*.test.mjs\"",
+    "e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

@@ -1,0 +1,34 @@
+Receipt
+TOTAL AMOUNT
+RM 199.00
+MESRA POINTS EARNED
+300 pts
+Full name
+NAMA PELANGGAN UJIAN
+Email address
+pelanggan@contoh.my
+Tax invoice number
+aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee
+Created on
+9 Oct 2026, 9:58 AM
+Payment method
+Setel Wallet
+ITEM AMOUNT
+PETRONAS PRIMAX 95 with Pro-Drive (Pump 2)
+100.000 L x RM4.67
+RM 467.00
+BUDI RON95 subsidy
+100.000 L x RM2.68
+-RM 268.00
+Total RM 199.00
+Month October 2026
+Previous balance 276.895 L
+Balance used -100.000 L
+Remaining balance 176.895 L
+Order ID ***000000000000000
+BUDI RON95 litre 100.000 L
+Pump price RM4.67/L
+BUDI RON95 price RM1.99/L
+BUDI MADANI DETAILS
+PETRONAS Lundu
+Lot 257, Lundu Town DistrictCopyright @ 2026 Setel, All rights reserved. 1 of 1

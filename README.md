@@ -114,6 +114,7 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
 | `shared/portal.css` | Gaya landing, login dan portal |
 | `penyu/` | Penyu Tracker (`index.html`, `manifest.json`) |
 | `minyak/` | Minyak Tracker (`index.html`, `app.js`, `setel.js`, `style.css`, `manifest.json`, `icons/`) |
+| `tests/`, `.github/workflows/ujian.yml` | Ujian automatik (lihat **Ujian automatik**) |
 | `vendor/` | Semua library pihak ketiga, versi tetap (lihat `vendor/README.md` untuk versi & cara kemas kini) |
 | `penyu/tailwind.css` | CSS Tailwind statik untuk Penyu (bina semula selepas tambah kelas baharu) |
 | `sw.js` | Satu service worker untuk seluruh laman (network-first) |
@@ -200,6 +201,21 @@ Untuk bina semula di database kosong (Supabase atau PostgreSQL lain), run
 snapshot terkini. PostgreSQL bukan Supabase perlu sediakan dahulu peranan
 `anon`/`authenticated`/`service_role`, skema `auth` (`auth.users`, `auth.uid()`) dan
 skema `storage`.
+
+## Ujian automatik
+
+GitHub menjalankan semua ujian pada setiap push ke `main` (tab **Actions** →
+**Ujian**). Merah = ada yang rosak; laman tetap dideploy, jadi semak dan baiki.
+
+| Ujian | Apa yang disemak | Jalan secara lokal |
+|---|---|---|
+| **Database** (`tests/sql/`) | Bina dari snapshot + migration dalam PostgreSQL sebenar; 31 semakan RLS (staf/kerani/admin/tanpa log masuk), audit, MFA langkah 2; pusingan penuh `export-schema.sql` | `PGHOST=... PGUSER=... bash tests/sql/run.sh` |
+| **Pelayar** (`tests/e2e/`) | Landing, login, MFA, log keluar automatik, log ralat, backup, Penyu (semua skrin, library), Minyak (Tahun, penapis, Excel, Semakan Data, pendua, resit dikecilkan, Import Setel) | `cd tests && npm ci && npx playwright test` |
+| **Pembaca Setel** (`tests/unit/`) | Teks resit Setel sebenar (tanpa data peribadi) | `cd tests && npm run unit` |
+| **CSS Penyu** | `penyu/tailwind.css` sepadan dengan kelas dalam kod | `bash tests/check-tailwind.sh` |
+
+Ujian pelayar guna Supabase palsu (`tests/fixtures/fake-supabase.mjs`) supaya
+tiada data sebenar disentuh; peraturan akses diuji berasingan dalam PostgreSQL.
 
 ## Tambah app baharu
 
