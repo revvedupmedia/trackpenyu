@@ -16,6 +16,7 @@ echo "== Bina dari $SNAPSHOT + ${#MIGRATIONS[@]} migration"
 fresh lpp_test
 psql_db lpp_test -f "$SNAPSHOT"
 for m in "${MIGRATIONS[@]}"; do psql_db lpp_test -f "$m"; psql_db lpp_test -f "$m"; done   # dua kali: mesti selamat diulang
+export SNAPSHOT MIGRATIONS_LIST="${MIGRATIONS[*]}"
 
 echo "== RLS & audit"
 psql_db lpp_test -f tests/sql/rls.sql 2>&1 | grep -E 'OK:|GAGAL|ERROR' | sed 's/^.*NOTICE:  /  /'
@@ -25,6 +26,9 @@ psql_db lpp_test -f tests/sql/mfa.sql 2>&1 | grep -E 'OK:|GAGAL|ERROR' | sed 's/
 
 echo "== Urus Staf"
 psql_db lpp_test -f tests/sql/staff.sql 2>&1 | grep -E 'OK:|GAGAL|ERROR' | sed 's/^.*NOTICE:  /  /'
+
+echo "== Backup lengkap & pulih (alat/pulih-backup.mjs)"
+bash tests/sql/pulih.sh
 
 echo "== Pusingan penuh export-schema.sql"
 psql -X -At -v ON_ERROR_STOP=1 -d lpp_test -f export-schema.sql > "$OUT/a.sql"

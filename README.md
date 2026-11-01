@@ -86,9 +86,13 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
 
 ### Portal: Pentadbiran (admin sahaja)
 
-- **💾 Backup Data**: satu fail ZIP mengandungi semua jadual dalam Excel
-  (untuk dibaca) dan JSON (salinan lengkap). Portal ingatkan jika backup
-  terakhir lebih 30 hari. Gambar resit tidak termasuk.
+- **💾 Backup Data**: satu fail ZIP mengandungi semua jadual + senarai akaun
+  login (emel, ID, peranan; **tanpa kata laluan**) dalam Excel (untuk dibaca)
+  dan JSON (untuk dipulihkan). Tanda **Termasuk fail** untuk masukkan semua
+  resit Minyak & video latar (folder `fail/`). Portal ingatkan jika backup
+  terakhir lebih 30 hari. Simpan sekurang-kurangnya satu backup bulanan
+  **dengan fail** di luar Supabase (Google Drive pejabat). Cara pulih: lihat
+  **Pindah ke Supabase atau GitHub baharu**.
 - **🐞 Log Ralat**: ralat JavaScript dari peranti staf (30 terkini).
 - **👥 Urus Staf**: senarai semua akaun login (status MFA, log masuk
   terakhir); daftar akaun baharu, tukar nama/pulau/peranan, nyahaktif &
@@ -116,6 +120,8 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
 | `portal.html` | Pilih app selepas log masuk |
 | `shared/auth.js` | Klien Supabase, senarai app & peranan, semakan akses |
 | `shared/portal.css` | Gaya landing, login dan portal |
+| `shared/backup.js` | Senarai jadual dalam Backup Data (ujian gagal jika ada jadual tertinggal) |
+| `alat/pulih-backup.mjs` | Pulih ZIP backup ke projek Supabase (lihat **Pindah**) |
 | `penyu/` | Penyu Tracker (`index.html`, `manifest.json`) |
 | `minyak/` | Minyak Tracker (`index.html`, `app.js`, `setel.js`, `style.css`, `manifest.json`, `icons/`) |
 | `tests/`, `.github/workflows/ujian.yml` | Ujian automatik (lihat **Ujian automatik**) |
@@ -210,6 +216,75 @@ snapshot terkini. PostgreSQL bukan Supabase perlu sediakan dahulu peranan
 `anon`/`authenticated`/`service_role`, skema `auth` (`auth.users`, `auth.uid()`) dan
 skema `storage`.
 
+## Pindah ke Supabase atau GitHub baharu
+
+Semua alamat dalam app adalah relatif, dan alamat Supabase hanya ada di **satu
+tempat**: `SUPABASE_URL` & `SUPABASE_ANON_KEY` dalam `shared/auth.js`. Buat
+latihan pindah sekali setahun ke projek Supabase percuma yang baharu supaya
+langkah ini kekal teruji.
+
+### GitHub (repo ke akaun/organisasi lain)
+
+1. Repo → Settings → **Transfer ownership** → akaun organisasi baharu. Semua
+   kod, sejarah, PR dan Actions ikut sekali (GitHub juga ubah hala alamat lama).
+   Atau: cipta repo baharu dan `git push --mirror`.
+2. Settings → Pages → Branch `main`, `/ (root)` (sama seperti **Deploy**).
+3. Settings → Rules → cipta semula ruleset **Lindungi main** (wajib PR +
+   3 ujian lulus) jika tidak ikut.
+4. Alamat laman berubah (cth `https://<org>.github.io/trackpenyu/`). Kemas kini
+   Supabase → Authentication → URL Configuration: **Site URL** & **Redirect
+   URLs** (`.../login.html`). Domain sendiri (cth `portal.lpp.gov.my`): tambah
+   fail `CNAME` dan tetapkan dalam Settings → Pages.
+
+Tiada perubahan kod diperlukan. Laman juga boleh dihoskan di mana-mana
+pelayan fail statik (Netlify, Cloudflare Pages, pelayan sendiri): salin semua
+fail apa adanya.
+
+### Supabase (projek baharu)
+
+**Cara A (disyorkan, selagi projek lama masih boleh dibuka):** Supabase →
+projek lama → Database → Backups, atau `supabase db dump` (Supabase CLI)
+untuk skema `public` + `auth`. Ini membawa kata laluan & MFA sekali; ikut
+panduan rasmi Supabase "Migrating within Supabase", kemudian langkah 5–7 di
+bawah.
+
+**Cara B (dari ZIP Backup Data — juga jika projek lama sudah tiada):**
+
+1. Cipta projek Supabase baharu.
+2. SQL Editor: bina struktur ikut **Setup → 1. Supabase** (snapshot terkini +
+   migration selepasnya, termasuk MFA langkah 2 jika digunakan).
+3. Extract ZIP backup ke satu folder, kemudian di komputer yang ada Node.js
+   18+ dan salinan repo ini:
+   ```bash
+   node alat/pulih-backup.mjs ~/Backup_PortalLPP_2026-11-01 --url-baharu https://<projek-baharu>.supabase.co > pulih.sql
+   ```
+   Run `pulih.sql` dalam SQL Editor (fail besar: guna `psql` dengan
+   connection string dari Project Settings → Database). Ia memaparkan
+   bilangan baris dipulihkan bagi setiap jadual. Selamat diulang.
+   Akaun login dicipta semula dengan **ID asal**, jadi semua entri kekal
+   terikat pada staf yang betul. Akaun nyahaktif kekal disekat.
+4. Fail resit & video latar (backup dengan **Termasuk fail**): Storage →
+   pastikan bucket `minyak-receipts` (private) & `app-assets` (public) wujud
+   (snapshot menciptanya), kemudian:
+   ```bash
+   SUPABASE_URL=https://<projek-baharu>.supabase.co SUPABASE_SERVICE_KEY=<service_role key> \
+     node alat/pulih-backup.mjs ~/Backup_PortalLPP_2026-11-01 --muat-naik-fail
+   ```
+   Kunci `service_role` (Project Settings → API) memintas semua kawalan
+   akses: guna di komputer sendiri sahaja, jangan simpan dalam repo atau
+   hantar melalui chat/emel.
+5. `shared/auth.js`: tukar `SUPABASE_URL` & `SUPABASE_ANON_KEY` ke projek
+   baharu, naikkan `APP_VERSION`, buka PR seperti biasa.
+6. Authentication → URL Configuration: Site URL & Redirect URLs (seperti di
+   atas). Authentication → Providers → Email: tetapan sama seperti projek
+   lama (SMTP sendiri jika ada).
+7. Beritahu semua staf: log masuk → **Lupa kata laluan** (Cara B tidak
+   membawa kata laluan). Admin akan diminta imbas kod QR Authenticator
+   baharu. Semak Portal → 💾 Backup Data berjalan, dan buat backup pertama.
+
+Yang **tidak** dibawa oleh Cara B: kata laluan, faktor MFA, sesi aktif, log
+Supabase Auth. Semua data app, log audit dan fail dibawa.
+
 ## Ujian automatik
 
 GitHub menjalankan semua ujian pada setiap push ke `main` (tab **Actions** →
@@ -217,9 +292,9 @@ GitHub menjalankan semua ujian pada setiap push ke `main` (tab **Actions** →
 
 | Ujian | Apa yang disemak | Jalan secara lokal |
 |---|---|---|
-| **Database** (`tests/sql/`) | Bina dari snapshot + migration dalam PostgreSQL sebenar; 31 semakan RLS (staf/kerani/admin/tanpa log masuk), audit, MFA langkah 2; pusingan penuh `export-schema.sql` | `PGHOST=... PGUSER=... bash tests/sql/run.sh` |
+| **Database** (`tests/sql/`) | Bina dari snapshot + migration dalam PostgreSQL sebenar; semakan RLS (staf/kerani/admin/tanpa log masuk), audit, MFA langkah 2, Urus Staf; **setiap jadual ada dalam backup**; backup → `alat/pulih-backup.mjs` → database baharu sama dengan asal; pusingan penuh `export-schema.sql` | `PGHOST=... PGUSER=... bash tests/sql/run.sh` |
 | **Pelayar** (`tests/e2e/`) | Landing, login, MFA, log keluar automatik, log ralat, backup, Penyu (semua skrin, library), Minyak (Tahun, penapis, Excel, Semakan Data, pendua, resit dikecilkan, Import Setel) | `cd tests && npm ci && npx playwright test` |
-| **Pembaca Setel** (`tests/unit/`) | Teks resit Setel sebenar (tanpa data peribadi) | `cd tests && npm run unit` |
+| **Unit** (`tests/unit/`) | Pembaca resit Setel (teks sebenar tanpa data peribadi); alat pulih (SQL & muat naik fail) | `cd tests && npm run unit` |
 | **CSS Penyu** | `penyu/tailwind.css` sepadan dengan kelas dalam kod | `bash tests/check-tailwind.sh` |
 
 Ujian pelayar guna Supabase palsu (`tests/fixtures/fake-supabase.mjs`) supaya
@@ -232,10 +307,13 @@ tiada data sebenar disentuh; peraturan akses diuji berasingan dalam PostgreSQL.
 3. Di atas skrip app: `const { user, profile } = await requireApp('inventori')`.
 4. Jadual baharu dalam Supabase mesti ada RLS yang semak peranan (rujuk
    `can_use_minyak()` dalam `migration-minyak.sql`).
+5. Tambah setiap jadual baharu ke `shared/backup.js` (ujian Database gagal
+   jika terlupa) dan sebaris data contoh dalam `tests/sql/data-contoh.sql`.
 
 ## Had semasa
 
-- Pengurusan staf (tambah akaun, tukar pulau atau peranan) masih dibuat
-  melalui dashboard Supabase, bukan dalam app.
+- Akaun login baharu masih dicipta dalam Supabase → Authentication (Urus
+  Staf mendaftar profil selepas itu).
 - Jangan commit fail backup database atau fail import data ke repo. Fail
-  tersebut ada emel dan password hash pengguna.
+  tersebut ada emel dan password hash pengguna. `.gitignore` menghalang
+  `Backup_PortalLPP_*`, `backup-*.json` dan `pulih.sql`.

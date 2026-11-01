@@ -82,8 +82,9 @@
       <div class="admin-grid">
         <div class="card">
           <h3>💾 Backup Data</h3>
-          <p class="muted small">Muat turun semua jadual database (Excel untuk dibaca + JSON lengkap) dalam satu fail ZIP. Simpan di Google Drive atau komputer pejabat. Gambar resit tidak termasuk.</p>
+          <p class="muted small">Muat turun semua jadual database dan senarai akaun login (Excel untuk dibaca + JSON untuk dipulihkan) dalam satu fail ZIP. Simpan di Google Drive atau komputer pejabat.</p>
           <div id="backupStatus" class="msg" hidden></div>
+          <label class="check"><input type="checkbox" id="backupFiles"> Termasuk fail resit Minyak &amp; video latar (lebih besar, lebih lama)</label>
           <button class="btn btn-primary btn-block" id="backupBtn">Muat Turun Backup</button>
           <p class="small muted" id="backupProgress" style="margin:8px 0 0"></p>
         </div>
@@ -99,7 +100,8 @@
 </div>
 
 <script type="module">
-import { supabase, currentUser, appsFor, APPS, loginUrl, logout, ROOT, APP_VERSION, startIdleWatch } from './shared/auth.js'
+import { supabase, currentUser, appsFor, APPS, loginUrl, logout, ROOT, APP_VERSION, startIdleWatch, SUPABASE_URL } from './shared/auth.js'
+import { BACKUP_TABLES, BACKUP_FORMAT } from './shared/backup.js'
 document.getElementById('ver').textContent = `Portal LPP · versi ${APP_VERSION}`
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
@@ -240,10 +242,37 @@ function staffEditor(a, say) {
   })
   return f
 }
-// Semua jadual app. Jadual yang tiada/tidak boleh dibaca dilangkau dan dicatat.
-const BACKUP_TABLES = ['staff_profiles','daily_entries','nest_records','monthly_summaries','monthly_hatch',
-  'monthly_targets','targets','minyak_entries','minyak_settings','app_settings','notification_rules',
-  'import_log','import_undo','login_log','daily_entries_audit','nest_records_audit','minyak_entries_audit','client_errors']
+// Senarai jadual dalam shared/backup.js. Jadual yang tiada/tidak boleh dibaca
+// dilangkau dan dicatat dalam sheet Maklumat.
+
+// Fail Storage yang dirujuk oleh data: resit Minyak (bucket persendirian, guna
+// signed URL; entri lama projek dahulu ada receipt_url terus) dan video latar
+// Minyak (URL awam bucket app-assets). Disimpan dalam ZIP sebagai
+// fail/<bucket>/<path> supaya boleh dimuat naik semula ke laluan yang sama.
+function storageFiles(dump) {
+  const out = new Map()
+  for (const e of dump.minyak_entries || []) {
+    if (!e.receipt_path && !e.receipt_url) continue
+    let path = e.receipt_path
+    if (!path) try { path = decodeURIComponent(new URL(e.receipt_url).pathname.split('/minyak-receipts/')[1] || '') } catch { path = '' }
+    if (path) out.set('minyak-receipts/' + path, { bucket: 'minyak-receipts', path, url: e.receipt_url || null })
+  }
+  const bg = (dump.minyak_settings || []).find(s => s.key === 'bg_video_url')?.value
+  const m = typeof bg === 'string' && bg.match(/\/storage\/v1\/object\/public\/([^/]+)\/(.+)$/)
+  if (m) out.set(m[1] + '/' + decodeURIComponent(m[2]), { bucket: m[1], path: decodeURIComponent(m[2]), url: bg })
+  return [...out.values()]
+}
+async function downloadFile(f) {
+  let url = f.url
+  if (!url) {
+    const { data, error } = await supabase.storage.from(f.bucket).createSignedUrl(f.path, 600)
+    if (error) throw error
+    url = data.signedUrl
+  }
+  const res = await fetch(url)
+  if (!res.ok) throw new Error('HTTP ' + res.status)
+  return res.blob()
+}
 
 function loadScript(src) {
   return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('Gagal muat ' + src)); document.head.appendChild(s) })
@@ -270,7 +299,7 @@ async function setupAdmin() {
     status.hidden = false
     status.className = 'msg ' + (d === null || d > 30 ? 'msg-err' : 'msg-ok')
     status.innerHTML = d === null ? '⚠️ Belum pernah backup.'
-      : `${d > 30 ? '⚠️ ' : '✓ '}Backup terakhir ${d === 0 ? 'hari ini' : d + ' hari lalu'} oleh ${esc(last.by || '?')} (${(last.rows || 0).toLocaleString()} baris).${d > 30 ? ' Disyorkan sebulan sekali.' : ''}`
+      : `${d > 30 ? '⚠️ ' : '✓ '}Backup terakhir ${d === 0 ? 'hari ini' : d + ' hari lalu'} oleh ${esc(last.by || '?')} (${(last.rows || 0).toLocaleString()} baris${last.files != null ? `, ${last.files} fail` : ''}).${d > 30 ? ' Disyorkan sebulan sekali.' : ''}`
   }
   showLast()
 
@@ -288,32 +317,63 @@ async function setupAdmin() {
         try { dump[t] = await fetchAll(t); rows += dump[t].length; info.push([t, dump[t].length, '']) }
         catch (e) { info.push([t, 0, 'Dilangkau: ' + (e.message || e)]) }
       }
+      // Akaun login (Supabase Auth): emel + ID asal supaya data kekal terikat
+      // pada staf yang betul selepas dipulihkan. Kata laluan TIDAK pernah dibaca.
+      prog.textContent = 'Membaca akaun login...'
+      const { data: accRows, error: accErr } = await supabase.rpc('admin_list_accounts')
+      const accounts = (accRows || []).map(a => ({ id: a.id, email: a.email, created_at: a.created_at || null, last_sign_in_at: a.last_sign_in_at || null,
+        full_name: a.full_name, role: a.role, island: a.island, active: a.active, mfa: a.mfa, registered: a.registered }))
+      info.push(['akaun_login (Auth)', accounts.length, accErr ? 'Dilangkau: ' + accErr.message : 'Tanpa kata laluan'])
+
+      const zip = new JSZip()
+      const files = { included: 0, failed: [] }
+      if (document.getElementById('backupFiles').checked) {
+        const list = storageFiles(dump)
+        const total = list.length
+        let done = 0, bytes = 0
+        const next = async () => {
+          for (let f; (f = list.shift());) {
+            try { const b = await downloadFile(f); bytes += b.size; zip.file(`fail/${f.bucket}/${f.path}`, b, { compression: 'STORE' }); files.included++ }
+            catch (e) { files.failed.push({ bucket: f.bucket, path: f.path, error: String(e.message || e) }) }
+            prog.textContent = `Memuat turun fail ${++done}/${total} (${(bytes / 1048576).toFixed(1)} MB)...`
+          }
+        }
+        await Promise.all([next(), next(), next(), next()])   // 4 serentak
+        info.push(['fail (resit & video)', files.included, files.failed.length ? `${files.failed.length} gagal: lihat meta.files dalam JSON` : ''])
+      }
+
       prog.textContent = 'Membina fail...'
       const stamp = new Date()
-      const meta = { app: 'Portal LPP', version: APP_VERSION, created_at: stamp.toISOString(), created_by: user.email, tables: info.slice(1) }
+      const meta = { app: 'Portal LPP', format: BACKUP_FORMAT, version: APP_VERSION, created_at: stamp.toISOString(), created_by: user.email,
+        supabase_url: SUPABASE_URL, tables: info.slice(1), files: document.getElementById('backupFiles').checked ? files : null }
       const wb = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Backup Portal LPP'], ['Dijana', stamp.toLocaleString('ms-MY')], ['Oleh', user.email], ['Versi app', APP_VERSION], [], ...info]), 'Maklumat')
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Backup Portal LPP'], ['Dijana', stamp.toLocaleString('ms-MY')], ['Oleh', user.email], ['Versi app', APP_VERSION], ['Supabase', SUPABASE_URL], [], ...info]), 'Maklumat')
       // Excel untuk dibaca; JSON = salinan lengkap (sel Excel dihadkan 32,767 aksara).
       const cell = (v) => v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v).slice(0, 32000) : v
-      for (const [t, data] of Object.entries(dump)) {
+      const sheet = (name, data) => {
         const cols = [...new Set(data.flatMap(r => Object.keys(r)))]
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([cols, ...data.map(r => cols.map(c => cell(r[c])))]), t.slice(0, 31))
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([cols, ...data.map(r => cols.map(c => cell(r[c])))]), name.slice(0, 31))
       }
+      for (const [t, data] of Object.entries(dump)) sheet(t, data)
+      sheet('akaun_login', accounts)
       const tag = stamp.toISOString().slice(0, 10)
-      const zip = new JSZip()
-      zip.file(`backup-${tag}.json`, JSON.stringify({ meta, data: dump }, null, 1))
+      zip.file(`backup-${tag}.json`, JSON.stringify({ meta, data: dump, accounts }, null, 1))
       zip.file(`backup-${tag}.xlsx`, XLSX.write(wb, { type: 'array', bookType: 'xlsx' }))
-      zip.file('BACA-SAYA.txt', `Backup Portal LPP ${stamp.toLocaleString('ms-MY')} oleh ${user.email}\n\n` +
-        `backup-${tag}.xlsx : semua jadual, satu sheet setiap jadual (untuk dibaca)\n` +
-        `backup-${tag}.json : salinan lengkap data (untuk dipulihkan oleh pentadbir sistem)\n\n` +
-        `Struktur database: schema-snapshot-*.sql dalam repo GitHub.\nGambar resit TIDAK termasuk (ada dalam Supabase Storage).\n`)
+      zip.file('BACA-SAYA.txt', `Backup Portal LPP ${stamp.toLocaleString('ms-MY')} oleh ${user.email}\r\n\r\n` +
+        `backup-${tag}.xlsx : semua jadual + senarai akaun login, satu sheet setiap jadual (untuk dibaca)\r\n` +
+        `backup-${tag}.json : salinan lengkap (untuk dipulihkan dengan alat/pulih-backup.mjs dalam repo GitHub)\r\n` +
+        (meta.files ? `fail/              : ${files.included} fail resit & video latar (fail/<bucket>/<laluan>)${files.failed.length ? `, ${files.failed.length} gagal dimuat turun` : ''}\r\n`
+          : `Fail resit & video latar TIDAK termasuk (tanda "Termasuk fail" untuk masukkan).\r\n`) +
+        `\r\nKata laluan tidak termasuk: selepas dipulihkan, staf guna "Lupa kata laluan".\r\n` +
+        `Struktur database: schema-snapshot-*.sql + migration dalam repo GitHub.\r\nCara pulih / pindah: README.md bahagian "Pindah ke Supabase atau GitHub baharu".\r\n`)
       const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
       const a = document.createElement('a')
       a.href = URL.createObjectURL(blob); a.download = `Backup_PortalLPP_${tag}.zip`
       document.body.appendChild(a); a.click(); a.remove()
       setTimeout(() => URL.revokeObjectURL(a.href), 60e3)
-      await supabase.from('app_settings').upsert({ key: 'last_backup', value: { at: stamp.toISOString(), by: user.email, rows } }, { onConflict: 'key' })
-      prog.textContent = `Siap: ${rows.toLocaleString()} baris, ${(blob.size / 1048576).toFixed(1)} MB.`
+      await supabase.from('app_settings').upsert({ key: 'last_backup', value: { at: stamp.toISOString(), by: user.email, rows, files: meta.files ? files.included : null } }, { onConflict: 'key' })
+      prog.textContent = `Siap: ${rows.toLocaleString()} baris, ${accounts.length} akaun${meta.files ? `, ${files.included} fail` : ''}, ${(blob.size / 1048576).toFixed(1)} MB.` +
+        (files.failed.length ? ` ⚠️ ${files.failed.length} fail gagal dimuat turun.` : '')
       showLast()
     } catch (e) {
       prog.textContent = 'Gagal: ' + (e.message || e)

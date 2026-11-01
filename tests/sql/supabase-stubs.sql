@@ -20,3 +20,14 @@ alter table auth.users add column if not exists created_at timestamptz default n
 alter table auth.users add column if not exists last_sign_in_at timestamptz;
 alter table auth.users add column if not exists banned_until timestamptz;
 create table if not exists auth.mfa_factors (id uuid primary key default gen_random_uuid(), user_id uuid references auth.users(id) on delete cascade, status text, factor_type text default 'totp');
+-- Lajur & jadual Auth yang diisi oleh alat/pulih-backup.mjs (subset Supabase sebenar).
+alter table auth.users add column if not exists aud varchar(255);
+alter table auth.users add column if not exists role varchar(255);
+alter table auth.users add column if not exists encrypted_password varchar(255);
+alter table auth.users add column if not exists email_confirmed_at timestamptz;
+alter table auth.users add column if not exists confirmation_token varchar(255);
+alter table auth.users add column if not exists recovery_token varchar(255);
+alter table auth.users add column if not exists raw_app_meta_data jsonb;
+create table if not exists auth.identities (id uuid primary key default gen_random_uuid(), provider_id text not null,
+  user_id uuid not null references auth.users(id) on delete cascade, identity_data jsonb not null, provider text not null,
+  created_at timestamptz, updated_at timestamptz, unique (provider_id, provider));

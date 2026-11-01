@@ -1,3 +1,7 @@
 tests/node_modules/
 tests/test-results/
 tests/playwright-report/
+# Data sebenar (emel staf, resit): JANGAN commit.
+Backup_PortalLPP_*
+backup-*.json
+pulih.sql
