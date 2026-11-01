@@ -56,6 +56,9 @@ test('Penyu: CSS statik mengandungi setiap kelas Tailwind yang digunakan di skri
 })
 
 test('Penyu: admin tukar pulau dari tajuk skrin dan kembali ke skrin yang sama', async ({ page }) => {
+  // Kad pulau terapung tanpa henti; Playwright hanya klik sasaran yang tidak
+  // bergerak. Ujian ini tentang logik tukar pulau, jadi matikan animasi.
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   await boot(page, adminSession())
   await page.addInitScript(() => { if (!sessionStorage.getItem('penyu-island')) sessionStorage.setItem('penyu-island', 'PTB') })
   await page.goto('penyu/#entries')
@@ -78,4 +81,16 @@ test('Mod Pembentangan kekal gelap & boleh dibaca dalam mod cerah', async ({ pag
   const rgb = await h.evaluate((e) => getComputedStyle(e).color)
   const [r, g, b] = rgb.match(/\d+/g).map(Number)
   expect(r + g + b).toBeGreaterThan(600)
+})
+
+test('Pilih pulau: kad bergambar, pulau semasa ditanda, jumlah telur dipaparkan', async ({ page }) => {
+  await boot(page, adminSession())
+  await page.addInitScript(() => sessionStorage.setItem('penyu-island', 'PTK'))
+  await page.goto('penyu/#island')
+  const cards = page.locator('.isl-card')
+  await expect(cards).toHaveCount(3)
+  await expect(page.locator('.isl-card.current')).toHaveAttribute('data-code', 'PTK')
+  for (const i of [0, 1, 2]) await expect.poll(() => cards.nth(i).locator('img').evaluate((im) => im.complete && im.naturalWidth)).toBeGreaterThan(0)
+  await expect(page.locator('.isl-eggs').first()).toContainText('telur sejak 1990')
+  expect(page.errors).toEqual([])
 })
