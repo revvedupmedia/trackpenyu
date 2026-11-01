@@ -332,6 +332,15 @@ tiada data sebenar disentuh; peraturan akses diuji berasingan dalam PostgreSQL.
 
 ## Had semasa
 
+- **Supabase pelan percuma** menghentikan projek selepas ~7 hari tiada
+  aktiviti. GitHub Actions **Jaga Supabase** (`.github/workflows/jaga-supabase.yml`)
+  mengetuk Supabase (baca sahaja) setiap Isnin & Khamis. Jika Supabase tidak
+  menjawab, job merah dan GitHub menghantar emel: buka Supabase → projek →
+  **Restore**. Ini mengurangkan risiko tetapi tidak dijamin oleh Supabase;
+  penyelesaian tetap ialah pelan Pro. GitHub menghentikan jadual ini jika
+  repo tiada commit selama 60 hari (emel amaran dihantar): tekan **Enable
+  workflow** dalam tab Actions.
+
 - Akaun login baharu masih dicipta dalam Supabase → Authentication (Urus
   Staf mendaftar profil selepas itu).
 - Jangan commit fail backup database atau fail import data ke repo. Fail

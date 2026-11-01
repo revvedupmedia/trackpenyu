@@ -1,0 +1,52 @@
+# Jaga Supabase: elak projek pelan percuma "tertidur" (dihentikan selepas
+# ~7 hari tiada aktiviti) dan beri amaran jika Supabase tidak menjawab.
+#
+# Dua kali seminggu, GitHub membuat permintaan BACA SAHAJA ke Supabase dengan
+# kunci awam yang sama seperti laman (diambil terus dari shared/auth.js, jadi
+# tetap betul selepas pindah projek). Tiada rahsia, tiada data diubah.
+#
+# Jika gagal (Supabase sudah dihentikan/rosak), job ini merah dan GitHub
+# menghantar emel kepada pemilik repo: buka Supabase dan tekan "Restore".
+# Nota: Supabase tidak menjamin ini dikira sebagai aktiviti; penyelesaian
+# tetap ialah pelan Pro. Run manual: Actions → Jaga Supabase → Run workflow.
+name: Jaga Supabase
+
+on:
+  schedule:
+    - cron: '17 1 * * 1,4'   # Isnin & Khamis 09:17 waktu Malaysia
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ketuk:
+    name: Ketuk Supabase (baca sahaja)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: shared/auth.js
+          sparse-checkout-cone-mode: false
+      - name: Semak Auth & database
+        run: |
+          set -euo pipefail
+          URL=$(grep -oP "SUPABASE_URL = '\K[^']+" shared/auth.js)
+          KEY=$(grep -oP "SUPABASE_ANON_KEY = '\K[^']+" shared/auth.js)
+          [ -n "$URL" ] && [ -n "$KEY" ] || { echo "::error::SUPABASE_URL/ANON_KEY tidak dijumpai dalam shared/auth.js"; exit 1; }
+          ketuk() {   # $1 = nama, selebihnya = argumen curl
+            local name=$1; shift
+            for i in 1 2 3; do
+              rm -f /tmp/out
+              code=$(curl -sS -o /tmp/out -w '%{http_code}' --max-time 30 -H "apikey: $KEY" -H "Authorization: Bearer $KEY" "$@") || code=000
+              [ "$code" = 200 ] && { echo "OK  $name"; return 0; }
+              echo "Cuba $i: $name HTTP $code $(head -c 200 /tmp/out 2>/dev/null)"; sleep 20
+            done
+            echo "::error::$name gagal (HTTP $code). Supabase mungkin sudah dihentikan: buka supabase.com/dashboard → projek → Restore."
+            return 1
+          }
+          ketuk "Auth" "$URL/auth/v1/health"
+          # Fungsi database sebenar (bukan cache): tanpa log masuk ia pulangkan false.
+          ketuk "Database" -X POST -H 'Content-Type: application/json' -d '{}' "$URL/rest/v1/rpc/can_use_minyak"
+          grep -qx false /tmp/out || { echo "::error::Jawapan database tidak dijangka: $(head -c 200 /tmp/out)"; exit 1; }
