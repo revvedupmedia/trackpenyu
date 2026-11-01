@@ -86,6 +86,10 @@ input[type=email], input[type=password], input[type=text] {
 }
 html.light input[type=email], html.light input[type=password], html.light input[type=text] { background: rgba(255, 255, 255, .7); }
 input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Senarai pilihan <select> dipapar oleh sistem (cth latar terang di Windows):
+   tetapkan warna sendiri supaya teks sentiasa boleh dibaca. */
+select option { background: #123244; color: #F7F2E7; }
+html.light select option { background: #FFFFFF; color: #0A1F2B; }
 .field { display: grid; gap: 6px; margin-bottom: 12px; }
 .field label { font-size: 13px; color: var(--muted); font-weight: 500; }
 .check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); margin-bottom: 12px; }

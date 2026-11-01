@@ -12,7 +12,7 @@ export const ROOT = new URL('../', import.meta.url).href
 
 // Versi app (tarikh keluaran). Naikkan setiap kali deploy perubahan yang
 // pengguna akan nampak; dipaparkan di login, portal dan panel admin.
-export const APP_VERSION = '2026.11.01.3'
+export const APP_VERSION = '2026.11.01.4'
 
 // Pautan reset dari emel datang dengan token dalam #hash. Simpan dulu sebelum
 // klien Supabase membaca & memadamkannya.
@@ -100,7 +100,12 @@ export async function requireApp(appId) {
 }
 
 // reason: 'idle' bila dilog keluar automatik (dipaparkan di halaman login).
+// Sekali sahaja: panggilan berulang (cth semakan tidak aktif yang tertunggak
+// selepas telefon dibuka semula) tidak membatalkan navigasi yang pertama.
+let loggingOut = false
 export async function logout(reason) {
+  if (loggingOut) return
+  loggingOut = true
   try { await supabase.auth.signOut() } catch {}
   try { sessionStorage.clear() } catch {}
   location.replace(loginUrl('', reason === 'idle' ? 'sebab=tidak-aktif' : ''))
