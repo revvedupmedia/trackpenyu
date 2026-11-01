@@ -90,15 +90,19 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
   (untuk dibaca) dan JSON (salinan lengkap). Portal ingatkan jika backup
   terakhir lebih 30 hari. Gambar resit tidak termasuk.
 - **🐞 Log Ralat**: ralat JavaScript dari peranti staf (30 terkini).
+- **👥 Urus Staf**: senarai semua akaun login (status MFA, log masuk
+  terakhir); daftar akaun baharu, tukar nama/pulau/peranan, nyahaktif &
+  aktifkan semula (akaun disekat dalam Supabase Auth, rekod lama kekal),
+  **Reset MFA** (hilang telefon). Admin tidak boleh turunkan atau nyahaktif
+  diri sendiri; setiap perubahan direkod dalam `staff_audit`.
 
 ### Keselamatan
 
 - **MFA admin**: akaun admin perlu kod 6 digit dari app Authenticator
   (Google/Microsoft Authenticator, percuma) selepas kata laluan. Kali pertama,
   app tunjuk kod QR untuk didaftarkan. Tetapan: `MFA_WAJIB_ADMIN` dalam
-  `shared/auth.js`. **Hilang telefon:** admin lain buang faktor MFA akaun itu di
-  Supabase → Authentication → Users → (pengguna) → MFA, kemudian pengguna
-  daftar semula semasa log masuk. Sebab itu, sekurang-kurangnya 2 admin.
+  `shared/auth.js`. **Hilang telefon:** admin lain → Portal → 👥 Urus Staf →
+  pengguna itu → **Reset MFA**; pengguna imbas kod QR baharu semasa log masuk. Sebab itu, sekurang-kurangnya 2 admin.
 - **Log keluar automatik** selepas 30 minit tanpa aktiviti (amaran 1 minit
   sebelum). Tetapan: `IDLE_MINUTES` dalam `shared/auth.js`.
 - Nombor versi app: `APP_VERSION` dalam `shared/auth.js` (naikkan setiap deploy).
@@ -137,6 +141,7 @@ migration yang lebih baru daripada snapshot itu:
 5. `migration-mfa-admin-wajib.sql` — **hanya selepas semua admin sudah
    sediakan app Authenticator**: database sendiri hanya beri kuasa admin
    kepada sesi yang lepasi MFA
+6. `migration-urus-staf.sql` — 👥 Urus Staf dalam Portal
 
 Fail `schema.sql`, `migration-*.sql` dan `fix-*.sql` yang lain ialah
 **sejarah** perubahan. Ia tidak lengkap (beberapa jadual & fungsi dahulu
@@ -145,9 +150,11 @@ Lihat **Snapshot struktur database** di bawah.
 
 Kemudian:
 
-1. Authentication → Add User → cipta akaun login.
-2. Table Editor → `staff_profiles` → tambah baris dengan `id` pengguna
-   tersebut, nama, pulau, dan `role` (`staff`, `admin` atau `kerani`).
+1. Authentication → Add User → Create new user (emel + kata laluan
+   sementara, tandakan **Auto Confirm User**).
+2. Portal → Pentadbiran → **👥 Urus Staf** → tekan akaun "Belum didaftar" →
+   isi nama, pulau, peranan → **Daftar Staf**. (Admin pertama sahaja perlu
+   didaftar melalui Supabase → Table Editor → `staff_profiles`.)
 3. Authentication → URL Configuration → **Redirect URLs** → tambah
    `https://revvedupmedia.github.io/trackpenyu/login.html` (pautan reset
    kata laluan kembali ke halaman ini).

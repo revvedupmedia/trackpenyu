@@ -12,7 +12,7 @@ export const ROOT = new URL('../', import.meta.url).href
 
 // Versi app (tarikh keluaran). Naikkan setiap kali deploy perubahan yang
 // pengguna akan nampak; dipaparkan di login, portal dan panel admin.
-export const APP_VERSION = '2026.11.01.1'
+export const APP_VERSION = '2026.11.01.3'
 
 // Pautan reset dari emel datang dengan token dalam #hash. Simpan dulu sebelum
 // klien Supabase membaca & memadamkannya.
@@ -71,6 +71,12 @@ export async function currentUser() {
   const user = data?.session?.user || null
   if (!user) return { user: null, profile: null }
   const { data: profile } = await supabase.from('staff_profiles').select('*').eq('id', user.id).maybeSingle()
+  // Staf yang dinyahaktif (Portal → Urus Staf): tamatkan sesi yang masih ada.
+  if (profile && profile.active === false) {
+    try { await supabase.auth.signOut() } catch {}
+    location.replace(loginUrl('', 'sebab=nyahaktif'))
+    return new Promise(() => {})
+  }
   return { user, profile: profile || null, mfaPending: await needsMfa(profile) }
 }
 

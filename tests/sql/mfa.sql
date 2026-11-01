@@ -19,4 +19,3 @@ set request.jwt.claim.sub = 'bbbbbbbb-0000-4000-8000-000000000002';
 set request.jwt.claims = '{"aal":"aal1"}';
 select test_assert((select count(*) from minyak_entries) > 0, 'kerani tidak terjejas oleh MFA admin');
 reset role;
-drop function public.test_assert(boolean, text);

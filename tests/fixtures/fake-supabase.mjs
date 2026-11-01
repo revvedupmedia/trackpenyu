@@ -66,7 +66,25 @@ function query(table) {
 export function createClient() {
   return {
     from: query,
-    rpc: async () => ({ data: null, error: null }),
+    rpc: async (fn, args = {}) => {
+      calls.push(['rpc', fn, args])
+      if (!fn.startsWith('admin_')) return { data: null, error: null }
+      // Tiruan fungsi Urus Staf: hanya admin dengan MFA (sama seperti database).
+      const meProfile = T('staff_profiles').find((p) => p.id === me().id)
+      if (meProfile?.role !== 'admin' || F().aal !== 'aal2') return { data: null, error: { code: '42501', message: 'Hanya admin' } }
+      const prof = (id) => T('staff_profiles').find((p) => p.id === id)
+      if (fn === 'admin_list_accounts') return { data: (F().accounts || []).map((u) => { const p = prof(u.id); return {
+        id: u.id, email: u.email, last_sign_in_at: u.last_sign_in_at || null, full_name: p?.full_name || null, island: p?.island || null,
+        role: p?.role || null, active: p ? p.active !== false : true, mfa: !!u.mfa, registered: !!p } }), error: null }
+      if (fn === 'admin_save_staff') {
+        if (args.p_id === me().id && args.p_role !== 'admin') return { data: null, error: { message: 'P0001: Anda tidak boleh turunkan peranan admin anda sendiri' } }
+        const p = prof(args.p_id); const v = { id: args.p_id, full_name: args.p_full_name, island: args.p_island, role: args.p_role }
+        if (p) Object.assign(p, v); else T('staff_profiles').push({ ...v, active: true })
+      }
+      if (fn === 'admin_set_active') prof(args.p_id).active = args.p_active
+      if (fn === 'admin_reset_mfa') (F().accounts || []).find((u) => u.id === args.p_id).mfa = false
+      save(); return { data: null, error: null }
+    },
     storage: {
       from: (bucket) => ({
         upload: async (path, file) => { calls.push(['upload', bucket, path, file.size, file.type, file.name]); return { error: null } },
