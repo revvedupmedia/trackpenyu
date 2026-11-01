@@ -32,7 +32,8 @@ test('Penyu: staf terus ke pulau sendiri, tiada butang Portal (satu app sahaja)'
   await boot(page, { session: true, user: { id: 'u-staf', email: 'staf@contoh.my' }, tables: { staff_profiles: profiles } })
   await page.goto('portal.html')
   await page.waitForURL(/\/penyu\//)
-  await expect(page.locator('#islandBadge')).toHaveText('PTK')
+  await expect(page.locator('#app')).toContainText('PTK')
+  await expect(page.locator('.island-switch')).toHaveCount(0)   // staf tidak boleh tukar pulau
   await expect(page.locator('#navPortal')).toBeHidden()
 })
 
@@ -52,4 +53,29 @@ test('Penyu: CSS statik mengandungi setiap kelas Tailwind yang digunakan di skri
   // Cangkuk JavaScript tanpa gaya CSS (gaya ditulis terus pada elemen).
   const JS_HOOKS = ['month-hp-ghost', 'mhp-count']
   expect(missing.filter((c) => !JS_HOOKS.includes(c))).toEqual([])
+})
+
+test('Penyu: admin tukar pulau dari tajuk skrin dan kembali ke skrin yang sama', async ({ page }) => {
+  await boot(page, adminSession())
+  await page.addInitScript(() => { if (!sessionStorage.getItem('penyu-island')) sessionStorage.setItem('penyu-island', 'PTB') })
+  await page.goto('penyu/#entries')
+  await expect(page.locator('.island-switch')).toContainText('PTB')
+  await page.click('.island-switch')
+  await page.waitForURL(/#island$/)
+  await page.click('[data-code=PSB]')
+  await page.waitForURL(/#entries$/)
+  await expect(page.locator('.island-switch')).toContainText('PSB')
+})
+
+test('Mod Pembentangan kekal gelap & boleh dibaca dalam mod cerah', async ({ page }) => {
+  await boot(page, adminSession())
+  await page.addInitScript(() => { sessionStorage.setItem('penyu-island', 'PTB'); localStorage.setItem('penyu-theme', 'light') })
+  await page.goto('penyu/#dashboard')
+  await page.click('#presModeBtn')
+  const h = page.locator('.pres h1, .pres h2').first()
+  await expect(h).toBeVisible()
+  // Teks cerah atas latar gelap: warna teks mesti terang (bukan warna teks mod cerah #0A1F2B).
+  const rgb = await h.evaluate((e) => getComputedStyle(e).color)
+  const [r, g, b] = rgb.match(/\d+/g).map(Number)
+  expect(r + g + b).toBeGreaterThan(600)
 })
