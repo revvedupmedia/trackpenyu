@@ -128,6 +128,7 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
 | `alat/pulih-backup.mjs` | Pulih ZIP backup ke projek Supabase (lihat **Pindah**) |
 | `penyu/` | Penyu Tracker (`index.html`, `manifest.json`) |
 | `minyak/` | Minyak Tracker (`index.html`, `app.js`, `setel.js`, `style.css`, `manifest.json`, `icons/`) |
+| `.claude/settings.json`, `.claude/hooks/` | Tetapan Claude Code: tool Supabase yang tidak perlu klik kebenaran, dan hook yang menyekat projek Supabase selain PenyuTrack |
 | `tests/`, `.github/workflows/ujian.yml` | Ujian automatik (lihat **Ujian automatik**) |
 | `vendor/` | Semua library pihak ketiga, versi tetap (lihat `vendor/README.md` untuk versi & cara kemas kini) |
 | `penyu/tailwind.css` | CSS Tailwind statik untuk Penyu (bina semula selepas tambah kelas baharu) |
