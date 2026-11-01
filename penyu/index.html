@@ -106,6 +106,37 @@
   .island-switch:hover { background:rgba(110,231,183,.26); }
   .island-switch:active { transform:scale(.95); }
   html.light .island-switch { background:rgba(15,118,110,.1); border-color:rgba(15,118,110,.4); color:#0F766E; }
+  /* Skrin pilih pulau: kad bergambar (gaya Mod Pembentangan). Melebar melepasi
+     bekas #app (max-w-lg) di skrin besar supaya tiga kad muat sebaris. */
+  .isl-pick { --w: min(1040px, calc(100vw - 32px)); width: var(--w); margin-left: calc(50% - var(--w) / 2); padding-top: 1.5rem; }
+  .isl-pick-head { text-align:center; margin-bottom:1.6rem; }
+  .isl-eyebrow { font-size:.72rem; font-weight:700; letter-spacing:.28em; text-transform:uppercase; color:#6EE7B7; margin-bottom:.4rem; }
+  html.light .isl-eyebrow { color:#0F766E; }
+  .isl-pick-head h1 { font-size:clamp(1.9rem, 6vw, 3.1rem); line-height:1.05; font-weight:700; }
+  .isl-grid { display:grid; gap:1rem; grid-template-columns:repeat(auto-fit, minmax(250px, 1fr)); }
+  .isl-card { position:relative; overflow:hidden; border-radius:22px; height:clamp(150px, 26vh, 330px); padding:0; border:1px solid rgba(255,255,255,.12);
+    background:#0b2a35; cursor:pointer; text-align:left; box-shadow:0 18px 40px -18px rgba(0,0,0,.7);
+    animation: islIn .6s cubic-bezier(.16,1,.3,1) both, islBob 6.5s ease-in-out infinite; animation-delay: calc(var(--i) * 90ms), calc(var(--i) * -1.4s);
+    transition: transform .45s cubic-bezier(.16,1,.3,1), box-shadow .45s; }
+  .isl-card img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transition:transform 1.2s cubic-bezier(.16,1,.3,1); }
+  .isl-card::after { content:''; position:absolute; inset:0; background:linear-gradient(180deg, rgba(3,14,20,0) 30%, rgba(3,14,20,.9) 100%); }
+  .isl-card:hover { transform:translateY(-6px); box-shadow:0 30px 60px -20px rgba(0,0,0,.8), 0 0 0 2px rgba(110,231,183,.55); }
+  .isl-card:hover img { transform:scale(1.08); }
+  /* Berhenti terapung bila ditunjuk/difokus supaya sasaran tidak bergerak semasa ditekan. */
+  .isl-card:hover, .isl-card:focus-visible { animation-play-state: paused; }
+  .isl-card.current { box-shadow:0 0 0 2px #6EE7B7, 0 18px 40px -18px rgba(0,0,0,.7); }
+  .isl-card.picked { transform:scale(1.04); box-shadow:0 0 0 3px #6EE7B7, 0 0 70px rgba(110,231,183,.35); }
+  .isl-card.picked img { transform:scale(1.2); }
+  .isl-lbl { position:absolute; left:18px; right:18px; bottom:16px; z-index:2; display:flex; flex-direction:column; gap:2px; }
+  .isl-pick .isl-lbl, .isl-pick .isl-lbl * { color:#F1F5F4; text-shadow:0 2px 12px rgba(0,0,0,.6); }
+  .isl-pick .isl-code { font-size:.72rem; font-weight:800; letter-spacing:.2em; color:#6EE7B7; }
+  .isl-name { font-size:clamp(1.25rem, 3.4vw, 1.7rem); font-weight:700; line-height:1.1; }
+  .isl-eggs { font-size:.82rem; opacity:.85; font-variant-numeric:tabular-nums; min-height:1.2em; }
+  .isl-back { display:block; width:max-content; margin:1.6rem auto 0; font-size:.875rem; text-decoration:underline; opacity:.75; }
+  .isl-back:hover { opacity:1; }
+  @keyframes islIn { from { opacity:0; transform:translateY(22px) scale(.97); } to { opacity:1; transform:none; } }
+  @keyframes islBob { 0%,100% { translate:0 0 } 50% { translate:0 -6px } }
+  @media (prefers-reduced-motion: reduce) { .isl-card { animation:none; } }
   /* Teks atas butang & tab hijau gelap: putih dalam kedua-dua mod. */
   html.light .btn-primary, html.light .btn-primary *, html.light .seg button.active, html.light .seg button.active * { color:#F7F2E7; }
 
@@ -592,36 +623,50 @@ function screenSplash() {
 }
 
 // ---------- Island select ----------
+// Kad bergambar seperti Mod Pembentangan ("Tiga pulau, satu misi"). Jumlah
+// telur sejak 1990 dimuat di latar belakang (data sama dengan Pembentangan).
 function screenIsland() {
   const wrap = document.createElement('div')
-  wrap.className = 'flex flex-col items-center gap-8 mt-10 screen'
+  wrap.className = 'isl-pick screen'
   wrap.innerHTML = `
-    <div class="text-center">
-      <h1 class="font-display text-3xl font-semibold">Penyu Tracker</h1>
-      <p class="opacity-80 mt-2">Pilih pulau untuk sesi ini</p>
+    <div class="isl-pick-head">
+      <div class="isl-eyebrow">Pilih pulau</div>
+      <h1 class="font-display">Tiga pulau, satu misi</h1>
     </div>
-    <div class="grid gap-4 w-full stagger" id="islandList"></div>
+    <div class="isl-grid" id="islandList"></div>
+    <a href="../portal.html" class="isl-back">← Kembali ke portal</a>
   `
   const list = wrap.querySelector('#islandList')
-  ISLANDS.forEach(isl => {
-    const c = card(`
-      <button class="w-full text-left flex items-center justify-between" data-code="${isl.code}">
-        <div><div class="font-display text-xl">${isl.code}</div><div class="text-sm opacity-80">${isl.name}</div></div>
-        <span class="text-2xl">→</span>
-      </button>`)
-    c.querySelector('button').onclick = () => {
+  PRES_ISLANDS.filter(isl => isl.img).forEach((isl, i) => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'isl-card' + (isl.code === state.island ? ' current' : '')
+    b.dataset.code = isl.code
+    b.style.setProperty('--i', i)
+    b.innerHTML = `
+      <img src="${isl.img}" alt="" />
+      <span class="isl-lbl">
+        <span class="isl-code">${isl.code}${isl.code === state.island ? ' · sesi semasa' : ''}</span>
+        <span class="isl-name font-display">${isl.name}</span>
+        <span class="isl-eggs" data-code="${isl.code}">&nbsp;</span>
+      </span>`
+    b.onclick = () => {
+      b.classList.add('picked')
       setIsland(isl.code)
       const back = sessionStorage.getItem('penyu-island-return')
       sessionStorage.removeItem('penyu-island-return')
-      go(back && IN_APP_ROUTES.includes(back) ? back : 'entry')
+      setTimeout(() => go(back && IN_APP_ROUTES.includes(back) ? back : 'entry'), 260)
     }
-    list.appendChild(c)
+    list.appendChild(b)
   })
-  const back = document.createElement('a')
-  back.href = '../portal.html'
-  back.className = 'text-sm underline opacity-75 hover:opacity-100'
-  back.textContent = '← Kembali ke portal'
-  wrap.appendChild(back)
+  loadPresData().then(data => {
+    wrap.querySelectorAll('.isl-eggs').forEach(el => {
+      const n = data.years.reduce((a, y) => a + yearSummary(data.byIsl[el.dataset.code][y], y).dikutip, 0)
+      const t0 = performance.now()
+      const step = (t) => { const k = Math.min(1, (t - t0) / 900); el.innerHTML = `<b>${Math.round(n * (1 - Math.pow(1 - k, 3))).toLocaleString()}</b> telur sejak 1990`; if (k < 1) requestAnimationFrame(step) }
+      requestAnimationFrame(step)
+    })
+  }).catch(() => {})
   return wrap
 }
 
