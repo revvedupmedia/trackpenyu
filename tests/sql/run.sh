@@ -5,8 +5,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 SNAPSHOT=$(ls schema-snapshot-*.sql | sort | tail -1)
-# Migration yang lebih baru daripada snapshot (ikut README), kecuali MFA langkah 2.
-MIGRATIONS=(migration-fix-audit-dan-akses.sql migration-minyak-audit.sql migration-log-ralat.sql migration-urus-staf.sql migration-urus-staf-fix-ban.sql migration-keselamatan-fungsi.sql)
+# Migration yang lebih baru daripada snapshot (ikut README → Setup). Tiada buat
+# masa ini: snapshot 2026-11-01 sudah termasuk semua migration.
+MIGRATIONS=()
 OUT=$(mktemp -d)
 export PGOPTIONS="-c client_min_messages=warning"
 psql_db() { psql -X -q -v ON_ERROR_STOP=1 -d "$@"; }

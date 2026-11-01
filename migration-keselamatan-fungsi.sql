@@ -16,6 +16,7 @@
 --    SECURITY DEFINER sentiasa merujuk jadual yang betul.
 --
 -- Batalkan: run semula definisi fungsi dari schema-snapshot-2026-10-31.sql
+-- (dalam sejarah git: git show 4b8458c:schema-snapshot-2026-10-31.sql)
 -- dan "grant execute on function ... to anon".
 
 -- ---------- 1. Statistik Penyu: semak akses ----------
