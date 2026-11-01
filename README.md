@@ -142,6 +142,7 @@ migration yang lebih baru daripada snapshot itu:
    sediakan app Authenticator**: database sendiri hanya beri kuasa admin
    kepada sesi yang lepasi MFA
 6. `migration-urus-staf.sql` — 👥 Urus Staf dalam Portal
+7. `migration-urus-staf-fix-ban.sql` — pembaikan nyahaktif (log masuk ralat "Database error querying schema")
 
 Fail `schema.sql`, `migration-*.sql` dan `fix-*.sql` yang lain ialah
 **sejarah** perubahan. Ia tidak lengkap (beberapa jadual & fungsi dahulu

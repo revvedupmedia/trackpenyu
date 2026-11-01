@@ -68,3 +68,17 @@ test('staf dinyahaktif: sesi lama ditamatkan dengan mesej', async ({ page }) => 
   await page.waitForURL(/sebab=nyahaktif/)
   await expect(page.locator('.msg-err:not([hidden])')).toContainText('dinyahaktifkan')
 })
+
+test('Urus Staf: pilihan dropdown boleh dibaca (kontras teks/latar)', async ({ page }) => {
+  await boot(page, { ...adminSession(), accounts })
+  await page.goto('portal.html')
+  await page.locator('.staff-row', { hasText: 'baru@contoh.my' }).locator('.staff-sum').click()
+  const lum = (c) => { const [r, g, b] = c.match(/\d+/g).map(Number); return 0.299 * r + 0.587 * g + 0.114 * b }
+  for (const sel of ['#sfIsland option', '#sfRole option']) {
+    const { color, bg } = await page.locator(sel).first().evaluate((o) => ({ color: getComputedStyle(o).color, bg: getComputedStyle(o).backgroundColor }))
+    // Latar mesti ditetapkan sendiri (bukan lutsinar): sistem seperti Windows
+    // melukis senarai dengan latar terang dan teks tema gelap tenggelam.
+    expect(bg, `${sel} tiada warna latar sendiri`).not.toBe('rgba(0, 0, 0, 0)')
+    expect(Math.abs(lum(color) - lum(bg)), `${sel}: ${color} atas ${bg}`).toBeGreaterThan(120)
+  }
+})
