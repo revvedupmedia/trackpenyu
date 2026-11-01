@@ -20,6 +20,35 @@ Melayu yang ringkas, terangkan kesan kepada staf, bukan butiran teknikal.
 5. Setiap perubahan app: naikkan `APP_VERSION` dalam `shared/auth.js`.
    Kelas Tailwind baharu dalam Penyu: bina semula `penyu/tailwind.css`.
 
+## Keselamatan: wajib dalam SETIAP perubahan
+
+Matlamat pemilik: elak digodam. Tiada sistem 100% kebal; kerja kita ialah
+menutup setiap pintu yang boleh ditutup dan tidak pernah melemahkan yang ada.
+Sebelum buka PR, semak diff terhadap senarai ini dan nyatakan dalam PR apa
+yang disemak:
+
+- **Akses ditentukan oleh database, bukan app.** Jadual baharu: RLS hidup,
+  polisi ikut peranan, ujian akses dalam `tests/sql/` (staf/kerani/admin/
+  tanpa log masuk). Tiada polisi `using (true)` untuk data sebenar.
+- **Fungsi `SECURITY DEFINER`**: semak pemanggil di dalam fungsi, ada
+  `set search_path`, tutup daripada `anon` jika tidak perlu
+  (`tests/sql/fungsi.sql`).
+- **Teks dari pengguna/database** dimasukkan ke HTML hanya melalui `esc()`
+  (elak XSS). Jangan `innerHTML` data mentah.
+- **Fail sensitif** (resit) dalam bucket persendirian + signed URL sahaja.
+- **Rahsia**: hanya kunci awam (publishable/anon) dalam kod. Tiada
+  `service_role`, kata laluan atau token dalam repo, log atau chat.
+- **Library pihak ketiga**: versi tetap dalam `vendor/`; semak CVE sebelum
+  tambah atau naik taraf. Tiada skrip dari CDN luar.
+- **Jangan lemahkan**: MFA admin, log keluar automatik, sekatan staf
+  dinyahaktif, RLS, ujian sedia ada. Jangan langkau atau matikan ujian.
+- **Selepas perubahan database**: jalankan Supabase Security Advisor
+  (baca sahaja) dan laporkan sebarang amaran baharu kepada pemilik.
+- Perubahan yang menyentuh log masuk, peranan, RLS atau fungsi: jalankan
+  semakan keselamatan diff (`/security-review`) sebelum PR.
+- Jumpa kelemahan (walaupun di luar tugas semasa): beritahu pemilik segera
+  dengan cadangan pembaikan; jangan diamkan.
+
 ## Database (Supabase)
 
 - Sentuh projek **PenyuTrack sahaja**. Projek lain dalam akaun (cth
