@@ -22,6 +22,28 @@
   .admin-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
   .admin-grid h3 { font-size: 19px; margin-bottom: 6px; }
   .err-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; }
+  .staff-card { margin-bottom: 16px; }
+  .staff-head { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; }
+  .staff-head .btn { min-height: 38px; padding: 6px 12px; }
+  .staff-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .staff-row { border-radius: 12px; background: rgba(0,0,0,.18); border: 1px solid transparent; }
+  .staff-row.open { border-color: var(--accent); }
+  .staff-row.off { opacity: .6; }
+  .staff-sum { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; padding: 10px 12px; background: none; border: 0; color: inherit; text-align: left; cursor: pointer; font: inherit; }
+  .staff-name { font-weight: 600; font-size: 14.5px; }
+  .staff-sub { grid-column: 1; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .staff-tags { grid-row: 1 / span 2; grid-column: 2; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .tag { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; background: rgba(255,255,255,.08); white-space: nowrap; }
+  .tag-new { background: rgba(232,160,32,.2); color: #F2B84B; }
+  .tag-admin { background: rgba(110,231,183,.18); color: var(--accent); }
+  .tag-off { background: rgba(255,107,107,.18); color: #FF8A8A; }
+  .staff-edit { padding: 4px 12px 12px; display: grid; gap: 10px; }
+  .staff-edit .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .staff-edit select { width: 100%; min-height: 46px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--card-border); background: rgba(0,0,0,.18); color: var(--text); font: 400 15px 'Inter', sans-serif; }
+  html.light .staff-edit select { background: rgba(255,255,255,.7); }
+  .staff-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .staff-actions .btn { min-height: 40px; padding: 8px 14px; font-size: 14px; }
+  .btn-danger { background: transparent; color: #FF8A8A; border-color: rgba(255,107,107,.45); }
   .err-list li { display: flex; flex-direction: column; gap: 2px; font-size: 13px; padding: 8px 10px; border-radius: 10px; background: rgba(0,0,0,.18); word-break: break-word; }
 </style>
 </head>
@@ -48,6 +70,15 @@
 
     <section id="adminZone" class="admin-zone" hidden>
       <h2>🛠 Pentadbiran</h2>
+      <div class="card staff-card">
+        <div class="staff-head">
+          <div><h3>👥 Urus Staf</h3>
+          <p class="muted small" style="margin:0">Daftar akaun baharu, tukar peranan & pulau, nyahaktif, reset MFA. Akaun login baharu dicipta dahulu di Supabase → Authentication → Add user.</p></div>
+          <button class="btn btn-ghost" id="staffReload" title="Muat semula">↻</button>
+        </div>
+        <div id="staffMsg" class="msg" hidden></div>
+        <ul id="staffList" class="staff-list"><li class="muted small">Memuatkan...</li></ul>
+      </div>
       <div class="admin-grid">
         <div class="card">
           <h3>💾 Backup Data</h3>
@@ -129,6 +160,86 @@ else {
 }
 
 // ---------- Pentadbiran (admin sahaja; RLS juga hadkan kepada admin) ----------
+
+// 👥 Urus Staf: fungsi admin_* dalam database (migration-urus-staf.sql) semak
+// admin + MFA sendiri; skrin ini hanya memanggilnya.
+const ISLANDS = [['PTB', 'Talang-Talang Besar'], ['PTK', 'Talang-Talang Kechil'], ['PSB', 'Satang Besar']]
+const ROLES = [['staff', 'Staf'], ['kerani', 'Kerani'], ['admin', 'Admin']]
+const fmtDay = (d) => d ? new Date(d).toLocaleDateString('ms-MY', { day: 'numeric', month: 'short', year: 'numeric' }) : 'belum pernah'
+let staffOpen = null, staffFlash = null
+
+async function setupStaff() {
+  const list = document.getElementById('staffList'), msg = document.getElementById('staffMsg')
+  const say = (t, ok) => { msg.hidden = !t; msg.className = 'msg ' + (ok ? 'msg-ok' : 'msg-err'); msg.textContent = t || '' }
+  document.getElementById('staffReload').onclick = () => { say(''); setupStaff() }
+  const { data, error } = await supabase.rpc('admin_list_accounts')
+  if (error) {
+    list.innerHTML = `<li class="muted small">${/admin_list_accounts|function/.test(error.message) ? 'Belum dipasang: run migration-urus-staf.sql dalam Supabase.' : esc(error.message)}</li>`
+    return
+  }
+  const pending = data.filter(a => !a.registered).length
+  list.innerHTML = ''
+  // Mesej hasil tindakan terakhir diutamakan; jika tiada, ingatkan akaun belum didaftar.
+  if (staffFlash) { say(staffFlash, true); staffFlash = null }
+  else say(pending ? `${pending} akaun login belum didaftar sebagai staf. Tekan untuk daftar.` : '', true)
+  for (const a of data) {
+    const li = document.createElement('li')
+    li.className = 'staff-row' + (a.registered && !a.active ? ' off' : '') + (staffOpen === a.id ? ' open' : '')
+    const role = ROLES.find(r => r[0] === a.role)?.[1]
+    li.innerHTML = `
+      <button type="button" class="staff-sum">
+        <span class="staff-name">${esc(a.full_name || a.email)}</span>
+        <span class="staff-tags">${!a.registered ? '<span class="tag tag-new">Belum didaftar</span>' : ''}${role ? `<span class="tag ${a.role === 'admin' ? 'tag-admin' : ''}">${role}</span>` : ''}${a.island ? `<span class="tag">${a.island}</span>` : ''}${a.registered && !a.active ? '<span class="tag tag-off">Nyahaktif</span>' : ''}${a.role === 'admin' ? `<span class="tag">${a.mfa ? 'MFA ✓' : 'MFA ✗'}</span>` : ''}</span>
+        <span class="staff-sub">${esc(a.email)} · log masuk terakhir ${fmtDay(a.last_sign_in_at)}</span>
+      </button>`
+    li.querySelector('.staff-sum').onclick = () => { staffOpen = staffOpen === a.id ? null : a.id; setupStaff() }
+    if (staffOpen === a.id) li.appendChild(staffEditor(a, say))
+    list.appendChild(li)
+  }
+}
+
+function staffEditor(a, say) {
+  const isMe = a.id === user.id
+  const f = document.createElement('div')
+  f.className = 'staff-edit'
+  f.innerHTML = `
+    <div class="field" style="margin:0"><label>Nama penuh</label><input type="text" id="sfName" value="${esc(a.full_name || '')}" placeholder="cth Siti Huzaimah binti Razali" /></div>
+    <div class="row2">
+      <div class="field" style="margin:0"><label>Pulau</label><select id="sfIsland">${ISLANDS.map(([c, n]) => `<option value="${c}" ${(a.island || 'PTB') === c ? 'selected' : ''}>${c} · ${n}</option>`).join('')}</select></div>
+      <div class="field" style="margin:0"><label>Peranan</label><select id="sfRole" ${isMe ? 'disabled' : ''}>${ROLES.map(([c, n]) => `<option value="${c}" ${(a.role || 'staff') === c ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+    </div>
+    ${isMe ? '<p class="small muted" style="margin:0">Ini akaun anda: peranan dan status tidak boleh diubah sendiri.</p>' : ''}
+    <div class="staff-actions">
+      <button type="button" class="btn btn-primary" id="sfSave">${a.registered ? 'Simpan' : 'Daftar Staf'}</button>
+      ${a.registered && !isMe ? `<button type="button" class="btn btn-ghost ${a.active ? 'btn-danger' : ''}" id="sfActive">${a.active ? 'Nyahaktif' : 'Aktifkan semula'}</button>` : ''}
+      ${a.mfa ? '<button type="button" class="btn btn-ghost" id="sfMfa">Reset MFA</button>' : ''}
+    </div>`
+  const run = async (btn, fn, okText) => {
+    btn.disabled = true
+    const { error } = await fn()
+    btn.disabled = false
+    if (error) { say(/permission|42501|Hanya admin/i.test(error.message + error.code) ? 'Tiada kebenaran. Log masuk semula sebagai admin (dengan MFA).' : error.message.replace(/^.*?: /, ''), false); return }
+    staffFlash = okText; staffOpen = null; setupStaff()
+  }
+  f.querySelector('#sfSave').onclick = (e) => {
+    const name = f.querySelector('#sfName').value.trim()
+    if (!name) { say('Nama penuh diperlukan.', false); return }
+    const role = f.querySelector('#sfRole').value
+    if (role === 'admin' && a.role !== 'admin' && !confirm(`Jadikan ${name} ADMIN? Admin boleh ubah semua data dan urus staf.`)) return
+    run(e.target, () => supabase.rpc('admin_save_staff', { p_id: a.id, p_full_name: name, p_island: f.querySelector('#sfIsland').value, p_role: role }),
+      a.registered ? `${name} dikemas kini ✓` : `${name} didaftar ✓ — boleh log masuk sekarang.`)
+  }
+  f.querySelector('#sfActive')?.addEventListener('click', (e) => {
+    const off = a.active
+    if (off && !confirm(`Nyahaktif ${a.full_name}? Dia tidak boleh log masuk lagi. Rekod lama kekal.`)) return
+    run(e.target, () => supabase.rpc('admin_set_active', { p_id: a.id, p_active: !off }), off ? `${a.full_name} dinyahaktif.` : `${a.full_name} diaktifkan semula ✓`)
+  })
+  f.querySelector('#sfMfa')?.addEventListener('click', (e) => {
+    if (!confirm(`Reset MFA ${a.full_name || a.email}? Dia perlu imbas kod QR baharu pada log masuk seterusnya.${isMe ? ' (Ini akaun anda sendiri.)' : ''}`)) return
+    run(e.target, () => supabase.rpc('admin_reset_mfa', { p_id: a.id }), 'MFA direset. Kod QR baharu akan dipaparkan pada log masuk seterusnya.')
+  })
+  return f
+}
 // Semua jadual app. Jadual yang tiada/tidak boleh dibaca dilangkau dan dicatat.
 const BACKUP_TABLES = ['staff_profiles','daily_entries','nest_records','monthly_summaries','monthly_hatch',
   'monthly_targets','targets','minyak_entries','minyak_settings','app_settings','notification_rules',
@@ -150,6 +261,7 @@ const daysAgo = (iso) => Math.floor((Date.now() - new Date(iso)) / 864e5)
 
 async function setupAdmin() {
   document.getElementById('adminZone').hidden = false
+  setupStaff()
   const status = document.getElementById('backupStatus')
   const showLast = async () => {
     const { data } = await supabase.from('app_settings').select('value').eq('key', 'last_backup').maybeSingle()

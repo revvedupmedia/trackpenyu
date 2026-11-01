@@ -66,6 +66,7 @@ function showLogin(prefill = '') {
       <div class="field"><label for="email">Emel</label><input type="email" id="email" required autocomplete="email" value="${esc(prefill)}" /></div>
       <div class="field"><label for="pw">Kata laluan</label><input type="password" id="pw" required autocomplete="current-password" /></div>
       ${new URLSearchParams(location.search).get('sebab') === 'tidak-aktif' ? '<div class="msg msg-ok">Anda telah dilog keluar kerana tiada aktiviti. Sila log masuk semula.</div>' : ''}
+      ${new URLSearchParams(location.search).get('sebab') === 'nyahaktif' ? '<div class="msg msg-err">Akaun anda telah dinyahaktifkan. Hubungi admin.</div>' : ''}
       <div id="err" class="msg msg-err" hidden></div>
       <button class="btn btn-primary btn-block" id="btn">Log Masuk</button>
       <div class="center" style="margin-top:10px"><button type="button" class="link-btn" id="forgot">Lupa kata laluan?</button></div>
@@ -82,7 +83,8 @@ function showLogin(prefill = '') {
       password: view.querySelector('#pw').value
     })
     if (error) {
-      err.textContent = /invalid login/i.test(error.message) ? 'Emel atau kata laluan salah.' : error.message
+      err.textContent = /invalid login/i.test(error.message) ? 'Emel atau kata laluan salah.'
+        : /banned/i.test(error.message) ? 'Akaun anda telah dinyahaktifkan. Hubungi admin.' : error.message
       err.hidden = false
       btn.disabled = false
       btn.textContent = 'Log Masuk'

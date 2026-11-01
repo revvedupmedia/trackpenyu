@@ -15,3 +15,8 @@ create or replace function auth.jwt() returns jsonb language sql stable as $$ se
 -- Kebenaran asas yang Supabase beri secara automatik.
 grant usage on schema auth, storage to anon, authenticated;
 grant select, insert, update, delete on storage.objects to anon, authenticated;
+-- Lajur & jadual auth yang digunakan oleh Urus Staf (wujud dalam Supabase sebenar).
+alter table auth.users add column if not exists created_at timestamptz default now();
+alter table auth.users add column if not exists last_sign_in_at timestamptz;
+alter table auth.users add column if not exists banned_until timestamptz;
+create table if not exists auth.mfa_factors (id uuid primary key default gen_random_uuid(), user_id uuid references auth.users(id) on delete cascade, status text, factor_type text default 'totp');
