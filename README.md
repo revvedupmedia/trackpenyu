@@ -107,6 +107,10 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
   app tunjuk kod QR untuk didaftarkan. Tetapan: `MFA_WAJIB_ADMIN` dalam
   `shared/auth.js`. **Hilang telefon:** admin lain → Portal → 👥 Urus Staf →
   pengguna itu → **Reset MFA**; pengguna imbas kod QR baharu semasa log masuk. Sebab itu, sekurang-kurangnya 2 admin.
+- **Fungsi database**: fungsi `SECURITY DEFINER` (berjalan dengan kuasa penuh)
+  mesti menyemak sendiri siapa pemanggil, ada `set search_path`, dan ditutup
+  daripada `anon` jika tidak diperlukan sebelum log masuk. Ujian Database
+  gagal jika fungsi baharu terlepas (`tests/sql/fungsi.sql`).
 - **Log keluar automatik** selepas 30 minit tanpa aktiviti (amaran 1 minit
   sebelum). Tetapan: `IDLE_MINUTES` dalam `shared/auth.js`.
 - Nombor versi app: `APP_VERSION` dalam `shared/auth.js` (naikkan setiap deploy).
@@ -149,6 +153,9 @@ migration yang lebih baru daripada snapshot itu:
    kepada sesi yang lepasi MFA
 6. `migration-urus-staf.sql` — 👥 Urus Staf dalam Portal
 7. `migration-urus-staf-fix-ban.sql` — pembaikan nyahaktif (log masuk ralat "Database error querying schema")
+8. `migration-keselamatan-fungsi.sql` — statistik Penyu hanya untuk pengguna
+   log masuk (staff: pulau sendiri), fungsi ditutup daripada pengguna belum
+   log masuk, `search_path` tetap
 
 Fail `schema.sql`, `migration-*.sql` dan `fix-*.sql` yang lain ialah
 **sejarah** perubahan. Ia tidak lengkap (beberapa jadual & fungsi dahulu
@@ -165,6 +172,10 @@ Kemudian:
 3. Authentication → URL Configuration → **Redirect URLs** → tambah
    `https://revvedupmedia.github.io/trackpenyu/login.html` (pautan reset
    kata laluan kembali ke halaman ini).
+4. Authentication → Attack Protection (atau Providers → Email) → hidupkan
+   **Prevent use of leaked passwords**: kata laluan baharu yang pernah bocor di
+   internet (semakan HaveIBeenPwned) ditolak. Kata laluan sedia ada tidak
+   terjejas. (Ciri ini mungkin memerlukan pelan Supabase Pro.)
 
 URL dan anon key Supabase ada dalam `shared/auth.js`.
 

@@ -148,6 +148,17 @@ set check_function_bodies = off;$h$,
   group by g.table_name, g.grantee
   union all
   select 14, '~schema', 'grant§ usage on schema public to anon, authenticated;'
+  -- Fungsi yang ditutup daripada pengguna belum log masuk (lalai PostgreSQL:
+  -- semua orang boleh EXECUTE, jadi sekatan mesti dieksport secara jelas).
+  union all
+  select 14, '~fn.' || f.proname || '(' || pg_get_function_identity_arguments(f.oid) || ')',
+    format('revoke§ execute on function public.%I(%s) from public, anon;', f.proname, pg_get_function_identity_arguments(f.oid))
+    || case when g.roles <> '' then format(E'\ngrant§ execute on function public.%I(%s) to %s;', f.proname, pg_get_function_identity_arguments(f.oid), g.roles) else '' end
+  from fn f
+  cross join lateral (select concat_ws(', ',
+      case when has_function_privilege('authenticated', f.oid, 'execute') then 'authenticated' end,
+      case when has_function_privilege('service_role', f.oid, 'execute') then 'service_role' end) as roles) g
+  where not has_function_privilege('anon', f.oid, 'execute')
 
   -- 13. Bucket storage
   union all
