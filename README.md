@@ -141,21 +141,16 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
 ### 1. Supabase
 
 **Bina database baru (cara disyorkan):** dalam Supabase → SQL Editor, run
-**`schema-snapshot-2026-10-31.sql`** (atau snapshot terkini), kemudian
-migration yang lebih baru daripada snapshot itu:
+**`schema-snapshot-2026-11-01.sql`** (snapshot terkini): struktur lengkap
+database sebenar, termasuk semua migration hingga
+`migration-keselamatan-fungsi.sql`. Jika ada fail `migration-*.sql` yang
+lebih baru daripada snapshot, run selepasnya (tiada buat masa ini; senarai
+sama dalam `tests/sql/run.sh` → `MIGRATIONS`).
 
-1. `schema-snapshot-2026-10-31.sql` — struktur lengkap database sebenar
-2. `migration-fix-audit-dan-akses.sql`
-3. `migration-minyak-audit.sql` — Log Perubahan Minyak
-4. `migration-log-ralat.sql` — Log Ralat
-5. `migration-mfa-admin-wajib.sql` — **hanya selepas semua admin sudah
-   sediakan app Authenticator**: database sendiri hanya beri kuasa admin
-   kepada sesi yang lepasi MFA
-6. `migration-urus-staf.sql` — 👥 Urus Staf dalam Portal
-7. `migration-urus-staf-fix-ban.sql` — pembaikan nyahaktif (log masuk ralat "Database error querying schema")
-8. `migration-keselamatan-fungsi.sql` — statistik Penyu hanya untuk pengguna
-   log masuk (staff: pulau sendiri), fungsi ditutup daripada pengguna belum
-   log masuk, `search_path` tetap
+Snapshot ini sudah termasuk **MFA admin langkah 2**
+(`migration-mfa-admin-wajib.sql`): database hanya beri kuasa admin kepada sesi
+yang lepasi kod Authenticator. Admin pertama akan diminta imbas kod QR semasa
+log masuk pertama.
 
 Fail `schema.sql`, `migration-*.sql` dan `fix-*.sql` yang lain ialah
 **sejarah** perubahan. Ia tidak lengkap (beberapa jadual & fungsi dahulu
@@ -209,7 +204,7 @@ Fail migration lama dalam repo **tidak lengkap**: jadual `app_settings`,
 `import_log`, `import_undo`, `monthly_hatch`, fungsi
 `delete_entries_with_backup()`, `undo_import()`, `penyu_month_stats()`, serta
 versi terkini `get_dashboard_totals()` & `get_multi_year_monthly()` dicipta
-terus dalam Supabase. Snapshot 2026-10-31 mengandungi semuanya.
+terus dalam Supabase. Snapshot terkini mengandungi semuanya.
 
 `export-schema.sql` membaca struktur database sebenar (baca sahaja) dan
 menghasilkan satu skrip lengkap: enum, jadual, kekangan, indeks, fungsi,
@@ -303,7 +298,7 @@ GitHub menjalankan semua ujian pada setiap push ke `main` (tab **Actions** →
 
 | Ujian | Apa yang disemak | Jalan secara lokal |
 |---|---|---|
-| **Database** (`tests/sql/`) | Bina dari snapshot + migration dalam PostgreSQL sebenar; semakan RLS (staf/kerani/admin/tanpa log masuk), audit, MFA langkah 2, Urus Staf; **setiap jadual ada dalam backup**; backup → `alat/pulih-backup.mjs` → database baharu sama dengan asal; pusingan penuh `export-schema.sql` | `PGHOST=... PGUSER=... bash tests/sql/run.sh` |
+| **Database** (`tests/sql/`) | Bina dari snapshot + migration dalam PostgreSQL sebenar; semakan RLS (staf/kerani/admin/tanpa log masuk), audit, MFA langkah 2, Urus Staf, keselamatan fungsi; **setiap jadual ada dalam backup**; backup → `alat/pulih-backup.mjs` → database baharu sama dengan asal; pusingan penuh `export-schema.sql` | `PGHOST=... PGUSER=... bash tests/sql/run.sh` |
 | **Pelayar** (`tests/e2e/`) | Landing, login, MFA, log keluar automatik, log ralat, backup, Penyu (semua skrin, library), Minyak (Tahun, penapis, Excel, Semakan Data, pendua, resit dikecilkan, Import Setel) | `cd tests && npm ci && npx playwright test` |
 | **Unit** (`tests/unit/`) | Pembaca resit Setel (teks sebenar tanpa data peribadi); alat pulih (SQL & muat naik fail) | `cd tests && npm run unit` |
 | **CSS Penyu** | `penyu/tailwind.css` sepadan dengan kelas dalam kod | `bash tests/check-tailwind.sh` |

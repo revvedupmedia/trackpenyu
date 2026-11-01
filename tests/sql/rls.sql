@@ -79,8 +79,9 @@ do $$ begin
 exception when check_violation then raise notice 'OK: mesej ralat dihadkan 2000 aksara'; end $$;
 select test_assert((select count(*) from client_errors) = 0, 'kerani tidak boleh baca log ralat');
 
--- ---------- Admin (sebelum MFA langkah 2) ----------
+-- ---------- Admin (sesi selepas MFA: aal2; snapshot sudah termasuk MFA langkah 2) ----------
 set request.jwt.claim.sub = 'aaaaaaaa-0000-4000-8000-000000000001';
+set request.jwt.claims = '{"aal":"aal2"}';
 with u as (update minyak_entries set notes = 'semak' returning 1)
 select test_assert((select count(*) from u) >= 2, 'admin boleh ubah semua entri minyak');
 select test_assert((select count(*) from minyak_entries_audit where action = 'insert') >= 2

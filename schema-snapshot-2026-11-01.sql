@@ -1,5 +1,5 @@
 -- Snapshot struktur database Portal LPP
--- Dijana: 2026-10-31 22:32 MYT  ·  PostgreSQL 17.6
+-- Dijana: 2026-11-01 20:13 MYT  ·  PostgreSQL 17.6
 -- Bina semula: run fail ini dalam database kosong (Supabase: SQL Editor).
 -- Bukan Supabase: sediakan dahulu peranan anon/authenticated/service_role, skema auth
 -- (auth.users, auth.uid()) dan skema storage (buckets, objects).
@@ -36,6 +36,17 @@ create table if not exists public.app_settings (
   value jsonb default '{}'::jsonb not null,
   updated_at timestamp with time zone default now() not null,
   updated_by uuid default auth.uid()
+);
+
+create table if not exists public.client_errors (
+  id bigint generated always as identity not null,
+  created_at timestamp with time zone default now() not null,
+  user_id uuid default auth.uid(),
+  app_version text,
+  page text,
+  message text not null,
+  stack text,
+  user_agent text
 );
 
 create table if not exists public.daily_entries (
@@ -122,6 +133,16 @@ create table if not exists public.minyak_entries (
   receipt_hash text
 );
 
+create table if not exists public.minyak_entries_audit (
+  id bigint generated always as identity not null,
+  entry_id uuid not null,
+  action text not null,
+  changed_by uuid default auth.uid(),
+  changed_at timestamp with time zone default now() not null,
+  before jsonb,
+  after jsonb
+);
+
 create table if not exists public.minyak_settings (
   key text not null,
   value text,
@@ -201,12 +222,23 @@ create table if not exists public.notification_rules (
   idle_alert_days integer default 3 not null
 );
 
+create table if not exists public.staff_audit (
+  id bigint generated always as identity not null,
+  changed_at timestamp with time zone default now() not null,
+  changed_by uuid default auth.uid(),
+  target_id uuid not null,
+  action text not null,
+  before jsonb,
+  after jsonb
+);
+
 create table if not exists public.staff_profiles (
   id uuid not null,
   full_name text not null,
   island island_code not null,
   role staff_role default 'staff'::staff_role not null,
-  created_at timestamp with time zone default now() not null
+  created_at timestamp with time zone default now() not null,
+  active boolean default true not null
 );
 
 create table if not exists public.targets (
@@ -219,6 +251,14 @@ create table if not exists public.targets (
 -- Kekangan
 -- ---------------------------------------------------------------------
 alter table public.app_settings add constraint app_settings_pkey PRIMARY KEY (key);
+
+alter table public.client_errors add constraint client_errors_message_check CHECK ((length(message) <= 2000));
+
+alter table public.client_errors add constraint client_errors_pkey PRIMARY KEY (id);
+
+alter table public.client_errors add constraint client_errors_stack_check CHECK ((length(stack) <= 8000));
+
+alter table public.client_errors add constraint client_errors_user_agent_check CHECK ((length(user_agent) <= 300));
 
 alter table public.daily_entries add constraint daily_entries_bilangan_penyu_bertag_check CHECK ((bilangan_penyu_bertag >= 0));
 
@@ -259,6 +299,10 @@ alter table public.minyak_entries add constraint minyak_entries_claim_status_che
 alter table public.minyak_entries add constraint minyak_entries_fuel_type_check CHECK ((fuel_type = ANY (ARRAY['diesel'::text, 'ron95'::text])));
 
 alter table public.minyak_entries add constraint minyak_entries_pkey PRIMARY KEY (id);
+
+alter table public.minyak_entries_audit add constraint minyak_entries_audit_action_check CHECK ((action = ANY (ARRAY['insert'::text, 'update'::text, 'delete'::text])));
+
+alter table public.minyak_entries_audit add constraint minyak_entries_audit_pkey PRIMARY KEY (id);
 
 alter table public.minyak_settings add constraint minyak_settings_pkey PRIMARY KEY (key);
 
@@ -306,6 +350,10 @@ alter table public.notification_rules add constraint notification_rules_pkey PRI
 
 alter table public.notification_rules add constraint single_row CHECK ((id = 1));
 
+alter table public.staff_audit add constraint staff_audit_action_check CHECK ((action = ANY (ARRAY['daftar'::text, 'ubah'::text, 'nyahaktif'::text, 'aktif'::text, 'reset_mfa'::text])));
+
+alter table public.staff_audit add constraint staff_audit_pkey PRIMARY KEY (id);
+
 alter table public.staff_profiles add constraint staff_profiles_pkey PRIMARY KEY (id);
 
 alter table public.targets add constraint targets_pkey PRIMARY KEY (year, island);
@@ -316,6 +364,8 @@ alter table public.targets add constraint targets_target_value_check CHECK ((tar
 -- Foreign key
 -- ---------------------------------------------------------------------
 alter table public.app_settings add constraint app_settings_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES auth.users(id) ON DELETE SET NULL;
+
+alter table public.client_errors add constraint client_errors_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
 
 alter table public.daily_entries add constraint daily_entries_created_by_fkey FOREIGN KEY (created_by) REFERENCES staff_profiles(id);
 
@@ -346,6 +396,8 @@ alter table public.staff_profiles add constraint staff_profiles_id_fkey FOREIGN 
 -- ---------------------------------------------------------------------
 -- Indeks
 -- ---------------------------------------------------------------------
+CREATE INDEX idx_client_errors_time ON public.client_errors USING btree (created_at DESC);
+
 CREATE INDEX idx_daily_entries_created_by ON public.daily_entries USING btree (created_by);
 
 CREATE INDEX idx_daily_entries_import_batch ON public.daily_entries USING btree (import_batch) WHERE (import_batch IS NOT NULL);
@@ -353,6 +405,10 @@ CREATE INDEX idx_daily_entries_import_batch ON public.daily_entries USING btree 
 CREATE INDEX idx_daily_entries_island_date ON public.daily_entries USING btree (island, tarikh);
 
 CREATE INDEX idx_import_undo_batch ON public.import_undo USING btree (batch);
+
+CREATE INDEX idx_minyak_entries_audit_entry ON public.minyak_entries_audit USING btree (entry_id);
+
+CREATE INDEX idx_minyak_entries_audit_time ON public.minyak_entries_audit USING btree (changed_at DESC);
 
 CREATE INDEX idx_minyak_entries_date ON public.minyak_entries USING btree (entry_date);
 
@@ -368,6 +424,8 @@ CREATE INDEX idx_nest_records_created_by ON public.nest_records USING btree (cre
 
 CREATE INDEX idx_nest_records_island_date ON public.nest_records USING btree (island, tarikh_dijumpai);
 
+CREATE INDEX idx_staff_audit_time ON public.staff_audit USING btree (changed_at DESC);
+
 CREATE UNIQUE INDEX uniq_daily_entries_day_ram ON public.daily_entries USING btree (island, tarikh, ram);
 
 CREATE UNIQUE INDEX uq_minyak_entries_receipt_ref ON public.minyak_entries USING btree (receipt_ref) WHERE ((receipt_ref IS NOT NULL) AND (deleted_at IS NULL));
@@ -375,10 +433,105 @@ CREATE UNIQUE INDEX uq_minyak_entries_receipt_ref ON public.minyak_entries USING
 -- ---------------------------------------------------------------------
 -- Fungsi
 -- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public._other_active_admins(p_except uuid)
+ RETURNS integer
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select count(*)::int from staff_profiles where role = 'admin' and active and id <> p_except;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.admin_list_accounts()
+ RETURNS TABLE(id uuid, email text, created_at timestamp with time zone, last_sign_in_at timestamp with time zone, full_name text, island island_code, role staff_role, active boolean, mfa boolean, registered boolean)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  if not is_admin() then raise exception 'Hanya admin' using errcode = '42501'; end if;
+  return query
+    select u.id, u.email::text, u.created_at, u.last_sign_in_at,
+           p.full_name, p.island, p.role, coalesce(p.active, true),
+           exists (select 1 from auth.mfa_factors f where f.user_id = u.id and f.status = 'verified'),
+           p.id is not null
+    from auth.users u left join public.staff_profiles p on p.id = u.id
+    order by (p.id is null) desc, p.role, lower(coalesce(p.full_name, u.email));
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.admin_reset_mfa(p_id uuid)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  if not is_admin() then raise exception 'Hanya admin' using errcode = '42501'; end if;
+  delete from auth.mfa_factors where user_id = p_id;
+  insert into staff_audit (target_id, action) values (p_id, 'reset_mfa');
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.admin_save_staff(p_id uuid, p_full_name text, p_island island_code, p_role staff_role)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare v_before staff_profiles;
+begin
+  if not is_admin() then raise exception 'Hanya admin' using errcode = '42501'; end if;
+  if coalesce(trim(p_full_name), '') = '' then raise exception 'Nama penuh diperlukan'; end if;
+  if not exists (select 1 from auth.users where id = p_id) then raise exception 'Akaun login tidak wujud'; end if;
+  select * into v_before from staff_profiles where id = p_id;
+  if v_before.id is not null and v_before.role = 'admin' and p_role <> 'admin' then
+    if p_id = auth.uid() then raise exception 'Anda tidak boleh turunkan peranan admin anda sendiri'; end if;
+    if _other_active_admins(p_id) = 0 then raise exception 'Mesti ada sekurang-kurangnya seorang admin aktif'; end if;
+  end if;
+  insert into staff_profiles (id, full_name, island, role) values (p_id, trim(p_full_name), p_island, p_role)
+  on conflict (id) do update set full_name = excluded.full_name, island = excluded.island, role = excluded.role;
+  insert into staff_audit (target_id, action, before, after)
+  values (p_id, case when v_before.id is null then 'daftar' else 'ubah' end,
+          case when v_before.id is null then null else to_jsonb(v_before) end,
+          (select to_jsonb(s) from staff_profiles s where s.id = p_id));
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.admin_set_active(p_id uuid, p_active boolean)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare v_before staff_profiles;
+begin
+  if not is_admin() then raise exception 'Hanya admin' using errcode = '42501'; end if;
+  select * into v_before from staff_profiles where id = p_id;
+  if v_before.id is null then raise exception 'Daftar staf ini dahulu'; end if;
+  if not p_active then
+    if p_id = auth.uid() then raise exception 'Anda tidak boleh nyahaktif akaun anda sendiri'; end if;
+    if v_before.role = 'admin' and _other_active_admins(p_id) = 0 then raise exception 'Mesti ada sekurang-kurangnya seorang admin aktif'; end if;
+  end if;
+  update staff_profiles set active = p_active where id = p_id;
+  -- Bukan 'infinity': pelayan log masuk Supabase tidak boleh membacanya.
+  update auth.users set banned_until = case when p_active then null else now() + interval '100 years' end where id = p_id;
+  insert into staff_audit (target_id, action, before, after)
+  values (p_id, case when p_active then 'aktif' else 'nyahaktif' end, to_jsonb(v_before),
+          (select to_jsonb(s) from staff_profiles s where s.id = p_id));
+end;
+$function$
+;
+
 CREATE OR REPLACE FUNCTION public.can_use_minyak()
  RETURNS boolean
  LANGUAGE sql
  STABLE SECURITY DEFINER
+ SET search_path TO 'public'
 AS $function$
   select exists (select 1 from staff_profiles where id = auth.uid() and role in ('admin','kerani'));
 $function$
@@ -388,6 +541,7 @@ CREATE OR REPLACE FUNCTION public.can_view_all()
  RETURNS boolean
  LANGUAGE sql
  STABLE SECURITY DEFINER
+ SET search_path TO 'public'
 AS $function$
   select exists (select 1 from staff_profiles where id = auth.uid() and role in ('admin','kerani'));
 $function$
@@ -457,6 +611,7 @@ CREATE OR REPLACE FUNCTION public.get_dashboard_totals(p_year integer, p_island 
  RETURNS jsonb
  LANGUAGE sql
  STABLE SECURITY DEFINER
+ SET search_path TO 'public'
 AS $function$
   select jsonb_build_object(
     'jumlah_telur',   coalesce(sum(s.telur),0),
@@ -476,6 +631,7 @@ CREATE OR REPLACE FUNCTION public.get_multi_year_monthly(p_years integer[], p_is
  RETURNS jsonb
  LANGUAGE sql
  STABLE SECURITY DEFINER
+ SET search_path TO 'public'
 AS $function$
   select coalesce(jsonb_object_agg(y::text, (
     select jsonb_agg(jsonb_build_object(
@@ -492,10 +648,10 @@ CREATE OR REPLACE FUNCTION public.is_admin()
  RETURNS boolean
  LANGUAGE sql
  STABLE SECURITY DEFINER
+ SET search_path TO 'public'
 AS $function$
-  select exists (
-    select 1 from staff_profiles where id = auth.uid() and role = 'admin'
-  );
+  select exists (select 1 from staff_profiles where id = auth.uid() and role = 'admin')
+     and coalesce(auth.jwt() ->> 'aal', 'aal1') = 'aal2';
 $function$
 ;
 
@@ -519,15 +675,37 @@ end;
 $function$
 ;
 
+CREATE OR REPLACE FUNCTION public.log_minyak_change()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  insert into public.minyak_entries_audit (entry_id, action, changed_by, before, after)
+  values (
+    coalesce(new.id, old.id),
+    lower(tg_op),
+    auth.uid(),
+    case when tg_op <> 'INSERT' then to_jsonb(old) end,
+    case when tg_op <> 'DELETE' then to_jsonb(new) end
+  );
+  return coalesce(new, old);
+end;
+$function$
+;
+
 CREATE OR REPLACE FUNCTION public.log_nest_record_change()
  RETURNS trigger
  LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
 AS $function$
 begin
-  insert into nest_records_audit (nest_record_id, changed_by, before, after)
+  insert into public.nest_records_audit (nest_record_id, changed_by, before, after)
   values (
     coalesce(new.id, old.id),
-    coalesce(new.updated_by, new.created_by, old.created_by),
+    coalesce(new.updated_by, auth.uid(), new.created_by, old.created_by),
     to_jsonb(old),
     to_jsonb(new)
   );
@@ -541,6 +719,7 @@ CREATE OR REPLACE FUNCTION public.my_island()
  RETURNS island_code
  LANGUAGE sql
  STABLE SECURITY DEFINER
+ SET search_path TO 'public'
 AS $function$
   select island from staff_profiles where id = auth.uid();
 $function$
@@ -550,6 +729,7 @@ CREATE OR REPLACE FUNCTION public.my_role()
  RETURNS staff_role
  LANGUAGE sql
  STABLE SECURITY DEFINER
+ SET search_path TO 'public'
 AS $function$
   select role from staff_profiles where id = auth.uid();
 $function$
@@ -557,9 +737,20 @@ $function$
 
 CREATE OR REPLACE FUNCTION public.penyu_month_stats(p_year integer, p_island island_code)
  RETURNS TABLE(mon integer, telur bigint, penyu bigint, menetas bigint, buruk bigint)
- LANGUAGE sql
+ LANGUAGE plpgsql
  STABLE SECURITY DEFINER
+ SET search_path TO 'public'
 AS $function$
+#variable_conflict use_column
+begin
+  if auth.uid() is null then
+    raise exception 'Perlu log masuk' using errcode = '42501';
+  end if;
+  if not coalesce(can_view_all() or p_island = my_island(), false) then
+    raise exception 'Tiada akses ke data pulau %', p_island using errcode = '42501';
+  end if;
+
+  return query
   with grid as (
     select m as mon, r as ram
     from generate_series(1,12) m cross join unnest(array['LPP','SFC']) r
@@ -627,6 +818,7 @@ AS $function$
   left join mh_all ma on ma.mon = p.mon
   group by p.mon
   order by p.mon;
+end;
 $function$
 ;
 
@@ -634,6 +826,7 @@ CREATE OR REPLACE FUNCTION public.undo_import(p_batch uuid)
  RETURNS jsonb
  LANGUAGE plpgsql
  SECURITY DEFINER
+ SET search_path TO 'public'
 AS $function$
 declare
   r record;
@@ -682,12 +875,16 @@ $function$
 -- ---------------------------------------------------------------------
 CREATE TRIGGER trg_daily_entries_audit BEFORE UPDATE ON daily_entries FOR EACH ROW EXECUTE FUNCTION log_daily_entry_change();
 
+CREATE TRIGGER trg_minyak_entries_audit AFTER INSERT OR DELETE OR UPDATE ON minyak_entries FOR EACH ROW EXECUTE FUNCTION log_minyak_change();
+
 CREATE TRIGGER trg_nest_records_audit BEFORE UPDATE ON nest_records FOR EACH ROW EXECUTE FUNCTION log_nest_record_change();
 
 -- ---------------------------------------------------------------------
 -- Row Level Security
 -- ---------------------------------------------------------------------
 alter table public.app_settings enable row level security;
+
+alter table public.client_errors enable row level security;
 
 alter table public.daily_entries enable row level security;
 
@@ -700,6 +897,8 @@ alter table public.import_undo enable row level security;
 alter table public.login_log enable row level security;
 
 alter table public.minyak_entries enable row level security;
+
+alter table public.minyak_entries_audit enable row level security;
 
 alter table public.minyak_settings enable row level security;
 
@@ -715,6 +914,8 @@ alter table public.nest_records_audit enable row level security;
 
 alter table public.notification_rules enable row level security;
 
+alter table public.staff_audit enable row level security;
+
 alter table public.staff_profiles enable row level security;
 
 alter table public.targets enable row level security;
@@ -729,6 +930,12 @@ create policy app_settings_admin_insert on public.app_settings as permissive for
 create policy app_settings_admin_update on public.app_settings as permissive for update to authenticated using (is_admin()) with check (is_admin());
 
 create policy app_settings_read on public.app_settings as permissive for select to authenticated using (true);
+
+create policy "admin deletes errors" on public.client_errors as permissive for delete to authenticated using (is_admin());
+
+create policy "admin reads errors" on public.client_errors as permissive for select to authenticated using (is_admin());
+
+create policy "users report own errors" on public.client_errors as permissive for insert to authenticated with check ((user_id = auth.uid()));
 
 create policy "delete own daily entries" on public.daily_entries as permissive for delete to public using ((is_admin() OR ((created_by = auth.uid()) AND (my_role() <> 'kerani'::staff_role))));
 
@@ -762,6 +969,8 @@ create policy "minyak read" on public.minyak_entries as permissive for select to
 
 create policy "minyak update own or admin" on public.minyak_entries as permissive for update to public using ((can_use_minyak() AND ((user_id = auth.uid()) OR is_admin())));
 
+create policy "admin reads minyak audit" on public.minyak_entries_audit as permissive for select to authenticated using (is_admin());
+
 create policy "minyak settings admin write" on public.minyak_settings as permissive for all to public using (is_admin()) with check (is_admin());
 
 create policy "minyak settings read" on public.minyak_settings as permissive for select to public using (can_use_minyak());
@@ -782,7 +991,7 @@ create policy "read monthly summaries" on public.monthly_summaries as permissive
 
 create policy "admin writes monthly targets" on public.monthly_targets as permissive for all to public using (is_admin());
 
-create policy "all staff read monthly targets" on public.monthly_targets as permissive for select to public using (true);
+create policy "all staff read monthly targets" on public.monthly_targets as permissive for select to authenticated using (true);
 
 create policy "delete own nest records" on public.nest_records as permissive for delete to public using ((is_admin() OR ((created_by = auth.uid()) AND (my_role() <> 'kerani'::staff_role))));
 
@@ -796,25 +1005,21 @@ create policy "select nest records - own island" on public.nest_records as permi
 
 create policy "update nest records - own entries only" on public.nest_records as permissive for update to public using ((is_admin() OR ((created_by = auth.uid()) AND (my_role() <> 'kerani'::staff_role))));
 
-create policy "admin reads audit log" on public.nest_records_audit as permissive for select to public using ((EXISTS ( SELECT 1
-   FROM staff_profiles p
-  WHERE ((p.id = auth.uid()) AND (p.role = 'admin'::staff_role)))));
+create policy "admin reads audit log" on public.nest_records_audit as permissive for select to public using (is_admin());
 
-create policy "admin writes notification rules" on public.notification_rules as permissive for all to public using ((EXISTS ( SELECT 1
-   FROM staff_profiles p
-  WHERE ((p.id = auth.uid()) AND (p.role = 'admin'::staff_role)))));
+create policy "admin writes notification rules" on public.notification_rules as permissive for all to public using (is_admin()) with check (is_admin());
 
-create policy "all staff read notification rules" on public.notification_rules as permissive for select to public using (true);
+create policy "all staff read notification rules" on public.notification_rules as permissive for select to authenticated using (true);
+
+create policy "admin reads staff audit" on public.staff_audit as permissive for select to authenticated using (is_admin());
 
 create policy "read own profile" on public.staff_profiles as permissive for select to public using (((id = auth.uid()) OR is_admin()));
 
 create policy "read staff names for island" on public.staff_profiles as permissive for select to public using (((id = auth.uid()) OR can_view_all() OR (island = my_island())));
 
-create policy "admin writes targets" on public.targets as permissive for all to public using ((EXISTS ( SELECT 1
-   FROM staff_profiles p
-  WHERE ((p.id = auth.uid()) AND (p.role = 'admin'::staff_role)))));
+create policy "admin writes targets" on public.targets as permissive for all to public using (is_admin()) with check (is_admin());
 
-create policy "all staff read targets" on public.targets as permissive for select to public using (true);
+create policy "all staff read targets" on public.targets as permissive for select to authenticated using (true);
 
 create policy "admin updates app assets" on storage.objects as permissive for update to authenticated using (((bucket_id = 'app-assets'::text) AND is_admin())) with check (((bucket_id = 'app-assets'::text) AND is_admin()));
 
@@ -845,6 +1050,12 @@ grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.ap
 grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.app_settings to authenticated;
 
 grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.app_settings to service_role;
+
+grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.client_errors to anon;
+
+grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.client_errors to authenticated;
+
+grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.client_errors to service_role;
 
 grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.daily_entries to anon;
 
@@ -881,6 +1092,12 @@ grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.mi
 grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.minyak_entries to authenticated;
 
 grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.minyak_entries to service_role;
+
+grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.minyak_entries_audit to anon;
+
+grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.minyak_entries_audit to authenticated;
+
+grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.minyak_entries_audit to service_role;
 
 grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.minyak_settings to anon;
 
@@ -924,6 +1141,12 @@ grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.no
 
 grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.notification_rules to service_role;
 
+grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.staff_audit to anon;
+
+grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.staff_audit to authenticated;
+
+grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.staff_audit to service_role;
+
 grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.staff_profiles to anon;
 
 grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.staff_profiles to authenticated;
@@ -935,5 +1158,44 @@ grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.ta
 grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.targets to authenticated;
 
 grant DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE on public.targets to service_role;
+
+revoke execute on function public._other_active_admins(p_except uuid) from public, anon;
+grant execute on function public._other_active_admins(p_except uuid) to service_role;
+
+revoke execute on function public.admin_list_accounts() from public, anon;
+grant execute on function public.admin_list_accounts() to authenticated, service_role;
+
+revoke execute on function public.admin_reset_mfa(p_id uuid) from public, anon;
+grant execute on function public.admin_reset_mfa(p_id uuid) to authenticated, service_role;
+
+revoke execute on function public.admin_save_staff(p_id uuid, p_full_name text, p_island island_code, p_role staff_role) from public, anon;
+grant execute on function public.admin_save_staff(p_id uuid, p_full_name text, p_island island_code, p_role staff_role) to authenticated, service_role;
+
+revoke execute on function public.admin_set_active(p_id uuid, p_active boolean) from public, anon;
+grant execute on function public.admin_set_active(p_id uuid, p_active boolean) to authenticated, service_role;
+
+revoke execute on function public.delete_entries_with_backup(p_table text, p_ids uuid[], p_note text) from public, anon;
+grant execute on function public.delete_entries_with_backup(p_table text, p_ids uuid[], p_note text) to authenticated, service_role;
+
+revoke execute on function public.get_dashboard_totals(p_year integer, p_island island_code) from public, anon;
+grant execute on function public.get_dashboard_totals(p_year integer, p_island island_code) to authenticated, service_role;
+
+revoke execute on function public.get_multi_year_monthly(p_years integer[], p_island island_code) from public, anon;
+grant execute on function public.get_multi_year_monthly(p_years integer[], p_island island_code) to authenticated, service_role;
+
+revoke execute on function public.log_daily_entry_change() from public, anon;
+grant execute on function public.log_daily_entry_change() to service_role;
+
+revoke execute on function public.log_minyak_change() from public, anon;
+grant execute on function public.log_minyak_change() to service_role;
+
+revoke execute on function public.log_nest_record_change() from public, anon;
+grant execute on function public.log_nest_record_change() to service_role;
+
+revoke execute on function public.penyu_month_stats(p_year integer, p_island island_code) from public, anon;
+grant execute on function public.penyu_month_stats(p_year integer, p_island island_code) to authenticated, service_role;
+
+revoke execute on function public.undo_import(p_batch uuid) from public, anon;
+grant execute on function public.undo_import(p_batch uuid) to authenticated, service_role;
 
 grant usage on schema public to anon, authenticated;
