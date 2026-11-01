@@ -73,7 +73,11 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
   Lencana pada butang tunjuk bilangan isu. Ada "Bandingkan resit", "Bukan
   pendua", dan senarai entri dipadam untuk dipulihkan.
 - **Padam boleh dipulihkan**: entri ditanda `deleted_at`, resit disimpan.
-- Sejarah ikut bulan, butiran entri, tandakan dah claim.
+- Sejarah ikut bulan, butiran entri (liter, RM/liter, stesen), tandakan dah
+  claim. **Tarikh claim** dan siapa yang menanda direkod oleh database sendiri
+  (tidak boleh diubah suai dari app).
+- **Liter** boleh diisi pada entri manual (pilihan); resit Setel mengisi liter
+  & stesen secara automatik.
 - Kerani boleh ubah/padam entri sendiri; admin boleh ubah/padam semua.
 - Resit disimpan dalam bucket **private** `minyak-receipts` dan dibuka guna
   pautan sementara (1 jam).
@@ -144,9 +148,12 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
 **Bina database baru (cara disyorkan):** dalam Supabase → SQL Editor, run
 **`schema-snapshot-2026-11-01.sql`** (snapshot terkini): struktur lengkap
 database sebenar, termasuk semua migration hingga
-`migration-keselamatan-fungsi.sql`. Jika ada fail `migration-*.sql` yang
-lebih baru daripada snapshot, run selepasnya (tiada buat masa ini; senarai
-sama dalam `tests/sql/run.sh` → `MIGRATIONS`).
+`migration-keselamatan-fungsi.sql`. Kemudian run migration yang lebih baru
+daripada snapshot (senarai sama dalam `tests/sql/run.sh` → `MIGRATIONS`):
+
+1. `migration-minyak-liter-claim.sql` — Minyak: lajur liter, stesen dan
+   tarikh claim (diisi oleh database); liter & stesen resit Setel lama
+   diisi semula dari nota
 
 Snapshot ini sudah termasuk **MFA admin langkah 2**
 (`migration-mfa-admin-wajib.sql`): database hanya beri kuasa admin kepada sesi

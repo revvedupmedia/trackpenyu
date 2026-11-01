@@ -118,6 +118,7 @@ async function initAuth() {
   document.getElementById('appVersion').textContent = `Minyak Tracker · versi ${APP_VERSION}`;
   loadBackgroundVideo();
   state.semakan = await hasSemakanColumns();
+  state.literClaim = await hasLiterClaimColumns();
   if(!state.semakan&&state.isAdmin)showToast('Admin: run migration-minyak-semakan.sql dalam Supabase');
   loadEntries();
 }
@@ -126,6 +127,11 @@ async function initAuth() {
 // boleh pulih & cap jari resit), supaya kemas kini kod tidak memecahkan app.
 async function hasSemakanColumns(){
   const{error}=await sb.from('minyak_entries').select('deleted_at,dup_ok,receipt_hash').limit(1);
+  return !error;
+}
+// Liter, stesen & tarikh claim (migration-minyak-liter-claim.sql).
+async function hasLiterClaimColumns(){
+  const{error}=await sb.from('minyak_entries').select('liters,station,claimed_at').limit(1);
   return !error;
 }
 // Hanya entri yang belum dipadam.
@@ -155,7 +161,8 @@ function openAdminDialog() {
 
 // ── Admin: Log Perubahan ──────────────────────────
 const AUDIT_FIELDS={entry_date:'Tarikh',fuel_type:'Jenis',amount:'Jumlah',odometer_start:'Odo mula',odometer_end:'Odo akhir',
-  needs_claim:'Perlu claim',claim_status:'Status claim',notes:'Nota',receipt_path:'Resit',dup_ok:'Bukan pendua'};
+  needs_claim:'Perlu claim',claim_status:'Status claim',notes:'Nota',receipt_path:'Resit',dup_ok:'Bukan pendua',
+  liters:'Liter',station:'Stesen'};
 async function loadAudit(){
   const ul=document.getElementById('auditList');
   ul.innerHTML='<li class="admin-hint">Memuatkan...</li>';
@@ -209,16 +216,17 @@ document.getElementById('exportBtn').addEventListener('click',async()=>{
     // sehari mengikut zon waktu peranti.
     const asDate=s=>{const[yy,mm,dd]=s.split('-').map(Number);return{t:'n',v:(Date.UTC(yy,mm-1,dd)-Date.UTC(1899,11,30))/864e5,z:'dd/mm/yyyy'};};
     const sorted=[...rows].sort((a,b)=>a.entry_date.localeCompare(b.entry_date));
-    const rekod=[['Tarikh','Jenis','Jumlah (RM)','Odo Mula (km)','Odo Akhir (km)','Jarak (km)','Perlu Claim','Status Claim','Nota','Dimasukkan oleh','No. Invois Setel','Resit'],
+    const rekod=[['Tarikh','Jenis','Jumlah (RM)','Odo Mula (km)','Odo Akhir (km)','Jarak (km)','Perlu Claim','Status Claim','Nota','Dimasukkan oleh','No. Invois Setel','Resit','Liter','Stesen','Tarikh Claim'],
       ...sorted.map(e=>[asDate(e.entry_date),e.fuel_type==='diesel'?'Diesel':'RON95 (Boat)',Number(e.amount),
         e.odometer_start??'',e.odometer_end??'',e.distance_km??'',e.needs_claim?'Ya':'Tidak',
         e.needs_claim?(e.claim_status==='claimed'?'Dah Claim':'Belum Claim'):'',e.notes||'',e.user_email||'',e.receipt_ref||'',
-        (e.receipt_path||e.receipt_url)?'Ada':'Tiada'])];
+        (e.receipt_path||e.receipt_url)?'Ada':'Tiada',e.liters!=null?Number(e.liters):'',e.station||'',
+        e.claimed_at?asDate(toLocalDateStr(new Date(e.claimed_at))):''])];
     const tot=f=>sorted.filter(e=>!f||e.fuel_type===f).reduce((a,e)=>a+Number(e.amount),0);
     rekod.push([],['JUMLAH','',tot()],['Diesel','',tot('diesel')],['RON95 (Boat)','',tot('ron95')],
       ['Belum claim','',sorted.filter(e=>e.needs_claim&&e.claim_status==='pending').reduce((a,e)=>a+Number(e.amount),0)]);
     const ws1=XLSX.utils.aoa_to_sheet(rekod);
-    ws1['!cols']=[12,14,12,12,12,10,11,12,30,30,38,8].map(w=>({wch:w}));
+    ws1['!cols']=[12,14,12,12,12,10,11,12,30,30,38,8,9,26,12].map(w=>({wch:w}));
     for(let r=1;r<rekod.length;r++){const c=ws1[XLSX.utils.encode_cell({r,c:2})];if(c&&c.t==='n')c.z='#,##0.00';}
     const byMonth=MONTH_NAMES.map((name,i)=>{const xs=sorted.filter(e=>Number(e.entry_date.slice(5,7))===i+1);
       const s=f=>xs.filter(e=>!f||e.fuel_type===f).reduce((a,e)=>a+Number(e.amount),0);
@@ -648,6 +656,7 @@ function openAddDialog(){
   document.getElementById('entryForm').reset();
   document.getElementById('entryDate').value=toLocalDateStr(new Date());
   setFuel('diesel'); resetDrop(); formError.hidden=true;
+  document.getElementById('literField').hidden=!state.literClaim;
   submitBtn.disabled=false; submitBtn.textContent='Simpan Entri';
   addDialog.showModal();
 }
@@ -719,10 +728,13 @@ submitBtn.addEventListener('click',async()=>{
     const amount=parseFloat(document.getElementById('entryAmount').value);
     const needsClaim=document.getElementById('needsClaim').checked;
     const notes=document.getElementById('entryNotes').value.trim();
+    const litersRaw=document.getElementById('entryLiters').value;
+    const liters=litersRaw===''?null:parseFloat(litersRaw);
     const oS=odoStart.value?parseFloat(odoStart.value):null;
     const oE=odoEnd.value?parseFloat(odoEnd.value):null;
     if(!date)throw new Error('Sila pilih tarikh.');
     if(isNaN(amount)||amount<=0)throw new Error('Sila masukkan jumlah yang sah.');
+    if(liters!==null&&(isNaN(liters)||liters<=0||liters>=10000))throw new Error('Liter tidak sah.');
     if(oS!==null&&oE!==null&&oE<oS)throw new Error('Odometer akhir mesti lebih besar.');
     if(date>toLocalDateStr(new Date()))throw new Error('Tarikh tidak boleh pada masa depan.');
     // Pencegahan pendua (1): resit yang sama tidak boleh digunakan dua kali.
@@ -764,6 +776,7 @@ submitBtn.addEventListener('click',async()=>{
       notes:notes||null,user_id:state.currentUser.id,user_email:state.currentUser.email,
     };
     if(recPath)payload.receipt_path=recPath;
+    if(state.literClaim)payload.liters=liters;
     if(state.semakan){payload.receipt_hash=recHash;payload.dup_ok=dupOk;}
     const{error:insE}=await sb.from('minyak_entries').insert(payload);
     if(insE)throw new Error(insE.message);
@@ -998,6 +1011,7 @@ async function saveImport(){
         entry_date:r.date,fuel_type:r.fuel,amount:Number(r.amount),
         needs_claim:!!r.claim,claim_status:r.claim?'pending':'not_applicable',
         notes:r.notes.trim()||null,receipt_path:path,receipt_ref:d.ref,
+        ...(state.literClaim?{liters:d.liters?Number(d.liters):null,station:d.station||null}:{}),
         user_id:state.currentUser.id,user_email:state.currentUser.email,
         ...(state.semakan?{receipt_hash:d.hash||null,dup_ok:r.status==='maybe'}:{}),
       });
@@ -1199,12 +1213,19 @@ function openDetail(entry,isOwner){
     row('Jenis',isD?'Diesel':'RON95 (Boat)'),
     row('Jumlah',fmtRM(entry.amount),true),
   ];
+  if(entry.liters){
+    rows.push(row('Liter',Number(entry.liters).toLocaleString('ms-MY',{maximumFractionDigits:3})+' L',true));
+    rows.push(row('RM / Liter',fmtRM(Number(entry.amount)/Number(entry.liters)),true));
+  }
+  if(entry.station) rows.push(row('Stesen',entry.station));
   if(entry.odometer_start!==null&&entry.odometer_end!==null){
     rows.push(row('Odo Mula',fmtKm(entry.odometer_start)+' km',true));
     rows.push(row('Odo Akhir',fmtKm(entry.odometer_end)+' km',true));
     rows.push(row('Jarak',fmtKm(entry.distance_km)+' km',true));
   }
-  if(entry.needs_claim) rows.push(row('Claim',entry.claim_status==='claimed'?'Dah Claim ✓':'Belum Claim'));
+  if(entry.needs_claim) rows.push(row('Claim',entry.claim_status==='claimed'
+    ?'Dah Claim ✓'+(entry.claimed_at?' · '+new Date(entry.claimed_at).toLocaleDateString('ms-MY',{day:'numeric',month:'short',year:'numeric'}):'')
+    :'Belum Claim'));
   if(entry.notes) rows.push(row('Nota',entry.notes));
   detailBody.innerHTML=rows.join('');
   if(entry.receipt_path||entry.receipt_url){

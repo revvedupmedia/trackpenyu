@@ -77,13 +77,14 @@ test('Tambah Entri: amaran pendua, resit sama disekat, tarikh masa depan ditolak
   await boot(page, adminSession({ minyak_entries: seed }))
   await page.goto('minyak/')
   await page.click('#fabAdd')
-  await page.fill('#entryDate', '2026-08-07'); await page.fill('#entryAmount', '100')
+  await page.fill('#entryDate', '2026-08-07'); await page.fill('#entryAmount', '100'); await page.fill('#entryLiters', '43.5')
   await page.click('#submitBtn')
   await expect(page.locator('#formError')).toHaveClass(/is-warn/)
   await expect(page.locator('#submitBtn')).toHaveText('Simpan juga (entri berbeza)')
   await page.click('#submitBtn')
   await expect.poll(async () => (await tables(page)).minyak_entries.length).toBe(2)
   expect((await tables(page)).minyak_entries[1].dup_ok).toBe(true)
+  expect((await tables(page)).minyak_entries[1].liters).toBe(43.5)
 
   // Resit sama: cap jari fail asal sudah wujud.
   const buf = Buffer.from('gambar-resit-ujian')
@@ -162,4 +163,26 @@ test('Import Setel: baca PDF, kesan pendua & PDF rosak, sahkan dengan kiraan und
   const saved = (await tables(page)).minyak_entries.find((r) => r.receipt_ref)
   expect(saved).toMatchObject({ entry_date: '2026-10-09', fuel_type: 'ron95', amount: 199, needs_claim: true, claim_status: 'pending', receipt_ref: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' })
   expect(saved.notes).toContain('Subsidi BUDI RM268.00')
+  expect(saved.liters).toBeGreaterThan(0)   // liter & stesen kini lajur sendiri (audit)
+  expect(saved).toHaveProperty('station')
+})
+
+test('Butiran entri: liter, RM/liter, stesen, tarikh claim; tanda claim hanya hantar status', async ({ page }) => {
+  const seed = [
+    { id: 'c1', entry_date: today, fuel_type: 'diesel', amount: 86, liters: 40, station: 'PETRONAS Jeti Ujian', needs_claim: true,
+      claim_status: 'claimed', claimed_at: '2026-10-30T17:30:00Z', user_id: ADMIN.id, user_email: ADMIN.email, deleted_at: null, dup_ok: false },
+  ]
+  await boot(page, adminSession({ minyak_entries: seed }))
+  await page.goto('minyak/')
+  await page.locator('.history-item').first().click()
+  const body = page.locator('#detailBody')
+  await expect(body).toContainText('40 L')
+  await expect(body).toContainText('RM2.15')
+  await expect(body).toContainText('PETRONAS Jeti Ujian')
+  await expect(body).toContainText('Dah Claim ✓ · 31 Okt 2026')   // 01:30 MYT, bukan 30 Okt UTC
+  await page.click('text=Tandakan Belum Claim')
+  await expect.poll(async () => (await tables(page)).minyak_entries[0].claim_status).toBe('pending')
+  const upd = (await calls(page)).filter((c) => c[0] === 'update' && c[1] === 'minyak_entries').at(-1)
+  expect(Object.keys(upd[2])).toEqual(['claim_status'])   // tarikh claim diurus oleh database
+  expect(page.errors).toEqual([])
 })
