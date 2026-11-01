@@ -195,3 +195,66 @@ test('Butiran entri: liter, RM/liter, stesen, tarikh claim; tanda claim hanya ha
   expect(Object.keys(upd[2])).toEqual(['claim_status'])   // tarikh claim diurus oleh database
   expect(page.errors).toEqual([])
 })
+
+test('📋 Laporan Audit: 7 sheet, jumlah kawalan, pengecualian, Log Perubahan, entri dipadam', async ({ page }) => {
+  const e = (id, d, f, amount, x = {}) => ({ id, entry_date: d, fuel_type: f, amount, user_id: KERANI.id, user_email: KERANI.email, deleted_at: null,
+    dup_ok: false, needs_claim: false, claim_status: 'not_applicable', receipt_path: 'p/r.jpg', created_at: `${d}T02:00:00Z`, ...x })
+  const seed = [
+    e('d1aaaaaa', '2026-09-02', 'diesel', 100, { liters: 46.5, station: 'PETRONAS A', receipt_hash: 'h1' }),
+    e('d2aaaaaa', '2026-09-05', 'diesel', 100, { liters: 46.5, receipt_hash: 'h2' }),
+    e('d3aaaaaa', '2026-09-05', 'diesel', 100, { liters: 46.5, receipt_hash: 'h3' }),                                          // pendua d2
+    e('d4aaaaaa', '2026-09-09', 'diesel', 200, { liters: 37.95, receipt_hash: 'h4' }),                                          // RM5.27/L
+    e('d5aaaaaa', '2026-09-12', 'diesel', 95, { liters: 44.2, created_at: '2026-09-25T03:00:00Z' }),                            // lewat 13 hari
+    e('r1aaaaaa', '2026-09-15', 'ron95', 80, { receipt_path: null, needs_claim: true, claim_status: 'pending' }),               // tiada resit, claim tertunggak
+    e('r2aaaaaa', '2026-10-03', 'ron95', 60, { needs_claim: true, claim_status: 'claimed', claimed_at: '2026-10-20T03:00:00Z' }),
+    e('x1aaaaaa', '2026-10-05', 'ron95', 50, { deleted_at: '2026-10-06T01:00:00Z', deleted_by: KERANI.id }),                    // dipadam
+    e('o1aaaaaa', '2026-12-01', 'ron95', 999),                                                                                  // luar tempoh
+  ]
+  const audit = [
+    { id: 1, entry_id: 'r2aaaaaa', action: 'insert', changed_by: KERANI.id, changed_at: '2026-10-03T02:00:00Z', before: null, after: { fuel_type: 'ron95', amount: 55, entry_date: '2026-10-03' } },
+    { id: 2, entry_id: 'r2aaaaaa', action: 'update', changed_by: ADMIN.id, changed_at: '2026-10-04T02:00:00Z', before: { amount: 55 }, after: { amount: 60 } },
+    { id: 3, entry_id: 'd1aaaaaa', action: 'update', changed_by: null, changed_at: '2026-10-05T02:00:00Z', before: { liters: null }, after: { liters: 46.5 } },
+    { id: 4, entry_id: 'x1aaaaaa', action: 'update', changed_by: KERANI.id, changed_at: '2026-10-06T01:00:00Z', before: { deleted_at: null, amount: 50, fuel_type: 'ron95', entry_date: '2026-10-05' }, after: { deleted_at: '2026-10-06T01:00:00Z', amount: 50, fuel_type: 'ron95', entry_date: '2026-10-05' } },
+  ]
+  await boot(page, adminSession({ minyak_entries: seed, minyak_entries_audit: audit }))
+  await page.goto('minyak/')
+  await page.click('#adminBtn')
+  await page.fill('#auditFrom', '2026-09-01'); await page.fill('#auditTo', '2026-10-31')
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#auditReportBtn')])
+  expect(dl.suggestedFilename()).toBe('Laporan_Audit_Minyak_2026-09-01_2026-10-31.xlsx')
+  const wb = XLSX.read(await readFile(await dl.path()), { cellStyles: true })
+  expect(wb.SheetNames).toEqual(['Ringkasan Audit', 'Rekod', 'Bulanan', 'Pengecualian', 'Log Perubahan', 'Entri Dipadam', 'Nota'])
+  const rows = (n) => XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: null })
+  const ring = rows('Ringkasan Audit')
+  const get = (label) => ring.find((r) => r[0] === label)?.[1]
+  expect(get('Bilangan entri aktif')).toBe(7)                       // dipadam & luar tempoh tidak dikira
+  expect(get('Jumlah keseluruhan (RM)')).toBe(735)
+  expect(get('  Belum claim (RM)')).toBe(80)
+  expect(get('Tiada resit')).toBe(1)
+  expect(get('Mungkin pendua')).toBe(2)
+  expect(get('RM/liter luar biasa')).toBe(1)
+  expect(get('Direkod lewat')).toBe(1)
+  expect(get('Claim tertunggak')).toBe(1)
+  expect(get('Diubah selepas direkod')).toBe(1)                     // perubahan "Sistem (migration)" tidak dikira
+  expect(get('Dipadam / dipulihkan')).toBe(1)
+  expect(ring.some((r) => r[0] === 'Diluluskan oleh')).toBe(true)
+  const rek = rows('Rekod'), h = rek.findIndex((r) => r[0] === 'No.')
+  expect(rek[h + 4][17]).toContain('RM/liter luar biasa')           // d4: RM5.27/L ditanda
+  expect(wb.Sheets.Rekod[XLSX.utils.encode_cell({ r: h + 4, c: 5 })].f).toBe(`IF(N(E${h + 5})>0,G${h + 5}/E${h + 5},"")`)
+  const ex = rows('Pengecualian').filter((r) => typeof r[0] === 'number')
+  expect(ex.find((r) => r[1] === 'RM/liter luar biasa')[5]).toContain('RM5.27/liter')
+  expect(ex.find((r) => r[1] === 'Diubah selepas direkod')[5]).toContain('Jumlah (RM) 55 → 60 oleh Admin Ujian (04/10/2026)')
+  const log = rows('Log Perubahan').filter((r) => /^[0-9A-Z]{8}$/.test(r[3] || '')).map((r) => [r[1], r[2], r[4]])
+  expect(log).toEqual([['Tambah', 'Kerani Ujian (kerani@contoh.my)', '—'], ['Ubah', 'Admin Ujian', 'Jumlah (RM)'], ['Ubah', 'Sistem (migration)', 'Liter'], ['Padam', 'Kerani Ujian (kerani@contoh.my)', '—']])
+  const del = rows('Entri Dipadam').filter((r) => r[0] && /^[0-9A-Z]{8}$/.test(r[0]))
+  expect(del.map((r) => [r[0], r[6]])).toEqual([['X1AAAAAA', 'Masih dipadam']])
+  const bul = rows('Bulanan'), beza = bul.find((r) => r[0] === 'Beza (mesti 0):')
+  expect(beza[3]).toBe(0)
+  expect(bul.find((r) => r[0] === 'JUMLAH').slice(3, 7)).toEqual([7, 595, 140, 735])   // Oktober tiada Diesel (keputusan 0)
+  // Tiada nombor tidak sah dalam XML (Excel akan kata fail rosak).
+  const JSZip = createRequire(import.meta.url)('../../vendor/jszip-3.10.1/jszip.min.js')
+  const zip = await JSZip.loadAsync(await readFile(await dl.path()))
+  for (const f of Object.keys(zip.files).filter((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n)))
+    expect(await zip.file(f).async('string'), f).not.toMatch(/<v>(NaN|Infinity|-Infinity)<\/v>/)
+  expect(page.errors).toEqual([])
+})

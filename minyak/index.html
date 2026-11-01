@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-title" content="Minyak" />
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
 <link rel="icon" href="icons/icon-192.png" />
-<link rel="stylesheet" href="style.css?v=19" />
+<link rel="stylesheet" href="style.css?v=20" />
 </head>
 <body>
 
@@ -59,6 +59,16 @@
           <button type="button" id="bgRemoveBtn" class="danger-btn" style="flex:0 0 auto;padding:10px 14px;" title="Buang video">✕</button>
         </div>
         <div id="bgMsg" class="form-error" hidden style="margin-top:8px;"></div>
+      </div>
+      <div class="admin-section" id="auditReportSection">
+        <h3>📋 Laporan Audit</h3>
+        <p class="admin-hint">Excel untuk juruaudit: jumlah kawalan, semua rekod, pengecualian, Log Perubahan, entri dipadam dan ruang tandatangan.</p>
+        <div class="field-row">
+          <div class="field"><label for="auditFrom">Dari</label><input type="date" id="auditFrom" /></div>
+          <div class="field"><label for="auditTo">Hingga</label><input type="date" id="auditTo" /></div>
+        </div>
+        <button type="button" id="auditReportBtn" class="submit-btn">📋 Jana Laporan Audit</button>
+        <div id="auditReportMsg" class="form-error" hidden style="margin-top:8px;"></div>
       </div>
       <div class="admin-section" id="auditSection">
         <h3>📜 Log Perubahan</h3>
@@ -322,6 +332,6 @@
   <div id="toast" class="toast" hidden></div>
 </div>
 
-<script type="module" src="app.js?v=19"></script>
+<script type="module" src="app.js?v=20"></script>
 </body>
 </html>
