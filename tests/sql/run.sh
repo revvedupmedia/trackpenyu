@@ -5,9 +5,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 SNAPSHOT=$(ls schema-snapshot-*.sql | sort | tail -1)
-# Migration yang lebih baru daripada snapshot (ikut README → Setup). Tiada buat
-# masa ini: snapshot 2026-11-01 sudah termasuk semua migration.
-MIGRATIONS=()
+# Migration yang lebih baru daripada snapshot (ikut README → Setup).
+MIGRATIONS=(migration-minyak-liter-claim.sql)
 OUT=$(mktemp -d)
 export PGOPTIONS="-c client_min_messages=warning"
 psql_db() { psql -X -q -v ON_ERROR_STOP=1 -d "$@"; }
@@ -30,6 +29,9 @@ psql_db lpp_test -f tests/sql/staff.sql 2>&1 | grep -E 'OK:|GAGAL|ERROR' | sed '
 
 echo "== Keselamatan fungsi (statistik Penyu, anon, search_path)"
 psql_db lpp_test -f tests/sql/fungsi.sql 2>&1 | grep -E 'OK:|GAGAL|ERROR' | sed 's/^.*NOTICE:  /  /'
+
+echo "== Minyak: liter, stesen, tarikh claim"
+psql_db lpp_test -f tests/sql/minyak-claim.sql 2>&1 | grep -E 'OK:|GAGAL|ERROR' | sed 's/^.*NOTICE:  /  /'
 
 echo "== Backup lengkap & pulih (alat/pulih-backup.mjs)"
 bash tests/sql/pulih.sh
