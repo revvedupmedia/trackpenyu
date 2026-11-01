@@ -85,7 +85,8 @@ begin
     if v_before.role = 'admin' and _other_active_admins(p_id) = 0 then raise exception 'Mesti ada sekurang-kurangnya seorang admin aktif'; end if;
   end if;
   update staff_profiles set active = p_active where id = p_id;
-  update auth.users set banned_until = case when p_active then null else 'infinity'::timestamptz end where id = p_id;
+  -- Bukan 'infinity': pelayan log masuk Supabase tidak boleh membacanya.
+  update auth.users set banned_until = case when p_active then null else now() + interval '100 years' end where id = p_id;
   insert into staff_audit (target_id, action, before, after)
   values (p_id, case when p_active then 'aktif' else 'nyahaktif' end, to_jsonb(v_before),
           (select to_jsonb(s) from staff_profiles s where s.id = p_id));

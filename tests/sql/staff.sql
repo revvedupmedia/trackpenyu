@@ -31,7 +31,8 @@ do $$ begin perform admin_set_active('aaaaaaaa-0000-4000-8000-000000000001', fal
 exception when raise_exception then if sqlerrm like 'GAGAL%' then raise; end if; raise notice 'OK: admin tidak boleh nyahaktif diri sendiri'; end $$;
 select admin_set_active('ffffffff-0000-4000-8000-000000000009', false);
 reset role;
-select test_assert((select banned_until = 'infinity' from auth.users where id = 'ffffffff-0000-4000-8000-000000000009'), 'nyahaktif menyekat log masuk (banned_until)');
+select test_assert((select banned_until > now() + interval '99 years' and banned_until <> 'infinity' from auth.users where id = 'ffffffff-0000-4000-8000-000000000009'),
+  'nyahaktif menyekat log masuk (banned_until 100 tahun; bukan infinity yang Supabase Auth tidak boleh baca)');
 set role authenticated;
 select admin_set_active('ffffffff-0000-4000-8000-000000000009', true);
 reset role;
@@ -43,7 +44,12 @@ select test_assert((select count(*) from auth.mfa_factors where user_id = 'aaaaa
 set role authenticated;
 select test_assert((select count(*) from staff_audit) = 5
   and (select string_agg(action, ',' order by id) from staff_audit) = 'daftar,ubah,nyahaktif,aktif,reset_mfa', 'setiap perubahan direkod dalam log Urus Staf');
+-- Pembaikan untuk baris lama 'infinity' (migration-urus-staf-fix-ban.sql).
 reset role;
+update auth.users set banned_until = 'infinity' where id = 'ffffffff-0000-4000-8000-000000000009';
+\i migration-urus-staf-fix-ban.sql
+select test_assert((select banned_until is null from auth.users where id = 'ffffffff-0000-4000-8000-000000000009'),
+  'pembaikan: akaun aktif dengan infinity dibuka semula');
 set role anon;
 do $$ begin perform * from admin_list_accounts(); raise exception 'GAGAL: tanpa log masuk boleh lihat akaun';
 exception when insufficient_privilege then raise notice 'OK: tanpa log masuk tidak boleh guna Urus Staf'; end $$;
