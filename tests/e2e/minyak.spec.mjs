@@ -42,7 +42,16 @@ test('Excel: Ringkasan + Rekod, jumlah betul, tarikh tidak anjak zon waktu', asy
   const ring = XLSX.utils.sheet_to_json(wb.Sheets.Ringkasan, { header: 1 })
   expect(ring.at(-1)).toEqual(['JUMLAH', 52, 1845, 3688, 5533, 1344])
   const rek = XLSX.utils.sheet_to_json(wb.Sheets.Rekod, { header: 1, raw: false })
-  expect(rek[1][0]).toBe('01/05/2026')
+  const h = rek.findIndex((r) => r[0] === 'Tarikh')
+  expect(rek[h].slice(0, 5)).toEqual(['Tarikh', 'Jenis', 'Liter', 'RM / Liter', 'Jumlah (RM)'])
+  expect(rek[h + 1][0]).toBe('01/05/2026')
+  // Berjadual & berwarna (bukan sel kosong tanpa gaya): header berwarna, sempadan, penapis, formula JUMLAH.
+  const st = XLSX.read(await readFile(await dl.path()), { cellStyles: true }).Sheets.Rekod
+  const hc = XLSX.utils.encode_cell({ r: h, c: 0 })
+  expect(st[hc].s?.fgColor?.rgb || st[hc].s?.patternType).toBeTruthy()
+  expect(st['!autofilter']?.ref).toMatch(/^A4:M\d+$/)
+  const jumlah = rek.findIndex((r) => r[0] === 'JUMLAH')
+  expect(st[XLSX.utils.encode_cell({ r: jumlah, c: 4 })].f).toMatch(/^SUM\(E5:E\d+\)$/)
 })
 
 test('Semakan Data: resit sama, mungkin pendua, odometer, jumlah luar biasa; padam & pulih', async ({ page }) => {

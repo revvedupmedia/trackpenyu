@@ -15,6 +15,7 @@ guna font sistem; app tetap berfungsi).
 | `supabase-js-2.117.3/` | 2.117.3 | `shared/auth.js` (semua halaman) | npm `@supabase/supabase-js`, dibundle jadi satu fail ESM dengan esbuild | MIT |
 | `chartjs-4.4.4/` | 4.4.4 | Penyu (graf) | npm `chart.js` → `dist/chart.umd.js` | MIT |
 | `sheetjs-0.20.3/` | 0.20.3 | Penyu (baca Excel) | `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz` → `dist/xlsx.full.min.js` | Apache-2.0 |
+| `exceljs-4.4.0/` | 4.4.0 | Minyak (⬇ Excel berwarna & berjadual) | npm `exceljs` → `dist/exceljs.min.js` | MIT |
 | `jszip-3.10.1/` | 3.10.1 | Penyu (export Excel ikut template) | npm `jszip` → `dist/jszip.min.js` | MIT |
 | `pptxgenjs-3.12.0/` | 3.12.0 | Penyu (export PowerPoint) | npm `pptxgenjs` → `dist/pptxgen.bundle.js` | MIT |
 | `pdfjs-4.10.38/` | 4.10.38 | Minyak (baca resit Setel) | npm `pdfjs-dist` → `legacy/build/` | Apache-2.0 |

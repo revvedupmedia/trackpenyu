@@ -192,15 +192,37 @@ async function loadAudit(){
 }
 
 // ── Export Excel (tempoh & penapis semasa) ────────
-// SheetJS hanya dimuat bila perlu (fail besar), dari vendor/ dalam repo.
-let xlsxReady=null;
-function loadXLSX(){
-  return xlsxReady||=new Promise((res,rej)=>{
+// ExcelJS (warna, sempadan, penapis) hanya dimuat bila perlu, dari vendor/.
+let excelReady=null;
+function loadExcelJS(){
+  return excelReady||=new Promise((res,rej)=>{
     const s=document.createElement('script');
-    s.src='../vendor/sheetjs-0.20.3/xlsx.full.min.js';
-    s.onload=()=>res(window.XLSX); s.onerror=()=>{xlsxReady=null;rej(new Error('Gagal muat pembina Excel.'));};
+    s.src='../vendor/exceljs-4.4.0/exceljs.min.js';
+    s.onload=()=>res(window.ExcelJS); s.onerror=()=>{excelReady=null;rej(new Error('Gagal muat pembina Excel.'));};
     document.head.appendChild(s);
   });
+}
+// Gaya sama dengan format laporan audit (docs/Contoh_Format_Audit_Minyak.xlsx).
+const XL={
+  font:{name:'Arial',size:10}, bold:{name:'Arial',size:10,bold:true},
+  title:{name:'Arial',size:14,bold:true}, note:{name:'Arial',size:9,italic:true,color:{argb:'FF666666'}},
+  head:{type:'pattern',pattern:'solid',fgColor:{argb:'FF1F4E5A'}}, headFont:{name:'Arial',size:10,bold:true,color:{argb:'FFFFFFFF'}},
+  zebra:{type:'pattern',pattern:'solid',fgColor:{argb:'FFF5F8F9'}}, total:{type:'pattern',pattern:'solid',fgColor:{argb:'FFE2EFDA'}},
+  ok:{type:'pattern',pattern:'solid',fgColor:{argb:'FFE2EFDA'}}, warn:{type:'pattern',pattern:'solid',fgColor:{argb:'FFFCE4D6'}},
+  border:{top:{style:'thin',color:{argb:'FFBFBFBF'}},left:{style:'thin',color:{argb:'FFBFBFBF'}},bottom:{style:'thin',color:{argb:'FFBFBFBF'}},right:{style:'thin',color:{argb:'FFBFBFBF'}}},
+  RM:'#,##0.00;(#,##0.00);"-"', D:'dd/mm/yyyy',
+};
+function xlHeader(ws,rowNo,labels){
+  const r=ws.getRow(rowNo); r.values=labels; r.height=30;
+  r.eachCell(c=>{c.font=XL.headFont;c.fill=XL.head;c.border=XL.border;c.alignment={horizontal:'center',vertical:'middle',wrapText:true};});
+}
+function xlTitle(ws,title,sub){
+  ws.getCell('A1').value=title; ws.getCell('A1').font=XL.title;
+  ws.getCell('A2').value=sub; ws.getCell('A2').font=XL.note;
+}
+function xlPage(ws,headRow){
+  ws.views=[{state:'frozen',ySplit:headRow,showGridLines:false}];
+  ws.pageSetup={orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,printTitlesRow:`${headRow}:${headRow}`};
 }
 document.getElementById('exportBtn').addEventListener('click',async()=>{
   const btn=document.getElementById('exportBtn');
@@ -208,40 +230,75 @@ document.getElementById('exportBtn').addEventListener('click',async()=>{
   if(!rows.length){showToast('Tiada rekod untuk dieksport.');return;}
   btn.disabled=true; btn.textContent='Menyedia...';
   try{
-    const XLSX=await loadXLSX();
+    const ExcelJS=await loadExcelJS();
     const y=state.viewDate.getFullYear(),m=state.viewDate.getMonth();
     const period=state.view==='year'?`${y}`:`${MONTH_NAMES[m]} ${y}`;
     const fuelLbl=state.fuelFilter==='all'?'Semua jenis':FUEL_NAME[state.fuelFilter];
+    const stamp=`Dijana: ${new Date().toLocaleString('ms-MY')} oleh ${state.currentUser?.email||'-'}`;
     // Tarikh sebagai nombor siri Excel (bukan objek Date) supaya tidak anjak
     // sehari mengikut zon waktu peranti.
-    const asDate=s=>{const[yy,mm,dd]=s.split('-').map(Number);return{t:'n',v:(Date.UTC(yy,mm-1,dd)-Date.UTC(1899,11,30))/864e5,z:'dd/mm/yyyy'};};
+    const serial=s=>{const[yy,mm,dd]=s.split('-').map(Number);return(Date.UTC(yy,mm-1,dd)-Date.UTC(1899,11,30))/864e5;};
+    const sum=xs=>xs.reduce((a,e)=>a+Number(e.amount),0);
     const sorted=[...rows].sort((a,b)=>a.entry_date.localeCompare(b.entry_date));
-    const rekod=[['Tarikh','Jenis','Jumlah (RM)','Odo Mula (km)','Odo Akhir (km)','Jarak (km)','Perlu Claim','Status Claim','Nota','Dimasukkan oleh','No. Invois Setel','Resit','Liter','Stesen','Tarikh Claim'],
-      ...sorted.map(e=>[asDate(e.entry_date),e.fuel_type==='diesel'?'Diesel':'RON95 (Boat)',Number(e.amount),
-        e.odometer_start??'',e.odometer_end??'',e.distance_km??'',e.needs_claim?'Ya':'Tidak',
-        e.needs_claim?(e.claim_status==='claimed'?'Dah Claim':'Belum Claim'):'',e.notes||'',e.user_email||'',e.receipt_ref||'',
-        (e.receipt_path||e.receipt_url)?'Ada':'Tiada',e.liters!=null?Number(e.liters):'',e.station||'',
-        e.claimed_at?asDate(toLocalDateStr(new Date(e.claimed_at))):''])];
-    const tot=f=>sorted.filter(e=>!f||e.fuel_type===f).reduce((a,e)=>a+Number(e.amount),0);
-    rekod.push([],['JUMLAH','',tot()],['Diesel','',tot('diesel')],['RON95 (Boat)','',tot('ron95')],
-      ['Belum claim','',sorted.filter(e=>e.needs_claim&&e.claim_status==='pending').reduce((a,e)=>a+Number(e.amount),0)]);
-    const ws1=XLSX.utils.aoa_to_sheet(rekod);
-    ws1['!cols']=[12,14,12,12,12,10,11,12,30,30,38,8,9,26,12].map(w=>({wch:w}));
-    for(let r=1;r<rekod.length;r++){const c=ws1[XLSX.utils.encode_cell({r,c:2})];if(c&&c.t==='n')c.z='#,##0.00';}
+    const wb=new ExcelJS.Workbook(); wb.creator='Minyak Tracker'; wb.created=new Date();
+
+    // ---- Ringkasan ----
+    const ws2=wb.addWorksheet('Ringkasan');
+    xlTitle(ws2,`Minyak Tracker — ${period} — ${fuelLbl}`,stamp);
+    xlHeader(ws2,4,['Bulan','Bil. Entri','Diesel (RM)','RON95 (RM)','Jumlah (RM)','Belum Claim (RM)']);
     const byMonth=MONTH_NAMES.map((name,i)=>{const xs=sorted.filter(e=>Number(e.entry_date.slice(5,7))===i+1);
-      const s=f=>xs.filter(e=>!f||e.fuel_type===f).reduce((a,e)=>a+Number(e.amount),0);
-      return [name,xs.length,s('diesel'),s('ron95'),s(),xs.filter(e=>e.needs_claim&&e.claim_status==='pending').reduce((a,e)=>a+Number(e.amount),0)];}).filter(r=>r[1]);
-    const ring=[[`Minyak Tracker — ${period} — ${fuelLbl}`],[`Dijana: ${new Date().toLocaleString('ms-MY')}`],[],
-      ['Bulan','Bil. Entri','Diesel (RM)','RON95 (RM)','Jumlah (RM)','Belum Claim (RM)'],...byMonth,
-      ['JUMLAH',byMonth.reduce((a,r)=>a+r[1],0),...[2,3,4,5].map(i=>byMonth.reduce((a,r)=>a+r[i],0))]];
-    const ws2=XLSX.utils.aoa_to_sheet(ring);
-    ws2['!cols']=[{wch:14},{wch:10},{wch:14},{wch:14},{wch:14},{wch:16}];
-    for(let r=4;r<ring.length;r++)for(let c=2;c<=5;c++){const cell=ws2[XLSX.utils.encode_cell({r,c})];if(cell&&cell.t==='n')cell.z='#,##0.00';}
-    const wb=XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb,ws2,'Ringkasan');
-    XLSX.utils.book_append_sheet(wb,ws1,'Rekod');
+      return [name,xs.length,sum(xs.filter(e=>e.fuel_type==='diesel')),sum(xs.filter(e=>e.fuel_type==='ron95')),sum(xs),
+        sum(xs.filter(e=>e.needs_claim&&e.claim_status==='pending'))];}).filter(r=>r[1]);
+    byMonth.forEach((v,k)=>{const r=ws2.getRow(5+k); r.values=v;
+      r.eachCell({includeEmpty:true},(c,col)=>{if(col>6)return;c.font=XL.font;c.border=XL.border;if(k%2)c.fill=XL.zebra;if(col>2)c.numFmt=XL.RM;});});
+    const t2=5+byMonth.length, L2=t2-1, tr2=ws2.getRow(t2);
+    tr2.getCell(1).value='JUMLAH';
+    ['B','C','D','E','F'].forEach((col,i)=>{tr2.getCell(i+2).value={formula:`SUM(${col}5:${col}${L2})`,result:byMonth.reduce((a,r)=>a+r[i+1],0)};});
+    tr2.eachCell({includeEmpty:true},(c,col)=>{if(col>6)return;c.font=XL.bold;c.fill=XL.total;c.border=XL.border;if(col>2)c.numFmt=XL.RM;});
+    [14,10,14,14,14,16].forEach((w,i)=>ws2.getColumn(i+1).width=w);
+    xlPage(ws2,4);
+
+    // ---- Rekod ----
+    const ws1=wb.addWorksheet('Rekod');
+    xlTitle(ws1,`Rekod minyak — ${period} — ${fuelLbl}`,stamp);
+    const H=4,F=H+1;
+    xlHeader(ws1,H,['Tarikh','Jenis','Liter','RM / Liter','Jumlah (RM)','Stesen','Perlu Claim','Status Claim','Tarikh Claim','Nota','Dimasukkan oleh','No. Invois Setel','Resit']);
+    sorted.forEach((e,k)=>{
+      const i=F+k, lit=e.liters!=null?Number(e.liters):null, st=e.needs_claim?(e.claim_status==='claimed'?'Dah Claim':'Belum Claim'):'';
+      const r=ws1.getRow(i);
+      r.values=[serial(e.entry_date),e.fuel_type==='diesel'?'Diesel':'RON95 (Boat)',lit,
+        lit?{formula:`IF(N(C${i})>0,E${i}/C${i},"")`,result:Number(e.amount)/lit}:null,Number(e.amount),e.station||'',
+        e.needs_claim?'Ya':'Tidak',st,e.claimed_at?serial(toLocalDateStr(new Date(e.claimed_at))):null,e.notes||'',e.user_email||'',
+        e.receipt_ref||'',(e.receipt_path||e.receipt_url)?'Ada':'Tiada'];
+      for(let c=1;c<=13;c++){const x=r.getCell(c);x.font=XL.font;x.border=XL.border;if(k%2)x.fill=XL.zebra;}
+      r.getCell(1).numFmt=XL.D; r.getCell(9).numFmt=XL.D; r.getCell(3).numFmt='#,##0.000'; r.getCell(4).numFmt='0.000'; r.getCell(5).numFmt=XL.RM;
+      if(st)r.getCell(8).fill=st==='Dah Claim'?XL.ok:XL.warn;
+      if(!(e.receipt_path||e.receipt_url))r.getCell(13).fill=XL.warn;
+      r.getCell(10).alignment={wrapText:true,vertical:'top'};
+    });
+    const L=F+sorted.length-1, t1=L+1, tr1=ws1.getRow(t1);
+    tr1.getCell(1).value='JUMLAH';
+    tr1.getCell(3).value={formula:`SUM(C${F}:C${L})`,result:sorted.reduce((a,e)=>a+(Number(e.liters)||0),0)};
+    tr1.getCell(5).value={formula:`SUM(E${F}:E${L})`,result:sum(sorted)};
+    for(let c=1;c<=13;c++){const x=tr1.getCell(c);x.font=XL.bold;x.fill=XL.total;x.border=XL.border;}
+    tr1.getCell(3).numFmt='#,##0.000'; tr1.getCell(5).numFmt=XL.RM;
+    const sub=[['Diesel',`SUMIFS(E${F}:E${L},B${F}:B${L},"Diesel")`,sum(sorted.filter(e=>e.fuel_type==='diesel'))],
+      ['RON95 (Boat)',`SUMIFS(E${F}:E${L},B${F}:B${L},"RON95 (Boat)")`,sum(sorted.filter(e=>e.fuel_type==='ron95'))],
+      ['Belum claim',`SUMIFS(E${F}:E${L},H${F}:H${L},"Belum Claim")`,sum(sorted.filter(e=>e.needs_claim&&e.claim_status==='pending'))]];
+    sub.forEach(([lbl,f,v],k)=>{const r=ws1.getRow(t1+2+k);
+      r.getCell(4).value=lbl; r.getCell(4).font=XL.bold; r.getCell(4).alignment={horizontal:'right'};
+      r.getCell(5).value={formula:f,result:v}; r.getCell(5).numFmt=XL.RM; r.getCell(5).font=XL.bold;
+      [4,5].forEach(c=>r.getCell(c).border=XL.border);});
+    [12,13,10,10,12,24,10,12,12,32,28,38,7].forEach((w,i)=>ws1.getColumn(i+1).width=w);
+    ws1.autoFilter={from:{row:H,column:1},to:{row:L,column:13}};
+    xlPage(ws1,H);
+
     const tag=state.view==='year'?`${y}`:`${y}-${String(m+1).padStart(2,'0')}`;
-    XLSX.writeFile(wb,`Minyak_${tag}${state.fuelFilter==='all'?'':'_'+FUEL_NAME[state.fuelFilter]}.xlsx`);
+    const buf=await wb.xlsx.writeBuffer();
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+    a.download=`Minyak_${tag}${state.fuelFilter==='all'?'':'_'+FUEL_NAME[state.fuelFilter]}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),10_000);
     showToast('Excel dimuat turun ✓');
   }catch(err){showToast(err.message||'Gagal eksport.');}
   finally{btn.disabled=false;btn.textContent='⬇ Excel';}
