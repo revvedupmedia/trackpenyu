@@ -5,6 +5,7 @@
 // ===========================================
 
 import { supabase as sb, requireApp, logout, APP_VERSION } from '../shared/auth.js';
+import { loadExcelJS, XL, xlHeader, xlTitle, xlPage, serialDate, downloadWorkbook } from './xl.js?v=20';
 
 const MONTH_NAMES = ['Januari','Februari','Mac','April','Mei','Jun','Julai','Ogos','September','Oktober','November','Disember'];
 const RECEIPT_BUCKET = 'minyak-receipts';  // private: buka guna signed URL
@@ -157,7 +158,33 @@ function openAdminDialog() {
   adminDialog.showModal();
   refreshLegacyStatus();
   loadAudit();
+  // Tempoh laporan audit lalai = paparan semasa (bulan atau tahun).
+  const y=state.viewDate.getFullYear(),m=state.viewDate.getMonth();
+  const a=state.view==='year'?new Date(y,0,1):new Date(y,m,1), b=state.view==='year'?new Date(y,11,31):new Date(y,m+1,0);
+  document.getElementById('auditFrom').value=toLocalDateStr(a);
+  document.getElementById('auditTo').value=toLocalDateStr(b);
+  document.getElementById('auditReportMsg').hidden=true;
 }
+
+// ── Admin: 📋 Laporan Audit (minyak/audit.js) ─────
+document.getElementById('auditReportBtn').addEventListener('click',async()=>{
+  const btn=document.getElementById('auditReportBtn'),msg=document.getElementById('auditReportMsg');
+  const from=document.getElementById('auditFrom').value,to=document.getElementById('auditTo').value;
+  msg.hidden=true;
+  const fail=t=>{msg.textContent=t;msg.hidden=false;};
+  if(!from||!to)return fail('Pilih tarikh Dari dan Hingga.');
+  if(from>to)return fail('Tarikh Dari mesti sebelum Hingga.');
+  btn.disabled=true;btn.textContent='Menyedia laporan...';
+  try{
+    const [ExcelJS,audit]=await Promise.all([loadExcelJS(),import('./audit.js?v=20')]);
+    const data=await audit.collectAuditData(sb,from,to);
+    if(!data.entries.length)throw new Error('Tiada entri dalam tempoh ini.');
+    const {wb,summary}=audit.buildAuditWorkbook(ExcelJS,data,{user:state.currentUser?.email,version:APP_VERSION});
+    await downloadWorkbook(wb,`Laporan_Audit_Minyak_${from}_${to}.xlsx`);
+    showToast(`Laporan audit: ${summary.entries} entri, ${summary.issues} isu ✓`);
+  }catch(err){fail(err.message||'Gagal jana laporan.');}
+  finally{btn.disabled=false;btn.textContent='📋 Jana Laporan Audit';}
+});
 
 // ── Admin: Log Perubahan ──────────────────────────
 const AUDIT_FIELDS={entry_date:'Tarikh',fuel_type:'Jenis',amount:'Jumlah',odometer_start:'Odo mula',odometer_end:'Odo akhir',
@@ -192,38 +219,6 @@ async function loadAudit(){
 }
 
 // ── Export Excel (tempoh & penapis semasa) ────────
-// ExcelJS (warna, sempadan, penapis) hanya dimuat bila perlu, dari vendor/.
-let excelReady=null;
-function loadExcelJS(){
-  return excelReady||=new Promise((res,rej)=>{
-    const s=document.createElement('script');
-    s.src='../vendor/exceljs-4.4.0/exceljs.min.js';
-    s.onload=()=>res(window.ExcelJS); s.onerror=()=>{excelReady=null;rej(new Error('Gagal muat pembina Excel.'));};
-    document.head.appendChild(s);
-  });
-}
-// Gaya sama dengan format laporan audit (docs/Contoh_Format_Audit_Minyak.xlsx).
-const XL={
-  font:{name:'Arial',size:10}, bold:{name:'Arial',size:10,bold:true},
-  title:{name:'Arial',size:14,bold:true}, note:{name:'Arial',size:9,italic:true,color:{argb:'FF666666'}},
-  head:{type:'pattern',pattern:'solid',fgColor:{argb:'FF1F4E5A'}}, headFont:{name:'Arial',size:10,bold:true,color:{argb:'FFFFFFFF'}},
-  zebra:{type:'pattern',pattern:'solid',fgColor:{argb:'FFF5F8F9'}}, total:{type:'pattern',pattern:'solid',fgColor:{argb:'FFE2EFDA'}},
-  ok:{type:'pattern',pattern:'solid',fgColor:{argb:'FFE2EFDA'}}, warn:{type:'pattern',pattern:'solid',fgColor:{argb:'FFFCE4D6'}},
-  border:{top:{style:'thin',color:{argb:'FFBFBFBF'}},left:{style:'thin',color:{argb:'FFBFBFBF'}},bottom:{style:'thin',color:{argb:'FFBFBFBF'}},right:{style:'thin',color:{argb:'FFBFBFBF'}}},
-  RM:'#,##0.00;(#,##0.00);"-"', D:'dd/mm/yyyy',
-};
-function xlHeader(ws,rowNo,labels){
-  const r=ws.getRow(rowNo); r.values=labels; r.height=30;
-  r.eachCell(c=>{c.font=XL.headFont;c.fill=XL.head;c.border=XL.border;c.alignment={horizontal:'center',vertical:'middle',wrapText:true};});
-}
-function xlTitle(ws,title,sub){
-  ws.getCell('A1').value=title; ws.getCell('A1').font=XL.title;
-  ws.getCell('A2').value=sub; ws.getCell('A2').font=XL.note;
-}
-function xlPage(ws,headRow){
-  ws.views=[{state:'frozen',ySplit:headRow,showGridLines:false}];
-  ws.pageSetup={orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,printTitlesRow:`${headRow}:${headRow}`};
-}
 document.getElementById('exportBtn').addEventListener('click',async()=>{
   const btn=document.getElementById('exportBtn');
   const rows=shown();
@@ -237,7 +232,7 @@ document.getElementById('exportBtn').addEventListener('click',async()=>{
     const stamp=`Dijana: ${new Date().toLocaleString('ms-MY')} oleh ${state.currentUser?.email||'-'}`;
     // Tarikh sebagai nombor siri Excel (bukan objek Date) supaya tidak anjak
     // sehari mengikut zon waktu peranti.
-    const serial=s=>{const[yy,mm,dd]=s.split('-').map(Number);return(Date.UTC(yy,mm-1,dd)-Date.UTC(1899,11,30))/864e5;};
+    const serial=serialDate;
     const sum=xs=>xs.reduce((a,e)=>a+Number(e.amount),0);
     const sorted=[...rows].sort((a,b)=>a.entry_date.localeCompare(b.entry_date));
     const wb=new ExcelJS.Workbook(); wb.creator='Minyak Tracker'; wb.created=new Date();
@@ -294,11 +289,7 @@ document.getElementById('exportBtn').addEventListener('click',async()=>{
     xlPage(ws1,H);
 
     const tag=state.view==='year'?`${y}`:`${y}-${String(m+1).padStart(2,'0')}`;
-    const buf=await wb.xlsx.writeBuffer();
-    const a=document.createElement('a');
-    a.href=URL.createObjectURL(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-    a.download=`Minyak_${tag}${state.fuelFilter==='all'?'':'_'+FUEL_NAME[state.fuelFilter]}.xlsx`;
-    document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),10_000);
+    await downloadWorkbook(wb,`Minyak_${tag}${state.fuelFilter==='all'?'':'_'+FUEL_NAME[state.fuelFilter]}.xlsx`);
     showToast('Excel dimuat turun ✓');
   }catch(err){showToast(err.message||'Gagal eksport.');}
   finally{btn.disabled=false;btn.textContent='⬇ Excel';}

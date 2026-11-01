@@ -85,8 +85,14 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
   sheet Ringkasan ikut bulan dan sheet Rekod, sedia untuk proses claim.
 - Gambar resit dari kamera dikecilkan sebelum upload (sisi panjang 2000px,
   JPEG 85%; ~3–5 MB → ~150–500 KB, teks kekal jelas). PDF tidak diubah.
-- **Admin** (butang ⚙️): video latar, **📜 Log Perubahan** (siapa tambah,
-  ubah, padam atau pulihkan entri), dan **Pindah Resit Lama**.
+- **Admin** (butang ⚙️): video latar, **📋 Laporan Audit**, **📜 Log Perubahan**
+  (siapa tambah, ubah, padam atau pulihkan entri), dan **Pindah Resit Lama**.
+- **📋 Laporan Audit** (admin): pilih tempoh → satu fail Excel untuk juruaudit
+  (`minyak/audit.js`): Ringkasan Audit (jumlah kawalan, kiraan isu, ruang
+  tandatangan), Rekod (bendera setiap entri), Bulanan (dengan semakan silang),
+  Pengecualian (10 pemeriksaan automatik, lajur ulasan penyemak), Log
+  Perubahan, Entri Dipadam dan Nota. Semua jumlah ialah formula Excel.
+  Rujukan format: `docs/Contoh_Format_Audit_Minyak.xlsx`.
 
 ### Portal: Pentadbiran (admin sahaja)
 
@@ -131,7 +137,7 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
 | `shared/backup.js` | Senarai jadual dalam Backup Data (ujian gagal jika ada jadual tertinggal) |
 | `alat/pulih-backup.mjs` | Pulih ZIP backup ke projek Supabase (lihat **Pindah**) |
 | `penyu/` | Penyu Tracker (`index.html`, `manifest.json`) |
-| `minyak/` | Minyak Tracker (`index.html`, `app.js`, `setel.js`, `style.css`, `manifest.json`, `icons/`) |
+| `minyak/` | Minyak Tracker (`index.html`, `app.js`, `setel.js`, `audit.js` laporan audit, `xl.js` gaya Excel, `style.css`, `manifest.json`, `icons/`) |
 | `.claude/settings.json`, `.claude/hooks/` | Tetapan Claude Code: tool Supabase yang tidak perlu klik kebenaran, dan hook yang menyekat projek Supabase selain PenyuTrack |
 | `tests/`, `.github/workflows/ujian.yml` | Ujian automatik (lihat **Ujian automatik**) |
 | `vendor/` | Semua library pihak ketiga, versi tetap (lihat `vendor/README.md` untuk versi & cara kemas kini) |
