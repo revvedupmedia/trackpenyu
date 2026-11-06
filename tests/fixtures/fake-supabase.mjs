@@ -68,6 +68,9 @@ export function createClient() {
     from: query,
     rpc: async (fn, args = {}) => {
       calls.push(['rpc', fn, args])
+      // Jawapan RPC tetap dari state ujian, cth rpc.get_multi_year_monthly[pulau].
+      const canned = F().rpc?.[fn]
+      if (canned) return { data: args.p_island ? (canned[args.p_island] ?? {}) : canned, error: null }
       if (!fn.startsWith('admin_')) return { data: null, error: null }
       // Tiruan fungsi Urus Staf: hanya admin dengan MFA (sama seperti database).
       const meProfile = T('staff_profiles').find((p) => p.id === me().id)
