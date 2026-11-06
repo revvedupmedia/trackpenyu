@@ -53,8 +53,9 @@ dan **PSB**.
   ikut. Data dalam sheet tersembunyi `DATA`; formula hanya SUMIFS/INDEX/MATCH
   supaya serasi Excel & Google Sheets. Rekod bulanan lama & menetas gabung
   (tiada pecahan LPP/SFC/tag) dalam lajur U–Y sheet JUMLAH dan baris JUMLAH
-  setiap bulan. Penjana: `penyu/eksport-rasmi.js`. Julat tahun: Ringkasan
-  Tahunan + Bulanan. Fail eksport tidak boleh diimport semula (guna template
+  setiap bulan. Penjana: `penyu/eksport-rasmi.js`. Sentiasa format rasmi;
+  pilihan Pulau & Tahun di app hanya paparan awal fail (tiada lagi format
+  Ringkasan). Fail eksport tidak boleh diimport semula (guna template
   yang diisi).
 - **Mod Pembentangan**: slaid interaktif dengan animasi penyu dan label
   angka pada graf. Boleh dieksport ke **PowerPoint** (PptxGenJS).
