@@ -260,6 +260,7 @@
 <script type="module">
 // Login, lupa kata laluan & reset kini di ../login.html (dikongsi semua app).
 import { supabase, requireApp, appsFor, logout as portalLogout, APP_VERSION } from '../shared/auth.js'
+import { buildRasmiWorkbook } from './eksport-rasmi.js'
 const app = document.getElementById('app')
 const ISLANDS = [
   { code:'PTB', name:'Pulau Talang-Talang Besar' },
@@ -2593,7 +2594,7 @@ async function screenAdmin() {
   // tetap: tahun baharu muncul sendiri bila ada data, tahun hadapan tidak.
   const exportCard = card(`
     <h2 class="font-display text-lg mb-3">Eksport Excel</h2>
-    <p class="text-sm opacity-70 mb-3">Satu tahun yang ada rekod harian: format rasmi (JAN-DIS + JUMLAH, formula kekal utuh). Julat tahun atau tahun rekod lama: Ringkasan tahunan &amp; bulanan.</p>
+    <p class="text-sm opacity-70 mb-3">Satu tahun: format rasmi (JAN-DIS + JUMLAH). Fail mengandungi semua tahun &amp; semua pulau: tukar <b>Tahun</b> dan <b>Pulau</b> terus dalam Excel / Google Sheets (sheet JAN, sel V1 &amp; V2). Julat tahun: Ringkasan tahunan &amp; bulanan.</p>
     <div class="grid grid-cols-3 gap-2">
       <div><label class="text-xs opacity-70">Pulau</label><select id="ex_island">${ISLANDS.map(i=>`<option value="${i.code}" ${i.code===state.island?'selected':''}>${i.code}</option>`).join('')}<option value="ALL">Semua</option></select></div>
       <div><label class="text-xs opacity-70">Dari tahun</label><select id="ex_from" disabled><option>...</option></select></div>
@@ -2610,10 +2611,10 @@ async function screenAdmin() {
     const isl = exEl('ex_island').value, from = Number(exEl('ex_from').value), to = Number(exEl('ex_to').value)
     exMode = null; exEl('ex_go').disabled = true
     if (!(from <= to)) { exEl('ex_hint').textContent = '⚠️ "Dari tahun" mesti sebelum atau sama dengan "Hingga tahun".'; return }
-    const rasmi = isl !== 'ALL' && from === to && await hasDailyData(isl, from)
+    const rasmi = from === to
     exMode = rasmi ? 'rasmi' : 'ringkasan'
     exEl('ex_hint').textContent = rasmi
-      ? `Akan dijana: format rasmi ${isl} ${from} (JAN-DIS + JUMLAH).`
+      ? `Akan dijana: format rasmi ${isl === 'ALL' ? 'semua pulau' : isl} ${from} (JAN-DIS + JUMLAH). Tahun & pulau boleh ditukar dalam fail.`
       : `Akan dijana: Ringkasan ${isl === 'ALL' ? 'semua pulau' : isl} ${from === to ? from : from + '–' + to} (sheet Tahunan + Bulanan).`
     exEl('ex_go').disabled = false
   }
@@ -2712,6 +2713,9 @@ async function screenAdmin() {
       const island = importCard.querySelector('#im_island').value
       const yr = Number(importCard.querySelector('#im_year').value)
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' })
+      // Fail eksport (laporan berformula, ada sheet DATA) bukan borang isian:
+      // angkanya ikut pilihan tahun/pulau semasa dan boleh tercampur semua pulau.
+      if (wb.SheetNames.includes('DATA') && wb.Sheets.JAN?.V1) { toast('Fail ini ialah fail eksport (laporan) dari app, bukan borang isian. Untuk import, guna template rasmi yang diisi.', 'error'); resetImGo(); return }
       const rows = parseImportFile(wb, island, yr)
       const checks = checkImportRows(rows, wb, yr)
       if (!rows.length && !checks.ignored.length) { toast('Tiada data dijumpai dalam fail. Pastikan format ikut template rasmi dan tahun betul.', 'error'); resetImGo(); return }
@@ -3958,20 +3962,6 @@ async function loadJSZip() {
   return window.JSZip
 }
 
-const xmlEsc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-
-// Ganti nilai sel dalam satu sheet XML sekali lalu. updates: Map(ref -> number | string | null)
-// null = kosongkan sel (buang formula). Gaya sel (s="..") dikekalkan.
-function patchSheetXml(xml, updates) {
-  return xml.replace(/<c r="([A-Z]+\d+)"([^>]*?)(\/>|>[\s\S]*?<\/c>)/g, (m, ref, attrs) => {
-    if (!updates.has(ref)) return m
-    const v = updates.get(ref)
-    const s = (attrs.match(/\ss="\d+"/) || [''])[0]
-    if (v === null || v === undefined || v === '') return `<c r="${ref}"${s}/>`
-    if (typeof v === 'number') return `<c r="${ref}"${s} t="n"><v>${v}</v></c>`
-    return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${xmlEsc(v)}</t></is></c>`
-  })
-}
 
 // Data terkini semua tahun (rekod lama + harian), angka sama dengan Dashboard
 // & Mod Pembentangan. Dibaca semula setiap eksport supaya entri baharu ikut.
@@ -3988,16 +3978,6 @@ async function exportYearRange(island) {
   return ys.length ? [ys[0], ys.at(-1)] : null
 }
 
-// Ada rekod harian/sarang/menetas bulanan? Jika ya, format rasmi boleh diisi.
-async function hasDailyData(island, year) {
-  const a = `${year}-01-01`, b = `${year}-12-31`
-  const res = await Promise.all([
-    supabase.from('daily_entries').select('id').eq('island', island).gte('tarikh', a).lte('tarikh', b).limit(1),
-    supabase.from('nest_records').select('id').eq('island', island).gte('tarikh_dijumpai', a).lte('tarikh_dijumpai', b).limit(1),
-    supabase.from('monthly_hatch').select('year').eq('island', island).eq('year', year).limit(1),
-  ])
-  return res.some(r => r.data?.length)
-}
 
 // Ringkasan berbilang tahun: sheet Tahunan (satu baris setahun) + Bulanan.
 // % Menetas & JUMLAH ialah formula Excel supaya kekal betul jika diubah.
@@ -4035,141 +4015,38 @@ async function exportSummaryExcel(island, from, to) {
   XLSX.writeFile(wb, `Penyu-${island}-${from === to ? from : from + '-' + to}-Ringkasan.xlsx`)
 }
 
+// Format rasmi (JAN-DIS + JUMLAH) dengan dropdown TAHUN & PULAU di dalam fail
+// (sheet JAN, sel V1 & V2). Semua tahun & semua pulau dimuatkan supaya pilihan
+// boleh ditukar dalam Excel / Google Sheets tanpa muat turun semula.
+// Penjana: ./eksport-rasmi.js (diuji dalam tests/unit/eksport-rasmi.test.mjs).
+async function fetchAllRows(table, orderCols) {
+  const out = []
+  for (let from = 0; ; from += 1000) {
+    let q = supabase.from(table).select('*')
+    orderCols.forEach(c => { q = q.order(c) })
+    const { data, error } = await q.range(from, from + 999)
+    if (error) throw new Error(`${table}: ${error.message}`)
+    out.push(...(data || []))
+    if (!data || data.length < 1000) break
+  }
+  return out
+}
+
 async function exportToExcel(island, year) {
-  const templateUrl = `../assets/template-${island}.xlsx`
+  const templateUrl = '../assets/template-PTB.xlsx'
   const res = await fetch(templateUrl)
   if (!res.ok) throw new Error(`Template ${templateUrl} tidak dijumpai`)
   const JSZip = await loadJSZip()
-  const zip = await JSZip.loadAsync(await res.arrayBuffer())
-
-  const yearStart = `${year}-01-01`, yearEnd = `${year}-12-31`
-  const [{ data: dailyRows }, { data: nestRows }, { data: hatchRows }, { data: legacyRows }] = await Promise.all([
-    supabase.from('daily_entries').select('*').eq('island', island).gte('tarikh', yearStart).lte('tarikh', yearEnd).limit(10000),
-    supabase.from('nest_records').select('*').eq('island', island).gte('tarikh_dijumpai', yearStart).lte('tarikh_dijumpai', yearEnd).limit(10000),
-    supabase.from('monthly_hatch').select('*').eq('island', island).eq('year', year),
-    supabase.from('monthly_summaries').select('*').eq('island', island).eq('year', year)
+  const [daily, nests, hatch, legacy, range] = await Promise.all([
+    fetchAllRows('daily_entries', ['tarikh', 'id']),
+    fetchAllRows('nest_records', ['tarikh_dijumpai', 'id']),
+    fetchAllRows('monthly_hatch', ['island', 'year', 'month', 'ram']),
+    fetchAllRows('monthly_summaries', ['island', 'year', 'month']),
+    exportYearRange('ALL'),
   ])
-
-  // Kumpul ikut tarikh + RAM
-  const buckets = {}
-  const B = (date, ram) => buckets[`${date}|${ram}`] ||= { bp_b:0, bp_t:0, td_b:0, td_t:0, tm_b:0, tm_t:0, tm_has:false, tb_b:null, tb_t:null, dk:0, cat:[] }
-  const addBuruk = (b, side, v) => { if (v === null || v === undefined) return; b[side] = (b[side] ?? 0) + v }
-  ;(dailyRows||[]).forEach(d => {
-    const b = B(d.tarikh, d.ram)
-    b.bp_b += d.bilangan_penyu_bertag; b.bp_t += d.bilangan_penyu_takbertag
-    b.td_b += d.jumlah_telur_diram_bertag; b.td_t += d.jumlah_telur_diram_takbertag
-    if (d.telur_menetas_bertag != null) { b.tm_b += d.telur_menetas_bertag; b.tm_has = true }
-    if (d.telur_menetas_takbertag != null) { b.tm_t += d.telur_menetas_takbertag; b.tm_has = true }
-    addBuruk(b, 'tb_b', d.telur_buruk_bertag); addBuruk(b, 'tb_t', d.telur_buruk_takbertag)
-    if (d.jumlah_telur_dikeluarkan) b.dk += d.jumlah_telur_dikeluarkan
-    if (d.catatan) b.cat.push(d.catatan)
-  })
-  ;(nestRows||[]).forEach(n => {
-    const b = B(n.tarikh_dijumpai, n.ram)
-    const side = n.bertag ? 'b' : 't'
-    b[`bp_${side}`] += 1; b[`td_${side}`] += n.jumlah_telur_diram
-    if (n.telur_menetas != null) { b[`tm_${side}`] += n.telur_menetas; b.tm_has = true }
-    addBuruk(b, `tb_${side}`, n.telur_buruk)
-    if (n.jumlah_dikeluarkan) b.dk += n.jumlah_dikeluarkan
-    if (n.catatan) b.cat.push(n.catatan)
-  })
-  // Telur buruk = angka sebenar kalau direkod; kalau menetas direkod tanpa buruk → diram − menetas;
-  // kalau menetas belum direkod → 0 (BUKAN semua telur dikira buruk macam formula template)
-  const buruk = (b, side) => {
-    const explicit = b[`tb_${side}`]
-    if (explicit !== null) return explicit
-    return b.tm_has ? Math.max(0, b[`td_${side}`] - b[`tm_${side}`]) : 0
-  }
-
-  // Peta nama sheet → fail XML
-  const wbXml = await zip.file('xl/workbook.xml').async('string')
-  const relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string')
-  const relTarget = {}
-  relsXml.replace(/<Relationship\b[^>]*>/g, tag => {
-    const id = (tag.match(/Id="([^"]+)"/) || [])[1], tgt = (tag.match(/Target="([^"]+)"/) || [])[1]
-    if (id && tgt) relTarget[id] = tgt.replace(/^\//, '').replace(/^(?!xl\/)/, 'xl/')
-    return tag
-  })
-  const sheetFile = {}
-  wbXml.replace(/<sheet\b[^>]*>/g, tag => {
-    const name = (tag.match(/name="([^"]+)"/) || [])[1], rid = (tag.match(/r:id="([^"]+)"/) || [])[1]
-    if (name && rid) sheetFile[name] = relTarget[rid]
-    return tag
-  })
-  const fixYearTitle = (xml) => xml.replace(/(<c r="A[12]"[^>]*><is><t[^>]*>)([^<]*)/g, (m, a, t) => a + xmlEsc(t.replace(/&amp;/g, '&').replace(/20\d\d/, String(year))))
-
-  const gabungNotes = {}
-  for (let mi = 0; mi < 12; mi++) {
-    const path = sheetFile[MONTH_SHEET_NAMES[mi]]
-    if (!path || !zip.file(path)) continue
-    const daysInMonth = new Date(year, mi + 1, 0).getDate()
-    const up = new Map()
-    for (let day = 1; day <= 31; day++) {
-      const row = 7 + day
-      const dateStr = `${year}-${String(mi+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
-      const lpp = day <= daysInMonth ? buckets[`${dateStr}|LPP`] : null
-      const sfc = day <= daysInMonth ? buckets[`${dateStr}|SFC`] : null
-      const nz = (v) => v ? v : null // sel kosong untuk 0, macam borang asal
-      // Lajur buruk O-R: sentiasa nombor (ganti formula diram − menetas)
-      up.set(`O${row}`, lpp ? buruk(lpp, 'b') : 0); up.set(`P${row}`, lpp ? buruk(lpp, 't') : 0)
-      up.set(`Q${row}`, sfc ? buruk(sfc, 'b') : 0); up.set(`R${row}`, sfc ? buruk(sfc, 't') : 0)
-      if (lpp) {
-        up.set(`C${row}`, nz(lpp.bp_b)); up.set(`D${row}`, nz(lpp.bp_t)); up.set(`G${row}`, nz(lpp.td_b)); up.set(`H${row}`, nz(lpp.td_t))
-        if (lpp.tm_has) { up.set(`K${row}`, lpp.tm_b); up.set(`L${row}`, lpp.tm_t) }
-      }
-      if (sfc) {
-        up.set(`E${row}`, nz(sfc.bp_b)); up.set(`F${row}`, nz(sfc.bp_t)); up.set(`I${row}`, nz(sfc.td_b)); up.set(`J${row}`, nz(sfc.td_t))
-        if (sfc.tm_has) { up.set(`M${row}`, sfc.tm_b); up.set(`N${row}`, sfc.tm_t) }
-      }
-      const dk = (lpp?.dk || 0) + (sfc?.dk || 0)
-      if (dk) up.set(`S${row}`, dk)
-      const notes = [...(lpp?.cat || []), ...(sfc?.cat || [])].join('; ')
-      if (notes) up.set(`T${row}`, notes)
-    }
-    // Rekod Menetas Bulanan (tiada tarikh) → baris JUMLAH (39) sheet bulan ini.
-    // Sheet JUMLAH tahunan ambil dari sini melalui formula =SUM(FEB!K39) dsb.
-    const monthHatch = (hatchRows||[]).filter(h => h.month === mi + 1)
-    const allRow = monthHatch.find(h => h.ram === 'ALL')
-    if (allRow) {
-      // Gabung LPP + SFC: tiada pecahan RAM → isi baris JUMLAH gabungan (41)
-      let monthDiram = 0
-      Object.entries(buckets).forEach(([k, b]) => { if (k.startsWith(`${year}-${String(mi+1).padStart(2,'0')}-`)) monthDiram += b.td_b + b.td_t })
-      const m = allRow.menetas_bertag + allRow.menetas_takbertag
-      up.set('K41', m); up.set('O41', Math.max(0, monthDiram - m))
-      ;['K','L','M','N','O','P','Q','R'].forEach(col => up.set(`${col}40`, null))
-      gabungNotes[mi] = { m, b: Math.max(0, monthDiram - m), pct: monthDiram ? Math.round(m / monthDiram * 1000) / 10 : 0 }
-    } else {
-      monthHatch.forEach(h => {
-        const cols = h.ram === 'LPP' ? ['K','L','O','P'] : ['M','N','Q','R']
-        ;[h.menetas_bertag, h.menetas_takbertag, h.buruk_bertag, h.buruk_takbertag].forEach((v, i) => up.set(`${cols[i]}39`, Number(v) || 0))
-      })
-    }
-    const xml = await zip.file(path).async('string')
-    zip.file(path, fixYearTitle(patchSheetXml(xml, up)))
-  }
-
-  // Sheet JUMLAH: formula asal dikekalkan (ia jumlahkan baris 39 setiap sheet bulan)
-  const sumName = Object.keys(sheetFile).find(n => /^JUMLAH/i.test(n))
-  if (sumName) {
-    const up = new Map()
-    // Bulan dengan rekod Gabung / rekod bulanan lama: tiada pecahan RAM atau tag,
-    // jadi jumlahnya ditulis dalam Catatan (lajur S) supaya tiada data tersembunyi.
-    const notes = {}
-    Object.entries(gabungNotes).forEach(([mi, g]) => (notes[mi] ||= []).push(`Menetas (gabung LPP+SFC): ${g.m.toLocaleString()} · Buruk: ${g.b.toLocaleString()} · ${g.pct}%`))
-    ;(legacyRows || []).forEach(r => (notes[r.month - 1] ||= []).push(`Rekod bulanan lama (tiada pecahan RAM/tag): Penyu ${(r.bilangan_penyu || 0).toLocaleString()} · Telur ${(r.jumlah_telur || 0).toLocaleString()}${r.telur_dikutip != null && r.telur_dikutip !== r.jumlah_telur ? ` · Dikutip ${r.telur_dikutip.toLocaleString()}` : ''} · Menetas ${(r.telur_menetas || 0).toLocaleString()} · Buruk ${(r.telur_buruk || 0).toLocaleString()}`))
-    Object.entries(notes).forEach(([mi, n]) => up.set(`S${9 + Number(mi)}`, n.join(' | ')))
-    const path = sheetFile[sumName]
-    const xml = await zip.file(path).async('string')
-    zip.file(path, fixYearTitle(patchSheetXml(xml, up)))
-    // Nama sheet ikut tahun
-    zip.file('xl/workbook.xml', wbXml.replace(`name="${sumName}"`, `name="JUMLAH ${year}"`))
-  }
-  // Paksa Excel kira semula semua formula bila dibuka
-  let wb2 = await zip.file('xl/workbook.xml').async('string')
-  if (!/fullCalcOnLoad/.test(wb2)) wb2 = /<calcPr\b/.test(wb2) ? wb2.replace(/<calcPr\b/, '<calcPr fullCalcOnLoad="1"') : wb2.replace('</workbook>', '<calcPr fullCalcOnLoad="1"/></workbook>')
-  zip.file('xl/workbook.xml', wb2)
-  if (zip.file('xl/calcChain.xml')) zip.remove('xl/calcChain.xml')
-
+  const first = Math.min(range ? range[0] : year, year), last = Math.max(range ? range[1] : year, year)
+  const years = Array.from({ length: last - first + 1 }, (_, i) => first + i)
+  const zip = await buildRasmiWorkbook(JSZip, await res.arrayBuffer(), { daily, nests, hatch, legacy }, { years, island, year })
   const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', compression: 'DEFLATE' })
   // Jangan buang (revoke) link fail terlalu awal — kalau browser tanya "Save as",
   // dialog tu boleh terbuka lama dan download gagal "Insufficient permissions".

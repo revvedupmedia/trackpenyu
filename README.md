@@ -46,7 +46,16 @@ dan **PSB**.
   mana-mana tahun, dan paparan tahun lama. Ada pilihan Gabung LPP + SFC.
 - **Import Data Lama** (1990–2025) dari Excel: pratonton sebelum import,
   amaran tarikh tak wujud, dan undo ikut batch.
-- **Export Excel** ikut template setiap pulau (`assets/template-*.xlsx`).
+- **Export Excel** format rasmi (JAN–DIS + JUMLAH, susun atur
+  `assets/template-PTB.xlsx`). Satu fail mengandungi semua tahun & semua
+  pulau: pilih **Tahun** dan **Pulau** (Semua / Satang Besar / Talang-Talang
+  Kechil / Talang-Talang Besar) dalam sheet JAN (sel V1 & V2), seluruh fail
+  ikut. Data dalam sheet tersembunyi `DATA`; formula hanya SUMIFS/INDEX/MATCH
+  supaya serasi Excel & Google Sheets. Rekod bulanan lama & menetas gabung
+  (tiada pecahan LPP/SFC/tag) dalam lajur U–Y sheet JUMLAH dan baris JUMLAH
+  setiap bulan. Penjana: `penyu/eksport-rasmi.js`. Julat tahun: Ringkasan
+  Tahunan + Bulanan. Fail eksport tidak boleh diimport semula (guna template
+  yang diisi).
 - **Mod Pembentangan**: slaid interaktif dengan animasi penyu dan label
   angka pada graf. Boleh dieksport ke **PowerPoint** (PptxGenJS).
 - **Admin**: sasaran tahunan dan bulanan ikut pulau, sejarah login staf.
@@ -314,7 +323,7 @@ GitHub menjalankan semua ujian pada setiap push ke `main` (tab **Actions** →
 |---|---|---|
 | **Database** (`tests/sql/`) | Bina dari snapshot + migration dalam PostgreSQL sebenar; semakan RLS (staf/kerani/admin/tanpa log masuk), audit, MFA langkah 2, Urus Staf, keselamatan fungsi; **setiap jadual ada dalam backup**; backup → `alat/pulih-backup.mjs` → database baharu sama dengan asal; pusingan penuh `export-schema.sql` | `PGHOST=... PGUSER=... bash tests/sql/run.sh` |
 | **Pelayar** (`tests/e2e/`) | Landing, login, MFA, log keluar automatik, log ralat, backup, Penyu (semua skrin, library), Minyak (Tahun, penapis, Excel, Semakan Data, pendua, resit dikecilkan, Import Setel) | `cd tests && npm ci && npx playwright test` |
-| **Unit** (`tests/unit/`) | Pembaca resit Setel (teks sebenar tanpa data peribadi); alat pulih (SQL & muat naik fail) | `cd tests && npm run unit` |
+| **Unit** (`tests/unit/`) | Pembaca resit Setel (teks sebenar tanpa data peribadi); alat pulih (SQL & muat naik fail); penjana Excel format rasmi (dropdown, formula, angka) | `cd tests && npm run unit` |
 | **CSS Penyu** | `penyu/tailwind.css` sepadan dengan kelas dalam kod | `bash tests/check-tailwind.sh` |
 
 Ujian pelayar guna Supabase palsu (`tests/fixtures/fake-supabase.mjs`) supaya

@@ -73,19 +73,35 @@ test('Eksport: Dari 1990 Hingga tahun semasa → Ringkasan Tahunan + Bulanan den
   expect(page.errors).toEqual([])
 })
 
-test('Eksport: satu tahun rekod lama → Ringkasan; tahun ada rekod harian → format rasmi + catatan rekod lama', async ({ page }) => {
+test('Eksport: satu tahun (rekod lama, harian, Semua) → format rasmi dengan dropdown Tahun & Pulau dalam fail', async ({ page }) => {
   await openAdmin(page)
   await page.selectOption('#ex_from', '2005'); await page.selectOption('#ex_to', '2005')
-  await expect(page.locator('#ex_hint')).toContainText('Ringkasan PTK 2005')
-  expect((await download(page)).name).toBe('Penyu-PTK-2005-Ringkasan.xlsx')
+  await expect(page.locator('#ex_hint')).toContainText('format rasmi PTK 2005')
+  const lama = await download(page)
+  expect(lama.name).toBe('Penyu-PTK-2005.xlsx')
+  expect(lama.wb.SheetNames).toEqual(['JAN', 'FEB', 'MAC', 'APRIL', 'MEI', 'JUN', 'JULAI', 'OGOS', 'SEPT', 'OKTO', 'NOV', 'DIS', 'JUMLAH', 'DATA'])
+  expect(lama.wb.Sheets.JAN.V1.v).toBe(2005)
+  expect(lama.wb.Sheets.JAN.V2.v).toBe('Pulau Talang-Talang Kechil')
+  expect(lama.wb.Sheets.JAN.A1.f).toContain('UPPER(JAN!$V$2)')
 
   await page.selectOption('#ex_from', String(NOW)); await page.selectOption('#ex_to', String(NOW))
   await expect(page.locator('#ex_hint')).toContainText(`format rasmi PTK ${NOW}`)
   const { name, wb } = await download(page)
   expect(name).toBe(`Penyu-PTK-${NOW}.xlsx`)
-  const jumlah = wb.Sheets[`JUMLAH ${NOW}`]
+  expect(wb.Sheets.JAN.G12.v).toBe(80)                   // 5 Jan: rekod harian LPP
+  const jumlah = wb.Sheets.JUMLAH
   expect(jumlah.S10.v).toContain('Rekod bulanan lama')   // FEB: rekod lama tidak hilang
-  expect(jumlah.S10.v).toContain('Telur 210')
+  expect(jumlah.W10.v).toBe(210)                         //   telur diram, blok tanpa pecahan
+  const tahun = XLSX.utils.sheet_to_json(wb.Sheets.DATA, { header: 1 }).slice(1).map((r) => r[29]).filter(Boolean)
+  expect(tahun[0]).toBe(NOW)                             // dropdown tahun: terkini dahulu, hingga 1990
+  expect(tahun.at(-1)).toBe(1990)
+
+  await page.selectOption('#ex_island', 'ALL')
+  await expect(page.locator('#ex_hint')).toContainText(`format rasmi semua pulau ${NOW}`)
+  const all = await download(page)
+  expect(all.name).toBe(`Penyu-ALL-${NOW}.xlsx`)
+  expect(all.wb.Sheets.JAN.V2.v).toBe('Semua Pulau')
+  expect(all.wb.Sheets.JAN.A1.v).toBe('REKOD PENDARATAN PENYU DAN KUTIPAN TELUR DI SEMUA PULAU')
 
   await page.selectOption('#ex_from', String(NOW)); await page.selectOption('#ex_to', '1990')
   await expect(page.locator('#ex_hint')).toContainText('mesti sebelum')
