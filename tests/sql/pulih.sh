@@ -48,8 +48,9 @@ psql_db lpp_pulih -f "$SNAPSHOT"
 for m in $MIGRATIONS_LIST migration-mfa-admin-wajib.sql; do psql_db lpp_pulih -f "$m"; done
 q lpp_pulih -f "$OUT/pulih.sql" > "$OUT/hasil1.txt"
 q lpp_pulih -f "$OUT/pulih.sql" > "$OUT/hasil2.txt"   # kali kedua: tiada apa berubah
-grep -q "akaun login: 4 baharu" "$OUT/hasil1.txt" || fail "akaun tidak dicipta: $(cat "$OUT/hasil1.txt")"
-grep -q "staff_profiles: 4 baris baharu" "$OUT/hasil1.txt" || fail "staff_profiles: $(cat "$OUT/hasil1.txt")"
+N=$(q lpp_test -c "select count(*) from auth.users")   # bilangan akaun ujian (termasuk peranan lihat)
+grep -q "akaun login: $N baharu" "$OUT/hasil1.txt" || fail "akaun tidak dicipta: $(cat "$OUT/hasil1.txt")"
+grep -q "staff_profiles: $N baris baharu" "$OUT/hasil1.txt" || fail "staff_profiles: $(cat "$OUT/hasil1.txt")"
 grep -v "^URL" "$OUT/hasil2.txt" | grep -vq ": 0 baris baharu\|: 0 baharu" && fail "pulih kali kedua mengubah data: $(cat "$OUT/hasil2.txt")"
 echo "  OK: pulih selamat diulang (kali kedua 0 baris baharu)"
 
@@ -66,7 +67,7 @@ echo "  OK: $(echo $tables_json | wc -w) jadual dipulihkan sama dengan asal (log
 echo "  OK: URL Storage ditukar ke projek baharu"
 
 [ "$(q lpp_test -c "select string_agg(id || email, ',' order by id) from auth.users")" = "$(q lpp_pulih -c "select string_agg(id || email, ',' order by id) from auth.users")" ] || fail "ID/emel akaun berbeza"
-[ "$(q lpp_pulih -c "select count(*) from auth.users where encrypted_password = '' and confirmation_token = '' and recovery_token = '' and aud = 'authenticated' and email_confirmed_at is not null")" = 4 ] || fail "lajur akaun Supabase tidak diisi"
+[ "$(q lpp_pulih -c "select count(*) from auth.users where encrypted_password = '' and confirmation_token = '' and recovery_token = '' and aud = 'authenticated' and email_confirmed_at is not null")" = "$N" ] || fail "lajur akaun Supabase tidak diisi"
 [ "$(q lpp_pulih -c "select count(*) from auth.identities")" = 4 ] || fail "auth.identities tidak dicipta"
 [ "$(q lpp_pulih -c "select string_agg(email, ',') from auth.users where banned_until > now() + interval '50 years'")" = "staf@contoh.my" ] || fail "akaun nyahaktif tidak disekat"
 echo "  OK: akaun login dicipta dengan ID asal, tanpa kata laluan; akaun nyahaktif kekal disekat"
