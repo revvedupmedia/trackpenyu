@@ -12,7 +12,7 @@ export const ROOT = new URL('../', import.meta.url).href
 
 // Versi app (tarikh keluaran). Naikkan setiap kali deploy perubahan yang
 // pengguna akan nampak; dipaparkan di login, portal dan panel admin.
-export const APP_VERSION = '2026.11.11.1'
+export const APP_VERSION = '2026.11.11.2'
 
 // Pautan reset dari emel datang dengan token dalam #hash. Simpan dulu sebelum
 // klien Supabase membaca & memadamkannya.
@@ -83,7 +83,19 @@ export async function currentUser() {
     location.replace(loginUrl('', 'sebab=nyahaktif'))
     return new Promise(() => {})
   }
-  return { user, profile: profile || null, mfaPending: await needsMfa(profile) }
+  return { user, profile: profile || null, mfaPending: await needsMfa(profile), mustChangePw: !!profile?.tukar_kata_laluan }
+}
+
+// Semak kata laluan semasa TANPA mengganggu sesi yang sedang log masuk
+// (klien sementara, tidak disimpan). Had cubaan dikawal oleh Supabase.
+// Pulangkan null jika betul, atau objek ralat.
+export async function checkPassword(email, password) {
+  const tmp = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: 'portal-semak-kata-laluan' }
+  })
+  const { error } = await tmp.auth.signInWithPassword({ email, password })
+  if (!error) { try { await tmp.auth.signOut({ scope: 'local' }) } catch {} }
+  return error || null
 }
 
 export function loginUrl(next, extra = '') {
@@ -94,9 +106,11 @@ export function loginUrl(next, extra = '') {
 // Panggil di atas setiap app. Belum log masuk => ke login; admin belum MFA =>
 // ke langkah MFA; tiada akses => ke portal.
 export async function requireApp(appId) {
-  const { user, profile, mfaPending } = await currentUser()
+  const { user, profile, mfaPending, mustChangePw } = await currentUser()
   if (!user) { location.replace(loginUrl(appId + '/')); return new Promise(() => {}) }
   if (mfaPending) { location.replace(loginUrl(appId + '/', 'mfa=1')); return new Promise(() => {}) }
+  // Kata laluan sementara dari admin: tetapkan kata laluan sendiri dahulu.
+  if (mustChangePw) { location.replace(loginUrl(appId + '/', 'tukar=1')); return new Promise(() => {}) }
   if (!canUse(profile, appId)) { location.replace(ROOT + 'portal.html?denied=' + appId); return new Promise(() => {}) }
   supabase.auth.onAuthStateChange((event) => {
     if (event === 'SIGNED_OUT') location.replace(loginUrl())

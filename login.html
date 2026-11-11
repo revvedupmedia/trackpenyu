@@ -38,7 +38,7 @@
 </div>
 
 <script type="module">
-import { supabase, ROOT, BOOT_RECOVERY, BOOT_AUTH_ERROR, RECOVERY_FLAG, APP_VERSION, needsMfa, reportError } from './shared/auth.js'
+import { supabase, ROOT, BOOT_RECOVERY, BOOT_AUTH_ERROR, RECOVERY_FLAG, APP_VERSION, needsMfa, reportError, checkPassword, startIdleWatch } from './shared/auth.js'
 document.getElementById('ver').textContent = `versi ${APP_VERSION}`
 
 const view = document.getElementById('view')
@@ -94,14 +94,28 @@ function showLogin(prefill = '') {
   }
 }
 
+// ?tukar=1: buka skrin tukar kata laluan selepas log masuk (dari Portal/app,
+// atau dipaksa bila akaun masih guna kata laluan sementara dari admin).
+const WANT_CHANGE = new URLSearchParams(location.search).get('tukar') === '1'
+let loginProfile = null
+
+// Langkah terakhir selepas log masuk (dan MFA admin): kata laluan sementara
+// mesti ditukar dahulu; jika tidak, terus ke app.
+function done() {
+  if (loginProfile?.tukar_kata_laluan) return showChangePw(true)
+  if (WANT_CHANGE) return showChangePw(false)
+  location.replace(nextUrl())
+}
+
 // Selepas kata laluan: admin mesti lepasi MFA (kod 6 digit) sebelum masuk.
 async function afterLogin() {
   const { data: s } = await supabase.auth.getSession()
   const uid = s?.session?.user?.id
-  const { data: profile } = uid ? await supabase.from('staff_profiles').select('role').eq('id', uid).maybeSingle() : { data: null }
-  if (!(await needsMfa(profile))) { location.replace(nextUrl()); return }
+  const { data: profile } = uid ? await supabase.from('staff_profiles').select('*').eq('id', uid).maybeSingle() : { data: null }
+  loginProfile = profile
+  if (!(await needsMfa(profile))) return done()
   const { data: f, error } = await supabase.auth.mfa.listFactors()
-  if (error) { reportError('MFA listFactors: ' + error.message); location.replace(nextUrl()); return }
+  if (error) { reportError('MFA listFactors: ' + error.message); return done() }
   const verified = (f.totp || []).filter(x => x.status === 'verified')
   if (verified.length) showMfaChallenge(verified[0].id)
   else showMfaEnroll((f.all || []).filter(x => x.factor_type === 'totp' && x.status !== 'verified'))
@@ -132,7 +146,7 @@ function showMfaChallenge(factorId) {
   bindMfaCommon(async (code) => {
     const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code })
     if (error) return badCode(error)
-    location.replace(nextUrl())
+    done()
   })
 }
 
@@ -145,7 +159,7 @@ async function showMfaEnroll(stale) {
     reportError('MFA enroll: ' + error.message)
     view.innerHTML = `${head('MFA belum tersedia', 'Pengesahan dua langkah tidak dapat disediakan sekarang. Anda boleh teruskan; sila maklumkan kepada pentadbir sistem.')}
       <div class="msg msg-err small">${esc(error.message)}</div><button class="btn btn-primary btn-block" id="go">Teruskan</button>`
-    view.querySelector('#go').onclick = () => location.replace(nextUrl())
+    view.querySelector('#go').onclick = () => done()
     return
   }
   view.innerHTML = `${head('Sediakan Pengesahan Admin', 'Akaun admin perlukan kod 6 digit setiap kali log masuk. Sediakan sekali sahaja:')}
@@ -167,8 +181,73 @@ async function showMfaEnroll(stale) {
   bindMfaCommon(async (code) => {
     const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId: data.id, code })
     if (error) return badCode(error)
-    location.replace(nextUrl())
+    done()
   })
+}
+
+// Ralat Supabase semasa tetapkan kata laluan => mesej Bahasa Melayu.
+function pwErrMsg(m = '') {
+  return /different from the old|same_password/i.test(m) ? 'Kata laluan baharu mesti berbeza daripada yang lama.'
+    : /weak|least|characters/i.test(m) ? 'Kata laluan terlalu lemah. Cuba yang lebih panjang atau campur huruf dan nombor.'
+    : /session|expired|not authenticated|missing/i.test(m) ? 'Sesi sudah tamat. Sila log masuk semula.'
+    : m
+}
+
+// Tukar kata laluan semasa log masuk. forced = akaun masih guna kata laluan
+// sementara dari admin: tiada butang Kembali, mesti tukar dahulu. Bukan
+// forced (dari Portal/app): kata laluan semasa disemak dahulu.
+async function showChangePw(forced) {
+  const { data: s } = await supabase.auth.getSession()
+  const user = s?.session?.user
+  if (!user) return showLogin()
+  startIdleWatch()
+  view.innerHTML = `
+    ${forced ? '' : '<button type="button" class="link-btn" id="back">← Kembali</button>'}
+    ${head(forced ? 'Tetapkan Kata Laluan Anda' : 'Tukar Kata Laluan',
+      forced ? 'Kata laluan anda sekarang dibuat oleh admin. Tetapkan kata laluan anda sendiri sebelum teruskan (sekurang-kurangnya 8 aksara).'
+        : 'Masukkan kata laluan semasa, kemudian kata laluan baharu (sekurang-kurangnya 8 aksara).')}
+    <form id="f">
+      <input type="email" autocomplete="username" value="${esc(user.email || '')}" hidden />
+      ${forced ? '' : '<div class="field"><input type="password" id="p0" required placeholder="Kata laluan semasa" autocomplete="current-password" /></div>'}
+      <div class="field"><input type="password" id="p1" required minlength="8" placeholder="Kata laluan baharu" autocomplete="new-password" /></div>
+      <div class="field"><input type="password" id="p2" required minlength="8" placeholder="Taip semula kata laluan baharu" autocomplete="new-password" /></div>
+      <label class="check"><input type="checkbox" id="showPw" /> Tunjuk kata laluan</label>
+      <div id="err" class="msg msg-err" hidden></div>
+      <button class="btn btn-primary btn-block" id="btn">Simpan Kata Laluan</button>
+    </form>
+    ${forced ? '<div class="center" style="margin-top:12px"><button type="button" class="link-btn" id="pwOut">Log keluar</button></div>' : ''}`
+  const p0 = view.querySelector('#p0'), p1 = view.querySelector('#p1'), p2 = view.querySelector('#p2')
+  const err = view.querySelector('#err'), btn = view.querySelector('#btn')
+  const showErr = (t) => { err.textContent = t; err.hidden = false; btn.disabled = false }
+  view.querySelector('#showPw').onchange = (e) => { for (const x of [p0, p1, p2]) if (x) x.type = e.target.checked ? 'text' : 'password' }
+  view.querySelector('#back')?.addEventListener('click', () => location.replace(nextUrl()))
+  view.querySelector('#pwOut')?.addEventListener('click', async () => { try { await supabase.auth.signOut() } catch {} ; showLogin() })
+  view.querySelector('#f').onsubmit = async (e) => {
+    e.preventDefault()
+    err.hidden = true
+    if (p0 && !p0.value) return showErr('Masukkan kata laluan semasa.')
+    if (p1.value.length < 8) return showErr('Kata laluan mesti sekurang-kurangnya 8 aksara.')
+    if (p1.value !== p2.value) return showErr('Kedua-dua kata laluan baharu tidak sama. Taip semula.')
+    if (p0 && p0.value === p1.value) return showErr('Kata laluan baharu mesti berbeza daripada yang lama.')
+    btn.disabled = true
+    if (p0) {
+      const bad = await checkPassword(user.email, p0.value)
+      if (bad) return showErr(bad.status === 429 || /rate limit|too many/i.test(bad.message || '')
+        ? 'Terlalu banyak cubaan. Tunggu beberapa minit, kemudian cuba lagi.' : 'Kata laluan semasa salah.')
+    }
+    const { error } = await supabase.auth.updateUser({ password: p1.value })
+    if (error) return showErr(pwErrMsg(error.message))
+    if (forced) {
+      // Tanda dipadam oleh database bila kata laluan bertukar.
+      const { data: p } = await supabase.from('staff_profiles').select('*').eq('id', user.id).maybeSingle()
+      if (p?.tukar_kata_laluan) return showErr('Kata laluan sudah ditukar, tetapi status akaun belum dikemas kini. Sila hubungi admin.')
+      location.replace(nextUrl())
+      return
+    }
+    view.innerHTML = `${head('Kata Laluan Ditukar', 'Gunakan kata laluan baharu pada log masuk seterusnya.')}
+      <button class="btn btn-primary btn-block" id="go">Teruskan</button>`
+    view.querySelector('#go').onclick = () => location.replace(nextUrl())
+  }
 }
 
 function showForgot(prefill = '') {
@@ -250,10 +329,7 @@ async function showReset() {
     if (error) {
       btn.disabled = false
       const m = error.message || ''
-      return showErr(/different from the old/i.test(m) ? 'Kata laluan baharu mesti berbeza daripada yang lama.'
-        : /weak|least|characters/i.test(m) ? 'Kata laluan terlalu lemah. Cuba yang lebih panjang atau campur huruf dan nombor.'
-        : /session|expired|not authenticated|missing/i.test(m) ? 'Sesi reset sudah tamat. Sila minta pautan baharu.'
-        : m)
+      return showErr(/session|expired|not authenticated|missing/i.test(m) ? 'Sesi reset sudah tamat. Sila minta pautan baharu.' : pwErrMsg(m))
     }
     const email = data.session.user?.email || ''
     await finish()
