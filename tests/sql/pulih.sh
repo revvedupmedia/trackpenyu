@@ -68,7 +68,7 @@ echo "  OK: URL Storage ditukar ke projek baharu"
 
 [ "$(q lpp_test -c "select string_agg(id || email, ',' order by id) from auth.users")" = "$(q lpp_pulih -c "select string_agg(id || email, ',' order by id) from auth.users")" ] || fail "ID/emel akaun berbeza"
 [ "$(q lpp_pulih -c "select count(*) from auth.users where encrypted_password = '' and confirmation_token = '' and recovery_token = '' and aud = 'authenticated' and email_confirmed_at is not null")" = "$N" ] || fail "lajur akaun Supabase tidak diisi"
-[ "$(q lpp_pulih -c "select count(*) from auth.identities")" = 4 ] || fail "auth.identities tidak dicipta"
+[ "$(q lpp_pulih -c "select count(*) from auth.identities")" = "$N" ] || fail "auth.identities tidak dicipta"
 [ "$(q lpp_pulih -c "select string_agg(email, ',') from auth.users where banned_until > now() + interval '50 years'")" = "staf@contoh.my" ] || fail "akaun nyahaktif tidak disekat"
 echo "  OK: akaun login dicipta dengan ID asal, tanpa kata laluan; akaun nyahaktif kekal disekat"
 
