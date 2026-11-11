@@ -118,6 +118,11 @@ set check_function_bodies = off;$h$,
   select 10, t.relname || '.' || tg.tgname, pg_get_triggerdef(tg.oid, true) || ';'
   from tbl t join pg_trigger tg on tg.tgrelid = t.oid
   where not tg.tgisinternal
+  -- Trigger kita pada auth.users (cth padam tanda wajib tukar kata laluan).
+  union all
+  select 10, 'auth.users.' || tg.tgname, pg_get_triggerdef(tg.oid, true) || ';'
+  from pg_trigger tg join pg_proc p on p.oid = tg.tgfoid join pg_namespace n on n.oid = p.pronamespace
+  where tg.tgrelid = 'auth.users'::regclass and not tg.tgisinternal and n.nspname = 'public'
 
   -- 11. Row Level Security
   union all

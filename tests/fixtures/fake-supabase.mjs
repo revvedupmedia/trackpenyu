@@ -63,7 +63,12 @@ function query(table) {
   return b
 }
 
-export function createClient() {
+export function createClient(url, key, opts) {
+  // Klien sementara checkPassword(): semak kata laluan tanpa sentuh sesi.
+  if (opts?.auth?.persistSession === false) return { auth: {
+    signInWithPassword: async ({ password }) => { calls.push(['checkPassword']); return password === (F().password || 'betul') ? { error: null } : { error: { message: 'Invalid login credentials' } } },
+    signOut: async () => ({}),
+  } }
   return {
     from: query,
     rpc: async (fn, args = {}) => {
@@ -78,12 +83,13 @@ export function createClient() {
       const prof = (id) => T('staff_profiles').find((p) => p.id === id)
       if (fn === 'admin_list_accounts') return { data: (F().accounts || []).map((u) => { const p = prof(u.id); return {
         id: u.id, email: u.email, last_sign_in_at: u.last_sign_in_at || null, full_name: p?.full_name || null, island: p?.island || null,
-        role: p?.role || null, active: p ? p.active !== false : true, mfa: !!u.mfa, registered: !!p } }), error: null }
+        role: p?.role || null, active: p ? p.active !== false : true, mfa: !!u.mfa, registered: !!p, tukar_kata_laluan: !!p?.tukar_kata_laluan } }), error: null }
       if (fn === 'admin_save_staff') {
         if (args.p_id === me().id && args.p_role !== 'admin') return { data: null, error: { message: 'P0001: Anda tidak boleh turunkan peranan admin anda sendiri' } }
         const p = prof(args.p_id); const v = { id: args.p_id, full_name: args.p_full_name, island: args.p_island, role: args.p_role }
-        if (p) Object.assign(p, v); else T('staff_profiles').push({ ...v, active: true })
+        if (p) Object.assign(p, v); else T('staff_profiles').push({ ...v, active: true, tukar_kata_laluan: true })
       }
+      if (fn === 'admin_wajib_tukar_kata_laluan') prof(args.p_id).tukar_kata_laluan = args.p_wajib
       if (fn === 'admin_set_active') prof(args.p_id).active = args.p_active
       if (fn === 'admin_reset_mfa') (F().accounts || []).find((u) => u.id === args.p_id).mfa = false
       save(); return { data: null, error: null }
@@ -106,7 +112,15 @@ export function createClient() {
       signOut: async () => { F().session = false; save(); calls.push(['signOut']); return {} },
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
       resetPasswordForEmail: async () => ({ error: null }),
-      updateUser: async () => ({ error: null }),
+      // Kata laluan bertukar => tanda wajib tukar dipadam (seperti trigger database).
+      updateUser: async ({ password }) => {
+        calls.push(['updateUser'])
+        if (password === (F().password || 'betul')) return { error: { message: 'New password should be different from the old password.' } }
+        F().password = password
+        const p = T('staff_profiles').find((x) => x.id === me().id)
+        if (p) p.tukar_kata_laluan = false
+        save(); return { data: { user: me() }, error: null }
+      },
       mfa: {
         getAuthenticatorAssuranceLevel: async () => ({ data: { currentLevel: F().aal || 'aal1', nextLevel: (F().factors || []).some((f) => f.status === 'verified') ? 'aal2' : 'aal1' } }),
         listFactors: async () => ({ data: { totp: (F().factors || []).filter((f) => f.status === 'verified'), all: F().factors || [] } }),

@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 SNAPSHOT=$(ls schema-snapshot-*.sql | sort | tail -1)
 # Migration yang lebih baru daripada snapshot (ikut README → Setup).
-MIGRATIONS=(migration-minyak-liter-claim.sql migration-lihat-sahaja.sql)
+MIGRATIONS=(migration-minyak-liter-claim.sql migration-lihat-sahaja.sql migration-tukar-kata-laluan.sql)
 OUT=$(mktemp -d)
 export PGOPTIONS="-c client_min_messages=warning"
 psql_db() { psql -X -q -v ON_ERROR_STOP=1 -d "$@"; }
@@ -32,6 +32,9 @@ psql_db lpp_test -f tests/sql/fungsi.sql 2>&1 | grep -E 'OK:|GAGAL|ERROR' | sed 
 
 echo "== Peranan Lihat Sahaja (baca sahaja, tiada Minyak)"
 psql_db lpp_test -f tests/sql/lihat.sql 2>&1 | grep -E 'OK:|GAGAL|ERROR' | sed 's/^.*NOTICE:  /  /'
+
+echo "== Wajib tukar kata laluan (log masuk pertama)"
+psql_db lpp_test -f tests/sql/kata-laluan.sql 2>&1 | grep -E 'OK:|GAGAL|ERROR' | sed 's/^.*NOTICE:  /  /'
 
 echo "== Minyak: liter, stesen, tarikh claim"
 psql_db lpp_test -f tests/sql/minyak-claim.sql 2>&1 | grep -E 'OK:|GAGAL|ERROR' | sed 's/^.*NOTICE:  /  /'

@@ -253,6 +253,7 @@
     <button id="navAdmin" onclick="go('admin')" class="flex-col items-center px-2.5 py-1.5 hidden">⚙️<span class="text-[10px]">Admin</span></button>
     <button onclick="toggleTheme()" class="flex flex-col items-center px-2.5 py-1.5"><span id="themeIcon">🌙</span><span class="text-[10px]">Mod</span></button>
     <a id="navPortal" href="../portal.html" class="flex-col items-center px-2.5 py-1.5 hidden">🏠<span class="text-[10px]">Portal</span></a>
+    <a id="navPw" href="../login.html?tukar=1&amp;next=penyu%2F" class="flex-col items-center px-2.5 py-1.5 hidden">🔑<span class="text-[10px]">Kata laluan</span></a>
     <button onclick="logout()" class="flex flex-col items-center px-2.5 py-1.5">🚪<span class="text-[10px]">Keluar</span></button>
   </div>
 </nav>
@@ -5123,6 +5124,9 @@ window.openPresentation = openPresentation
   const showPortal = appsFor(profile).length > 1
   document.getElementById('navPortal').classList.toggle('hidden', !showPortal)
   document.getElementById('navPortal').classList.toggle('flex', showPortal)
+  // Tukar kata laluan: dalam Portal untuk yang ada butang Portal; jika tiada, di sini.
+  document.getElementById('navPw').classList.toggle('hidden', showPortal)
+  document.getElementById('navPw').classList.toggle('flex', !showPortal)
   render(location.hash.slice(1) || 'splash')
 })()
 

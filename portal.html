@@ -37,6 +37,7 @@
   .tag-new { background: rgba(232,160,32,.2); color: #F2B84B; }
   .tag-admin { background: rgba(110,231,183,.18); color: var(--accent); }
   .tag-off { background: rgba(255,107,107,.18); color: #FF8A8A; }
+  .tag-pw { background: rgba(232,160,32,.12); color: #F2B84B; border: 1px dashed rgba(232,160,32,.45); }
   .staff-edit { padding: 4px 12px 12px; display: grid; gap: 10px; }
   .staff-edit .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .staff-edit select { width: 100%; min-height: 46px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--card-border); background: rgba(0,0,0,.18); color: var(--text); font: 400 15px 'Inter', sans-serif; }
@@ -64,6 +65,7 @@
     <section class="greet rise">
       <h1 id="hello">Selamat datang</h1>
       <p id="who"></p>
+      <a class="link-btn small" id="changePw" href="login.html?tukar=1" style="display:inline-block;margin-top:8px">🔑 Tukar kata laluan</a>
     </section>
     <div id="notice" class="msg msg-err" hidden></div>
     <div class="app-grid rise" id="apps"></div>
@@ -120,9 +122,10 @@ themeBtn.onclick = () => {
 }
 setThemeIcon()
 
-const { user, profile, mfaPending } = await currentUser()
+const { user, profile, mfaPending, mustChangePw } = await currentUser()
 if (!user) location.replace(loginUrl())
 else if (mfaPending) location.replace(loginUrl('', 'mfa=1'))
+else if (mustChangePw) location.replace(loginUrl('', 'tukar=1'))
 else {
   startIdleWatch()
   const main = document.getElementById('main')
@@ -190,7 +193,7 @@ async function setupStaff() {
     li.innerHTML = `
       <button type="button" class="staff-sum">
         <span class="staff-name">${esc(a.full_name || a.email)}</span>
-        <span class="staff-tags">${!a.registered ? '<span class="tag tag-new">Belum didaftar</span>' : ''}${role ? `<span class="tag ${a.role === 'admin' ? 'tag-admin' : ''}">${role}</span>` : ''}${a.island ? `<span class="tag">${a.island}</span>` : ''}${a.registered && !a.active ? '<span class="tag tag-off">Nyahaktif</span>' : ''}${a.role === 'admin' ? `<span class="tag">${a.mfa ? 'MFA ✓' : 'MFA ✗'}</span>` : ''}</span>
+        <span class="staff-tags">${!a.registered ? '<span class="tag tag-new">Belum didaftar</span>' : ''}${role ? `<span class="tag ${a.role === 'admin' ? 'tag-admin' : ''}">${role}</span>` : ''}${a.island ? `<span class="tag">${a.island}</span>` : ''}${a.registered && !a.active ? '<span class="tag tag-off">Nyahaktif</span>' : ''}${a.registered && a.tukar_kata_laluan ? '<span class="tag tag-pw">Belum tukar kata laluan</span>' : ''}${a.role === 'admin' ? `<span class="tag">${a.mfa ? 'MFA ✓' : 'MFA ✗'}</span>` : ''}</span>
         <span class="staff-sub">${esc(a.email)} · log masuk terakhir ${fmtDay(a.last_sign_in_at)}</span>
       </button>`
     li.querySelector('.staff-sum').onclick = () => { staffOpen = staffOpen === a.id ? null : a.id; setupStaff() }
@@ -214,7 +217,9 @@ function staffEditor(a, say) {
       <button type="button" class="btn btn-primary" id="sfSave">${a.registered ? 'Simpan' : 'Daftar Staf'}</button>
       ${a.registered && !isMe ? `<button type="button" class="btn btn-ghost ${a.active ? 'btn-danger' : ''}" id="sfActive">${a.active ? 'Nyahaktif' : 'Aktifkan semula'}</button>` : ''}
       ${a.mfa ? '<button type="button" class="btn btn-ghost" id="sfMfa">Reset MFA</button>' : ''}
-    </div>`
+      ${a.registered && !isMe ? `<button type="button" class="btn btn-ghost" id="sfPw">${a.tukar_kata_laluan ? 'Batal wajib tukar kata laluan' : 'Wajib tukar kata laluan'}</button>` : ''}
+    </div>
+    ${a.registered ? '' : '<p class="small muted" style="margin:0">Selepas didaftar, staf wajib tetapkan kata laluan sendiri pada log masuk pertama.</p>'}`
   const run = async (btn, fn, okText) => {
     btn.disabled = true
     const { error } = await fn()
@@ -238,6 +243,12 @@ function staffEditor(a, say) {
   f.querySelector('#sfMfa')?.addEventListener('click', (e) => {
     if (!confirm(`Reset MFA ${a.full_name || a.email}? Dia perlu imbas kod QR baharu pada log masuk seterusnya.${isMe ? ' (Ini akaun anda sendiri.)' : ''}`)) return
     run(e.target, () => supabase.rpc('admin_reset_mfa', { p_id: a.id }), 'MFA direset. Kod QR baharu akan dipaparkan pada log masuk seterusnya.')
+  })
+  // Cth selepas admin reset kata laluan staf di Supabase: staf mesti tukar sendiri.
+  f.querySelector('#sfPw')?.addEventListener('click', (e) => {
+    const on = !a.tukar_kata_laluan
+    run(e.target, () => supabase.rpc('admin_wajib_tukar_kata_laluan', { p_id: a.id, p_wajib: on }),
+      on ? `${a.full_name} wajib tukar kata laluan pada log masuk seterusnya.` : `${a.full_name}: wajib tukar kata laluan dibatalkan.`)
   })
   return f
 }

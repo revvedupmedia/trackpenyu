@@ -123,6 +123,9 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
   aktifkan semula (akaun disekat dalam Supabase Auth, rekod lama kekal),
   **Reset MFA** (hilang telefon). Admin tidak boleh turunkan atau nyahaktif
   diri sendiri; setiap perubahan direkod dalam `staff_audit`.
+  Staf yang baru didaftar ditanda **Belum tukar kata laluan**; butang
+  **Wajib tukar kata laluan** untuk tanda semula (cth selepas admin reset
+  kata laluan staf di Supabase).
 
 ### Keselamatan
 
@@ -135,6 +138,14 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
   mesti menyemak sendiri siapa pemanggil, ada `set search_path`, dan ditutup
   daripada `anon` jika tidak diperlukan sebelum log masuk. Ujian Database
   gagal jika fungsi baharu terlepas (`tests/sql/fungsi.sql`).
+- **Kata laluan sendiri**: akaun baharu (kata laluan sementara dari admin)
+  wajib tetapkan kata laluan sendiri pada log masuk pertama sebelum boleh
+  masuk app (`staff_profiles.tukar_kata_laluan`). Tanda dipadam oleh
+  database (trigger `kata_laluan_ditukar` pada `auth.users`) hanya bila kata
+  laluan benar-benar bertukar; staf tidak boleh padam sendiri. Semua orang
+  boleh tukar kata laluan sendiri: Portal → **🔑 Tukar kata laluan**, atau
+  Penyu → bar bawah **🔑** (staf/lihat). Kata laluan semasa disemak dahulu.
+  Ujian: `tests/sql/kata-laluan.sql`, `tests/e2e/kata-laluan.spec.mjs`.
 - **Log keluar automatik** selepas 30 minit tanpa aktiviti (amaran 1 minit
   sebelum). Tetapan: `IDLE_MINUTES` dalam `shared/auth.js`.
 - Nombor versi app: `APP_VERSION` dalam `shared/auth.js` (naikkan setiap deploy).
@@ -144,7 +155,7 @@ Rekod mileage dan minyak (Diesel & RON95 bot) bersama resit.
 | Fail | Fungsi |
 |---|---|
 | `index.html` | Landing page |
-| `login.html` | Log masuk, lupa kata laluan, tetapkan kata laluan baharu |
+| `login.html` | Log masuk, lupa kata laluan, tetapkan/tukar kata laluan (`?tukar=1`) |
 | `portal.html` | Pilih app selepas log masuk |
 | `shared/auth.js` | Klien Supabase, senarai app & peranan, semakan akses |
 | `shared/portal.css` | Gaya landing, login dan portal |
@@ -177,6 +188,9 @@ daripada snapshot (senarai sama dalam `tests/sql/run.sh` → `MIGRATIONS`):
 2. `migration-lihat-sahaja.sql` — peranan **Lihat Sahaja** (`lihat`): baca
    Penyu semua pulau, tiada tulis & tiada Minyak; ubah/padam entri hanya
    untuk staf & admin
+3. `migration-tukar-kata-laluan.sql` — **wajib tukar kata laluan** pada
+   log masuk pertama (staf baru didaftar & akaun belum pernah log masuk);
+   butang admin "Wajib tukar kata laluan" dalam Urus Staf
 
 Snapshot ini sudah termasuk **MFA admin langkah 2**
 (`migration-mfa-admin-wajib.sql`): database hanya beri kuasa admin kepada sesi
@@ -193,7 +207,9 @@ Kemudian:
 1. Authentication → Add User → Create new user (emel + kata laluan
    sementara, tandakan **Auto Confirm User**).
 2. Portal → Pentadbiran → **👥 Urus Staf** → tekan akaun "Belum didaftar" →
-   isi nama, pulau, peranan → **Daftar Staf**. (Admin pertama sahaja perlu
+   isi nama, pulau, peranan → **Daftar Staf**. Beri staf emel & kata laluan
+   sementara; pada log masuk pertama mereka wajib tetapkan kata laluan
+   sendiri. (Admin pertama sahaja perlu
    didaftar melalui Supabase → Table Editor → `staff_profiles`.)
 3. Authentication → URL Configuration → **Redirect URLs** → tambah
    `https://revvedupmedia.github.io/trackpenyu/login.html` (pautan reset
@@ -329,7 +345,7 @@ GitHub menjalankan semua ujian pada setiap push ke `main` (tab **Actions** →
 
 | Ujian | Apa yang disemak | Jalan secara lokal |
 |---|---|---|
-| **Database** (`tests/sql/`) | Bina dari snapshot + migration dalam PostgreSQL sebenar; semakan RLS (staf/kerani/lihat/admin/tanpa log masuk), audit, MFA langkah 2, Urus Staf, keselamatan fungsi; **setiap jadual ada dalam backup**; backup → `alat/pulih-backup.mjs` → database baharu sama dengan asal; pusingan penuh `export-schema.sql` | `PGHOST=... PGUSER=... bash tests/sql/run.sh` |
+| **Database** (`tests/sql/`) | Bina dari snapshot + migration dalam PostgreSQL sebenar; semakan RLS (staf/kerani/lihat/admin/tanpa log masuk), audit, MFA langkah 2, Urus Staf, wajib tukar kata laluan, keselamatan fungsi; **setiap jadual ada dalam backup**; backup → `alat/pulih-backup.mjs` → database baharu sama dengan asal; pusingan penuh `export-schema.sql` | `PGHOST=... PGUSER=... bash tests/sql/run.sh` |
 | **Pelayar** (`tests/e2e/`) | Landing, login, MFA, log keluar automatik, log ralat, backup, Penyu (semua skrin, library), Minyak (Tahun, penapis, Excel, Semakan Data, pendua, resit dikecilkan, Import Setel) | `cd tests && npm ci && npx playwright test` |
 | **Unit** (`tests/unit/`) | Pembaca resit Setel (teks sebenar tanpa data peribadi); alat pulih (SQL & muat naik fail); penjana Excel format rasmi (dropdown, formula, angka) | `cd tests && npm run unit` |
 | **CSS Penyu** | `penyu/tailwind.css` sepadan dengan kelas dalam kod | `bash tests/check-tailwind.sh` |
