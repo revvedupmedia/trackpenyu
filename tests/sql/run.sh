@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 SNAPSHOT=$(ls schema-snapshot-*.sql | sort | tail -1)
 # Migration yang lebih baru daripada snapshot (ikut README → Setup).
-MIGRATIONS=(migration-minyak-liter-claim.sql)
+MIGRATIONS=(migration-minyak-liter-claim.sql migration-lihat-sahaja.sql)
 OUT=$(mktemp -d)
 export PGOPTIONS="-c client_min_messages=warning"
 psql_db() { psql -X -q -v ON_ERROR_STOP=1 -d "$@"; }
@@ -29,6 +29,9 @@ psql_db lpp_test -f tests/sql/staff.sql 2>&1 | grep -E 'OK:|GAGAL|ERROR' | sed '
 
 echo "== Keselamatan fungsi (statistik Penyu, anon, search_path)"
 psql_db lpp_test -f tests/sql/fungsi.sql 2>&1 | grep -E 'OK:|GAGAL|ERROR' | sed 's/^.*NOTICE:  /  /'
+
+echo "== Peranan Lihat Sahaja (baca sahaja, tiada Minyak)"
+psql_db lpp_test -f tests/sql/lihat.sql 2>&1 | grep -E 'OK:|GAGAL|ERROR' | sed 's/^.*NOTICE:  /  /'
 
 echo "== Minyak: liter, stesen, tarikh claim"
 psql_db lpp_test -f tests/sql/minyak-claim.sql 2>&1 | grep -E 'OK:|GAGAL|ERROR' | sed 's/^.*NOTICE:  /  /'

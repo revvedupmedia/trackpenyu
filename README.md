@@ -15,7 +15,7 @@ laman di-host di GitHub Pages. Deploy dengan push ke GitHub sahaja.
 
 | App | Folder | Peranan yang boleh guna |
 |---|---|---|
-| Penyu Tracker | `penyu/` | `staff`, `kerani`, `admin` |
+| Penyu Tracker | `penyu/` | `staff`, `kerani`, `lihat`, `admin` |
 | Minyak Tracker | `minyak/` | `kerani`, `admin` |
 
 Senarai ini ditetapkan dalam `shared/auth.js` (`APPS`). Portal hanya
@@ -33,7 +33,11 @@ dan **PSB**.
   - `admin`: semua pulau, tukar sasaran, tab Admin
   - `kerani`: lihat-sahaja semua pulau dan boleh eksport, tapi tak boleh
     tambah, ubah atau padam data
-- Admin dan kerani pilih pulau selepas masuk app. Ketik lencana pulau di bar
+  - `lihat` (paparan **Lihat Sahaja**, untuk pegawai kanan): lihat Dashboard,
+    Log dan **Mod Pembentangan** semua pulau. Tiada borang entri, tiada tab
+    Admin, tiada eksport Excel/PowerPoint, tiada Minyak. Database sekat
+    semua tulis (`migration-lihat-sahaja.sql`, ujian `tests/sql/lihat.sql`)
+- Admin, kerani dan lihat pilih pulau selepas masuk app. Ketik lencana pulau di bar
   bawah untuk tukar pulau.
 - **Entri**: Entri Harian (jumlah sehari ikut RAM LPP/SFC, sama format
   dengan template Excel) dan Entri Individu (satu rekod setiap penyu atau
@@ -170,6 +174,9 @@ daripada snapshot (senarai sama dalam `tests/sql/run.sh` → `MIGRATIONS`):
 1. `migration-minyak-liter-claim.sql` — Minyak: lajur liter, stesen dan
    tarikh claim (diisi oleh database); liter & stesen resit Setel lama
    diisi semula dari nota
+2. `migration-lihat-sahaja.sql` — peranan **Lihat Sahaja** (`lihat`): baca
+   Penyu semua pulau, tiada tulis & tiada Minyak; ubah/padam entri hanya
+   untuk staf & admin
 
 Snapshot ini sudah termasuk **MFA admin langkah 2**
 (`migration-mfa-admin-wajib.sql`): database hanya beri kuasa admin kepada sesi
@@ -322,7 +329,7 @@ GitHub menjalankan semua ujian pada setiap push ke `main` (tab **Actions** →
 
 | Ujian | Apa yang disemak | Jalan secara lokal |
 |---|---|---|
-| **Database** (`tests/sql/`) | Bina dari snapshot + migration dalam PostgreSQL sebenar; semakan RLS (staf/kerani/admin/tanpa log masuk), audit, MFA langkah 2, Urus Staf, keselamatan fungsi; **setiap jadual ada dalam backup**; backup → `alat/pulih-backup.mjs` → database baharu sama dengan asal; pusingan penuh `export-schema.sql` | `PGHOST=... PGUSER=... bash tests/sql/run.sh` |
+| **Database** (`tests/sql/`) | Bina dari snapshot + migration dalam PostgreSQL sebenar; semakan RLS (staf/kerani/lihat/admin/tanpa log masuk), audit, MFA langkah 2, Urus Staf, keselamatan fungsi; **setiap jadual ada dalam backup**; backup → `alat/pulih-backup.mjs` → database baharu sama dengan asal; pusingan penuh `export-schema.sql` | `PGHOST=... PGUSER=... bash tests/sql/run.sh` |
 | **Pelayar** (`tests/e2e/`) | Landing, login, MFA, log keluar automatik, log ralat, backup, Penyu (semua skrin, library), Minyak (Tahun, penapis, Excel, Semakan Data, pendua, resit dikecilkan, Import Setel) | `cd tests && npm ci && npx playwright test` |
 | **Unit** (`tests/unit/`) | Pembaca resit Setel (teks sebenar tanpa data peribadi); alat pulih (SQL & muat naik fail); penjana Excel format rasmi (dropdown, formula, angka) | `cd tests && npm run unit` |
 | **CSS Penyu** | `penyu/tailwind.css` sepadan dengan kelas dalam kod | `bash tests/check-tailwind.sh` |

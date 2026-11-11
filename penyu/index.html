@@ -247,7 +247,7 @@
 
 <nav id="navbar" class="fixed bottom-0 inset-x-0 px-4 pb-4 hidden">
   <div class="frosted flex items-center justify-around px-2 py-2 max-w-md mx-auto overflow-x-auto">
-    <button onclick="go('entry')" class="flex flex-col items-center px-2.5 py-1.5">🐢<span class="text-[10px]">Entri</span></button>
+    <button id="navEntry" onclick="go('entry')" class="flex flex-col items-center px-2.5 py-1.5">🐢<span class="text-[10px]">Entri</span></button>
     <button onclick="go('entries')" class="flex flex-col items-center px-2.5 py-1.5">📋<span class="text-[10px]">Log</span></button>
     <button onclick="go('dashboard')" class="flex flex-col items-center px-2.5 py-1.5">📊<span class="text-[10px]">Dashboard</span></button>
     <button id="navAdmin" onclick="go('admin')" class="flex-col items-center px-2.5 py-1.5 hidden">⚙️<span class="text-[10px]">Admin</span></button>
@@ -259,7 +259,7 @@
 
 <script type="module">
 // Login, lupa kata laluan & reset kini di ../login.html (dikongsi semua app).
-import { supabase, requireApp, appsFor, logout as portalLogout, APP_VERSION } from '../shared/auth.js'
+import { supabase, requireApp, appsFor, logout as portalLogout, APP_VERSION, VIEW_ALL_ROLES } from '../shared/auth.js'
 import { buildRasmiWorkbook } from './eksport-rasmi.js'
 const app = document.getElementById('app')
 const ISLANDS = [
@@ -541,7 +541,12 @@ document.addEventListener('keydown', (e) => {
 async function render(route) {
   // Skrin lama (login di sini dulu) => halaman login bersama.
   if (['login', 'forgot', 'resetpw'].includes(route)) { location.replace('../login.html'); return }
-  if (route === 'island' && state.profile && !['admin', 'kerani'].includes(state.profile.role)) route = 'entry'
+  if (route === 'island' && state.profile && !VIEW_ALL_ROLES.includes(state.profile.role)) route = 'entry'
+  // Lihat Sahaja: tiada borang entri; terus ke Dashboard.
+  if (state.profile?.role === 'lihat' && ['entry', 'editentry'].includes(route)) {
+    route = 'dashboard'
+    history.replaceState(null, '', '#dashboard')
+  }
   if (IN_APP_ROUTES.includes(route) && !state.island) route = 'island'
   trackRoute(route)
   document.getElementById('navbar').classList.toggle('hidden', !['entry','entries','dashboard','admin'].includes(route))
@@ -549,6 +554,7 @@ async function render(route) {
     const showAdminTab = state.profile.role === 'admin' || state.profile.role === 'kerani'
     document.getElementById('navAdmin').classList.toggle('hidden', !showAdminTab)
     document.getElementById('navAdmin').classList.toggle('flex', showAdminTab)
+    document.getElementById('navEntry').classList.toggle('hidden', state.profile.role === 'lihat')
   }
   const screens = { splash: screenSplash, island: screenIsland, entry: screenEntry,
     entries: screenEntries, editentry: screenEditEntry, monthdetail: screenMonthDetail, dashboard: screenDashboard, admin: screenAdmin }
@@ -557,17 +563,17 @@ async function render(route) {
   app.appendChild(el)
 }
 
-// Staf terus guna pulau yang ditugaskan dalam profil. Admin & kerani pilih
+// Staf terus guna pulau yang ditugaskan dalam profil. Admin, kerani & lihat pilih
 // pulau sendiri (skrin 'island').
 function applyIslandGate() {
-  if (state.profile.role === 'admin' || state.profile.role === 'kerani') return
+  if (VIEW_ALL_ROLES.includes(state.profile.role)) return
   setIsland(state.profile.island)
 }
 
-// Lencana pulau di tajuk skrin. Admin & kerani: butang untuk tukar pulau dan
+// Lencana pulau di tajuk skrin. Admin, kerani & lihat: butang untuk tukar pulau dan
 // kembali ke skrin yang sama. Staf: lencana sahaja (satu pulau).
 function islandPill() {
-  const canSwitch = state.profile && (state.profile.role === 'admin' || state.profile.role === 'kerani')
+  const canSwitch = state.profile && VIEW_ALL_ROLES.includes(state.profile.role)
   if (!canSwitch) return `<span class="rounded px-2.5 py-1 text-xs font-semibold bg-teal-900/40">${state.island}</span>`
   return `<button type="button" class="island-switch" title="Tukar pulau" onclick="switchIsland()">${state.island} <span aria-hidden="true">▾</span></button>`
 }
@@ -2062,9 +2068,9 @@ async function screenDashboard() {
   if (!state.viewYear) state.viewYear = thisYear
   const year = state.viewYear
   destroyCharts()
-  // Admin & kerani can flip between islands without re-logging in;
+  // Admin, kerani & lihat can flip between islands without re-logging in;
   // staff are locked to their own island.
-  const canSwitch = state.profile?.role === 'admin' || state.profile?.role === 'kerani'
+  const canSwitch = VIEW_ALL_ROLES.includes(state.profile?.role)
   if (!state.viewIsland) state.viewIsland = state.island
   const viewIsland = canSwitch ? state.viewIsland : state.island
   const wrap = document.createElement('div')
@@ -2151,12 +2157,14 @@ async function screenDashboard() {
   `, 'mb-4'))
 
   if (state.profile?.role !== 'staff') {
+  // Lihat Sahaja: Mod Pembentangan sahaja, tiada muat turun PowerPoint.
+  const canDownload = state.profile?.role !== 'lihat'
   stats.appendChild(flatCard(`
     <button id="presModeBtn" class="btn btn-primary w-full flex items-center justify-center gap-2" style="padding-top:.9rem; padding-bottom:.9rem; font-size:1rem">
       <span>🎬</span><span>Mod Pembentangan</span>
     </button>
     <p class="text-xs opacity-60 mt-2 mb-3 text-center">Skrin penuh, interaktif — pilih pulau &amp; tahun, banding on-demand. Terbaik di PC / projektor.</p>
-    <button id="presentBtn" class="btn btn-ghost w-full flex items-center justify-center gap-2 text-sm">
+    ${canDownload ? `<button id="presentBtn" class="btn btn-ghost w-full flex items-center justify-center gap-2 text-sm">
       <span>📄</span><span>Muat turun PowerPoint</span>
     </button>
     <div id="presentPick" class="hidden mt-3">
@@ -2166,9 +2174,10 @@ async function screenDashboard() {
         <div><label class="text-xs opacity-70">Tahun</label><select id="pp_year">${Array.from({ length: new Date().getFullYear() - 1990 + 1 }, (_, i) => new Date().getFullYear() - i).map(y => `<option value="${y}" ${y === year ? 'selected' : ''}>${y}</option>`).join('')}</select></div>
       </div>
       <button id="pp_go" class="btn btn-primary w-full text-sm">Jana &amp; Muat Turun</button>
-    </div>
+    </div>` : ''}
   `, 'mb-4'))
   stats.querySelector('#presModeBtn').onclick = () => openPresentation()
+  if (canDownload) {
   stats.querySelector('#presentBtn').onclick = () => {
     const box = stats.querySelector('#presentPick')
     box.classList.toggle('hidden')
@@ -2184,6 +2193,7 @@ async function screenDashboard() {
       toast('Gagal jana PowerPoint: ' + err.message, 'error')
     }
     btn.disabled = false; btn.textContent = 'Jana & Muat Turun'
+  }
   }
   }
 

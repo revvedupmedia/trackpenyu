@@ -12,7 +12,7 @@ export const ROOT = new URL('../', import.meta.url).href
 
 // Versi app (tarikh keluaran). Naikkan setiap kali deploy perubahan yang
 // pengguna akan nampak; dipaparkan di login, portal dan panel admin.
-export const APP_VERSION = '2026.11.06.3'
+export const APP_VERSION = '2026.11.11.1'
 
 // Pautan reset dari emel datang dengan token dalam #hash. Simpan dulu sebelum
 // klien Supabase membaca & memadamkannya.
@@ -29,11 +29,17 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 export const APPS = [
   { id: 'penyu', name: 'Penyu Tracker', icon: '🐢', href: 'penyu/',
     desc: 'Rekod pendaratan penyu, telur diram dan penetasan bagi PTB, PTK dan PSB.',
-    roles: ['staff', 'admin', 'kerani'] },
+    roles: ['staff', 'admin', 'kerani', 'lihat'] },
   { id: 'minyak', name: 'Minyak Tracker', icon: '⛽', href: 'minyak/',
     desc: 'Rekod mileage, minyak Diesel & RON95 bot, resit dan status claim.',
     roles: ['admin', 'kerani'] }
 ]
+
+// Peranan yang boleh LIHAT data semua pulau (sama dengan can_view_all() dalam
+// database). 'lihat' = Lihat Sahaja (pegawai kanan): baca Penyu sahaja, tiada
+// tulis, tiada eksport, tiada Minyak.
+export const VIEW_ALL_ROLES = ['admin', 'kerani', 'lihat']
+export const ROLE_LABEL = { staff: 'Staf', kerani: 'Kerani', lihat: 'Lihat Sahaja', admin: 'Admin' }
 
 export function canUse(profile, appId) {
   const app = APPS.find(a => a.id === appId)

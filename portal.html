@@ -100,12 +100,11 @@
 </div>
 
 <script type="module">
-import { supabase, currentUser, appsFor, APPS, loginUrl, logout, ROOT, APP_VERSION, startIdleWatch, SUPABASE_URL } from './shared/auth.js'
+import { supabase, currentUser, appsFor, APPS, loginUrl, logout, ROOT, APP_VERSION, startIdleWatch, SUPABASE_URL, ROLE_LABEL } from './shared/auth.js'
 import { BACKUP_TABLES, BACKUP_FORMAT } from './shared/backup.js'
 document.getElementById('ver').textContent = `Portal LPP · versi ${APP_VERSION}`
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
-const ROLE_LABEL = { staff: 'Staf', kerani: 'Kerani', admin: 'Admin' }
 
 document.getElementById('logout').onclick = logout
 
@@ -166,7 +165,7 @@ else {
 // 👥 Urus Staf: fungsi admin_* dalam database (migration-urus-staf.sql) semak
 // admin + MFA sendiri; skrin ini hanya memanggilnya.
 const ISLANDS = [['PTB', 'Talang-Talang Besar'], ['PTK', 'Talang-Talang Kechil'], ['PSB', 'Satang Besar']]
-const ROLES = [['staff', 'Staf'], ['kerani', 'Kerani'], ['admin', 'Admin']]
+const ROLES = Object.entries(ROLE_LABEL)
 const fmtDay = (d) => d ? new Date(d).toLocaleDateString('ms-MY', { day: 'numeric', month: 'short', year: 'numeric' }) : 'belum pernah'
 let staffOpen = null, staffFlash = null
 
